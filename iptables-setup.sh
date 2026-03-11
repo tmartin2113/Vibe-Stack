@@ -5,6 +5,7 @@
 # Protections:
 #   agent-core-net    — internal Docker network (no host iptables needed)
 #   internet-access   — outbound 443/80/53/22 only
+#   host-access       — outbound 443/80/53/22 only (mirrors internet-access policy)
 #   Dev-runner :9000  — loopback + agent-core-net only
 #   DeerFlow   :2024  — agent-core-net only
 #   DeerFlow   :8001  — agent-core-net only
@@ -37,13 +38,15 @@ get_bridge_iface() {
 
 CORE_NET_IFACE=$(get_bridge_iface "agent-core-net")
 INET_NET_IFACE=$(get_bridge_iface "internet-access")
+HOST_NET_IFACE=$(get_bridge_iface "host-access")
 
-if [[ -z "$CORE_NET_IFACE" || -z "$INET_NET_IFACE" ]]; then
+if [[ -z "$CORE_NET_IFACE" || -z "$INET_NET_IFACE" || -z "$HOST_NET_IFACE" ]]; then
     error "Cannot resolve Docker bridge interfaces — run 'docker compose up -d' first"
 fi
 
 info "agent-core-net:  $CORE_NET_IFACE"
 info "internet-access: $INET_NET_IFACE"
+info "host-access:     $HOST_NET_IFACE"
 
 # ── Flush existing vibe-stack rules & chains ──────────────────
 flush_vibe_rules() {
@@ -61,7 +64,7 @@ flush_vibe_rules() {
 flush_vibe_rules INPUT
 flush_vibe_rules DOCKER-USER
 
-for chain in VIBE_DOCKER_OUT VIBE_INTERNAL; do
+for chain in VIBE_DOCKER_OUT VIBE_HOST_OUT VIBE_INTERNAL; do
     if iptables -L "$chain" -n &>/dev/null; then
         iptables -F "$chain"
         iptables -X "$chain" 2>/dev/null || true
@@ -99,6 +102,37 @@ iptables -A VIBE_DOCKER_OUT -i "$INET_NET_IFACE" ! -o "$INET_NET_IFACE" -j DROP
 iptables -I DOCKER-USER 1 \
     -m comment --comment "vibe-stack" \
     -j VIBE_DOCKER_OUT
+
+# ── Chain: VIBE_HOST_OUT — host-access outbound ────────────────
+iptables -N VIBE_HOST_OUT
+
+# Allow established connections back
+iptables -A VIBE_HOST_OUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+
+# Allow HTTPS outbound from host-access
+iptables -A VIBE_HOST_OUT -i "$HOST_NET_IFACE" ! -o "$HOST_NET_IFACE" \
+    -p tcp --dport 443 -j ACCEPT
+
+# Allow HTTP outbound
+iptables -A VIBE_HOST_OUT -i "$HOST_NET_IFACE" ! -o "$HOST_NET_IFACE" \
+    -p tcp --dport 80 -j ACCEPT
+
+# Allow DNS
+iptables -A VIBE_HOST_OUT -i "$HOST_NET_IFACE" ! -o "$HOST_NET_IFACE" \
+    -p udp --dport 53 -j ACCEPT
+iptables -A VIBE_HOST_OUT -i "$HOST_NET_IFACE" ! -o "$HOST_NET_IFACE" \
+    -p tcp --dport 53 -j ACCEPT
+
+# Allow SSH outbound
+iptables -A VIBE_HOST_OUT -i "$HOST_NET_IFACE" ! -o "$HOST_NET_IFACE" \
+    -p tcp --dport 22 -j ACCEPT
+
+# Drop everything else
+iptables -A VIBE_HOST_OUT -i "$HOST_NET_IFACE" ! -o "$HOST_NET_IFACE" -j DROP
+
+iptables -I DOCKER-USER 2 \
+    -m comment --comment "vibe-stack" \
+    -j VIBE_HOST_OUT
 
 # ── Block internal services from host exposure ────────────────
 declare -A SERVICE_PORTS=(

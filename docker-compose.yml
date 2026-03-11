@@ -49,6 +49,11 @@ networks:
   host-access:
     driver: bridge
     internal: false
+    ipam:
+      driver: default
+      config:
+        - subnet: 192.168.92.0/24
+          gateway: 192.168.92.1
 
   git-relay-net:
     driver: bridge
@@ -135,7 +140,9 @@ services:
       - paperclip_postgres_password
     volumes:
       - paperclip-data:/paperclip
-      - /home/prime:/home/prime:ro
+      - /home/prime/paperclip:/home/prime/paperclip:ro
+      - /home/prime/Projects:/home/prime/Projects:ro
+      - /home/prime/Repos:/home/prime/Repos:ro
     depends_on:
       db:
         condition: service_healthy
@@ -165,8 +172,6 @@ services:
     environment:
       CI: "true"
       VLLM_API_URL: ${VLLM_API_URL:-http://host.docker.internal:8000/v1}
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
     extra_hosts:
       - "host.docker.internal:host-gateway"
     networks:
@@ -194,8 +199,6 @@ services:
     environment:
       CI: "true"
       VLLM_API_URL: ${VLLM_API_URL:-http://host.docker.internal:8000/v1}
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
     extra_hosts:
       - "host.docker.internal:host-gateway"
     networks:
