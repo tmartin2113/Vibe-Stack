@@ -1,0 +1,44 @@
+# /etc/ssh/sshd_config additions for vibe coding SFTP setup
+# Append these to the END of /etc/ssh/sshd_config
+# Then: sudo systemctl restart ssh
+#
+# SFTP listens on port 2222 to avoid conflict with Tailscale SSH (port 22).
+# Tailscale SSH handles interactive sessions; OpenSSH on 2222 handles
+# chrooted SFTP for the phone file manager (Termius).
+#
+# The ssh.socket systemd unit must also be configured to listen on 2222:
+#   /etc/systemd/system/ssh.socket.d/override.conf:
+#     [Socket]
+#     ListenStream=
+#     ListenStream=0.0.0.0:22
+#     ListenStream=[::]:22
+#     ListenStream=0.0.0.0:2222
+#     ListenStream=[::]:2222
+
+# ── Global hardening ──────────────────────────────────────────
+
+PasswordAuthentication no
+ChallengeResponseAuthentication no
+PubkeyAuthentication yes
+PermitRootLogin no
+UsePAM no
+X11Forwarding no
+AllowAgentForwarding no
+AllowTcpForwarding no
+PrintMotd no
+AcceptEnv LANG LC_*
+
+# ── SFTP subsystem ────────────────────────────────────────────
+Subsystem sftp internal-sftp -l INFO -f AUTH
+
+# ── SFTP-only chroot user ────────────────────────────────────
+Match User sftp-vibe
+    # Chroot to root-owned parent — SFTP user lands in /workspace/files
+    ChrootDirectory /srv/sftp/workspace
+    ForceCommand internal-sftp -d /files
+    AllowTcpForwarding no
+    AllowAgentForwarding no
+    X11Forwarding no
+    PermitTTY no
+    PasswordAuthentication no
+    AuthorizedKeysFile /home/sftp-vibe/.ssh/authorized_keys

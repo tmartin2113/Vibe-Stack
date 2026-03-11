@@ -1,0 +1,385 @@
+---
+# ══════════════════════════════════════════════════════════════════════
+# Vibe Stack 2.0 — Paperclip + DeerFlow Agent Network
+# ══════════════════════════════════════════════════════════════════════
+#
+# Services:
+#   db                 — Paperclip PostgreSQL database
+#   server             — Paperclip control plane + UI (replaces Open WebUI)
+#   deerflow-langgraph — DeerFlow LangGraph agent runtime (replaces vibe_router)
+#   deerflow-gateway   — DeerFlow REST gateway
+#   postgres-n8n       — n8n PostgreSQL database
+#   n8n                — Workflow automation
+#   searxng             — Self-hosted web search
+#   ssh-relay          — TCP forwarder for git SSH to github.com
+#   dev-runner         — Staging app host with dynamic ports
+#   watchtower         — Auto container updates
+#
+# Networks:
+#   agent-core-net    — internal only, no outbound
+#   internet-access   — outbound 443/80/53/22 only (iptables-setup.sh)
+#   host-access       — access to host vLLM + port mapping
+#   git-relay-net     — isolated git SSH operations
+#
+# Run:
+#   sudo ./setup.sh         (first time)
+#   docker compose up -d
+#   sudo ./iptables-setup.sh (after every Docker daemon restart)
+# ══════════════════════════════════════════════════════════════════════
+
+networks:
+  agent-core-net:
+    driver: bridge
+    internal: true
+    ipam:
+      driver: default
+      config:
+        - subnet: 192.168.90.0/24
+          gateway: 192.168.90.1
+
+  internet-access:
+    driver: bridge
+    internal: false
+    ipam:
+      driver: default
+      config:
+        - subnet: 192.168.91.0/24
+          gateway: 192.168.91.1
+
+  host-access:
+    driver: bridge
+    internal: false
+
+  git-relay-net:
+    driver: bridge
+    internal: true
+
+secrets:
+  better_auth_secret:
+    file: ./secrets/better_auth_secret.txt
+  agent_jwt_secret:
+    file: ./secrets/agent_jwt_secret.txt
+  paperclip_postgres_password:
+    file: ./secrets/paperclip_postgres_password.txt
+  n8n_postgres_user:
+    file: ./secrets/n8n_postgres_user.txt
+  n8n_postgres_password:
+    file: ./secrets/n8n_postgres_password.txt
+  searxng_secret:
+    file: ./secrets/searxng_secret.txt
+
+volumes:
+  paperclip-pgdata:
+  paperclip-data:
+  n8n-postgres-data:
+  n8n-data:
+  searxng-data:
+  dev-runner-apps:
+
+services:
+
+  # ────────────────────────────────────────────────────────────────
+  # Paperclip PostgreSQL — agent core database
+  # ────────────────────────────────────────────────────────────────
+  db:
+    image: postgres:17-alpine
+    container_name: vibe-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: paperclip
+      POSTGRES_PASSWORD_FILE: /run/secrets/paperclip_postgres_password
+      POSTGRES_DB: paperclip
+    secrets:
+      - paperclip_postgres_password
+    volumes:
+      - paperclip-pgdata:/var/lib/postgresql/data
+    networks:
+      - agent-core-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U paperclip -d paperclip"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 10s
+
+  # ────────────────────────────────────────────────────────────────
+  # Paperclip — control plane + UI (replaces Open WebUI)
+  # All interaction happens here: companies, agents, tasks, approvals
+  # ────────────────────────────────────────────────────────────────
+  server:
+    build:
+      context: ${PAPERCLIP_SOURCE_DIR:-/home/prime/paperclip}
+      dockerfile: Dockerfile
+    container_name: vibe-server
+    restart: unless-stopped
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        export BETTER_AUTH_SECRET=$$(cat /run/secrets/better_auth_secret)
+        export PAPERCLIP_AGENT_JWT_SECRET=$$(cat /run/secrets/agent_jwt_secret)
+        export DATABASE_URL="postgres://paperclip:$$(cat /run/secrets/paperclip_postgres_password)@db:5432/paperclip"
+        exec node --import ./server/node_modules/tsx/dist/loader.mjs server/dist/index.js
+    ports:
+      - "127.0.0.1:3100:3100"
+    environment:
+      PORT: "3100"
+      HOST: "0.0.0.0"
+      SERVE_UI: "true"
+      PAPERCLIP_DEPLOYMENT_MODE: "authenticated"
+      PAPERCLIP_DEPLOYMENT_EXPOSURE: "private"
+      PAPERCLIP_PUBLIC_URL: "https://${TAILSCALE_HOSTNAME}"
+    secrets:
+      - better_auth_secret
+      - agent_jwt_secret
+      - paperclip_postgres_password
+    volumes:
+      - paperclip-data:/paperclip
+      - /home/prime:/home/prime:ro
+    depends_on:
+      db:
+        condition: service_healthy
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - agent-core-net
+      - internet-access
+      - host-access
+    healthcheck:
+      test: ["CMD", "curl", "-fs", "http://localhost:3100/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  # ────────────────────────────────────────────────────────────────
+  # DeerFlow LangGraph — agent runtime (replaces vibe_router)
+  # Runs Qwen3.5-9B via vLLM on host for local model agents
+  # ────────────────────────────────────────────────────────────────
+  deerflow-langgraph:
+    build:
+      context: ${PAPERCLIP_SOURCE_DIR:-/home/prime/paperclip}/deerflow/backend
+      dockerfile: Dockerfile
+    container_name: vibe-deerflow-langgraph
+    restart: unless-stopped
+    environment:
+      CI: "true"
+      VLLM_API_URL: ${VLLM_API_URL:-http://host.docker.internal:8000/v1}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - agent-core-net
+      - internet-access
+      - host-access
+      - git-relay-net
+    healthcheck:
+      test: ["CMD", "curl", "-fs", "http://localhost:2024/ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  # ────────────────────────────────────────────────────────────────
+  # DeerFlow Gateway — REST API for DeerFlow
+  # ────────────────────────────────────────────────────────────────
+  deerflow-gateway:
+    build:
+      context: ${PAPERCLIP_SOURCE_DIR:-/home/prime/paperclip}/deerflow/backend
+      dockerfile: Dockerfile
+    container_name: vibe-deerflow-gateway
+    restart: unless-stopped
+    command: ["python", "-m", "deerflow_service.gateway"]
+    environment:
+      CI: "true"
+      VLLM_API_URL: ${VLLM_API_URL:-http://host.docker.internal:8000/v1}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - agent-core-net
+      - internet-access
+      - host-access
+    healthcheck:
+      test: ["CMD", "curl", "-fs", "http://localhost:8001/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  # ────────────────────────────────────────────────────────────────
+  # n8n PostgreSQL — workflow automation database
+  # ────────────────────────────────────────────────────────────────
+  postgres-n8n:
+    image: postgres:16-alpine
+    container_name: vibe-postgres-n8n
+    restart: unless-stopped
+    volumes:
+      - n8n-postgres-data:/var/lib/postgresql/data
+    environment:
+      POSTGRES_DB: n8n
+      POSTGRES_USER_FILE: /run/secrets/n8n_postgres_user
+      POSTGRES_PASSWORD_FILE: /run/secrets/n8n_postgres_password
+      PGDATA: /var/lib/postgresql/data/pgdata
+    secrets:
+      - n8n_postgres_user
+      - n8n_postgres_password
+    networks:
+      - agent-core-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$(cat /run/secrets/n8n_postgres_user) -d n8n"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  # ────────────────────────────────────────────────────────────────
+  # n8n — workflow automation
+  # Agent triggers via http://n8n:5678 internally
+  # You access via Tailscale -> Caddy -> :5678
+  # ────────────────────────────────────────────────────────────────
+  n8n:
+    image: n8nio/n8n:latest
+    container_name: vibe-n8n
+    restart: unless-stopped
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        export DB_POSTGRESDB_USER=$$(cat /run/secrets/n8n_postgres_user)
+        export DB_POSTGRESDB_PASSWORD=$$(cat /run/secrets/n8n_postgres_password)
+        exec n8n start
+    ports:
+      - "127.0.0.1:5678:5678"
+    volumes:
+      - n8n-data:/home/node/.n8n
+    environment:
+      N8N_HOST: "${TAILSCALE_HOSTNAME}"
+      N8N_PORT: 5678
+      N8N_PROTOCOL: "https"
+      WEBHOOK_URL: "https://${TAILSCALE_HOSTNAME}:5678"
+      DB_TYPE: postgresdb
+      DB_POSTGRESDB_HOST: postgres-n8n
+      DB_POSTGRESDB_PORT: 5432
+      DB_POSTGRESDB_DATABASE: n8n
+      N8N_RUNNERS_ENABLED: "true"
+      EXECUTIONS_DATA_PRUNE: "true"
+      EXECUTIONS_DATA_MAX_AGE: 336
+    secrets:
+      - n8n_postgres_user
+      - n8n_postgres_password
+    networks:
+      - agent-core-net
+      - internet-access
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:5678/healthz"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    depends_on:
+      postgres-n8n:
+        condition: service_healthy
+
+  # ────────────────────────────────────────────────────────────────
+  # SearXNG — self-hosted web search
+  # Available to n8n workflows and DeerFlow agents
+  # ────────────────────────────────────────────────────────────────
+  searxng:
+    image: searxng/searxng:latest
+    container_name: vibe-searxng
+    restart: unless-stopped
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        export SEARXNG_SECRET_KEY=$$(cat /run/secrets/searxng_secret)
+        exec /usr/local/searxng/entrypoint.sh
+    volumes:
+      - ./searxng:/etc/searxng:rw
+      - searxng-data:/var/cache/searxng
+    environment:
+      SEARXNG_BASE_URL: "http://searxng:8080/"
+    secrets:
+      - searxng_secret
+    networks:
+      - agent-core-net
+      - internet-access
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/healthz"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
+  # ────────────────────────────────────────────────────────────────
+  # SSH Relay — TCP forwarder for git SSH to github.com
+  # Agents connect to ssh-relay:22 instead of github.com:22
+  # Deploy keys mounted read-only — no PAT anywhere in the stack
+  # ────────────────────────────────────────────────────────────────
+  ssh-relay:
+    build:
+      context: ./ssh-relay
+      dockerfile: Dockerfile
+    image: vibe-ssh-relay:local
+    container_name: vibe-ssh-relay
+    restart: unless-stopped
+    read_only: true
+    networks:
+      - git-relay-net
+      - internet-access
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z localhost 22 || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  # ────────────────────────────────────────────────────────────────
+  # Dev-Runner — staging app host for human-in-the-loop review
+  # Agent deploys apps here, you test on phone, approve in Paperclip
+  # Dynamic ports 8100-8119 mapped through Caddy
+  # ────────────────────────────────────────────────────────────────
+  dev-runner:
+    build:
+      context: ./dev-runner
+      dockerfile: Dockerfile
+    image: vibe-dev-runner:local
+    container_name: vibe-dev-runner
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:9000:9000"
+      - "127.0.0.1:8100-8119:8100-8119"
+    volumes:
+      - ${WORKSPACE_PATH:-/srv/sftp/workspace/files}:/workspace:rw
+      - dev-runner-apps:/apps
+    environment:
+      PORT_RANGE_START: "8100"
+      PORT_RANGE_END: "8119"
+      WORKSPACE_PATH: "/workspace"
+      PUBLIC_BASE_URL: "https://${TAILSCALE_HOSTNAME}"
+    networks:
+      - agent-core-net
+      - host-access
+    healthcheck:
+      test: ["CMD", "curl", "-fs", "http://localhost:9000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+
+  # ────────────────────────────────────────────────────────────────
+  # Watchtower — auto-update running containers
+  # ────────────────────────────────────────────────────────────────
+  watchtower:
+    image: containrrr/watchtower:latest
+    container_name: vibe-watchtower
+    restart: unless-stopped
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      WATCHTOWER_CLEANUP: "true"
+      WATCHTOWER_POLL_INTERVAL: "86400"
+      WATCHTOWER_LABEL_ENABLE: "false"

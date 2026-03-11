@@ -1,0 +1,73 @@
+use_default_settings: true
+
+general:
+  debug: false
+  instance_name: "vibe-search"
+  privacypolicy_url: false
+  donation_url: false
+  contact_url: false
+  enable_metrics: false
+
+server:
+  port: 8080
+  bind_address: "0.0.0.0"
+  # Secret loaded from Docker secret via entrypoint
+  secret_key: "placeholder-overridden-by-env"
+  base_url: "http://searxng:8080/"
+  image_proxy: false
+  method: "POST"
+
+ui:
+  default_locale: "en"
+  default_theme: simple
+  query_in_title: false
+  infinite_scroll: false
+
+outgoing:
+  request_timeout: 8.0
+  max_request_timeout: 20.0
+  pool_connections: 100
+  pool_maxsize: 20
+  enable_http2: true
+
+# Engines tuned for code/dev research
+engines:
+  - name: google
+    engine: google
+    shortcut: g
+
+  - name: duckduckgo
+    engine: duckduckgo
+    shortcut: ddg
+
+  - name: github
+    engine: github
+    shortcut: gh
+
+  - name: stackoverflow
+    engine: stackoverflow
+    shortcut: so
+
+  - name: wikipedia
+    engine: wikipedia
+    shortcut: wp
+    language: en
+
+  - name: arxiv
+    engine: arxiv
+    shortcut: ax
+
+  - name: npm
+    engine: npm
+    shortcut: npm
+
+  - name: pypi
+    engine: pypi
+    shortcut: pypi
+
+# JSON output only — used exclusively as Open WebUI API backend
+search:
+  formats:
+    - json
+  safe_search: 0
+  default_lang: "en"

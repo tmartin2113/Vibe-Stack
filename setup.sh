@@ -1,0 +1,629 @@
+#!/usr/bin/env bash
+# setup.sh — Vibe Stack 2.0 (Paperclip + DeerFlow Agent Network)
+# One-shot first-time deployment. Run as root on a fresh Ubuntu system.
+# Idempotent — safe to re-run.
+
+set -euo pipefail
+
+RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; BLUE='\033[0;34m'; NC='\033[0m'
+info()    { printf "${BLUE}[INFO]${NC}   %s\n" "$*"; }
+success() { printf "${GREEN}[OK]${NC}     %s\n" "$*"; }
+warn()    { printf "${YELLOW}[WARN]${NC}   %s\n" "$*"; }
+error()   { printf "${RED}[ERROR]${NC}  %s\n" "$*" >&2; exit 1; }
+err()     { printf "${RED}[ERROR]${NC}  %s\n" "$*" >&2; }
+
+# wait_healthy TIMEOUT_SECS service [service...]
+wait_healthy() {
+    local timeout="${1:?usage: wait_healthy TIMEOUT svc...}"; shift
+    local deadline=$(( SECONDS + timeout ))
+    local services=("$@")
+
+    while (( SECONDS < deadline )); do
+        local all_healthy=true
+        for svc in "${services[@]}"; do
+            local cid
+            cid=$(docker compose ps -q "$svc" 2>/dev/null)
+            if [[ -z "$cid" ]]; then
+                warn "  $svc — container not found"
+                all_healthy=false; continue
+            fi
+            local status
+            status=$(docker inspect --format='{{.State.Health.Status}}' "$cid" 2>/dev/null || echo "unknown")
+            case "$status" in
+                healthy)  ;;
+                unhealthy)
+                    err "$svc — unhealthy. Last 20 log lines:"
+                    docker logs --tail 20 "$cid" 2>&1 | sed 's/^/         /'
+                    exit 1 ;;
+                *)  all_healthy=false ;;
+            esac
+        done
+        if $all_healthy; then
+            for svc in "${services[@]}"; do success "  $svc — healthy"; done
+            return 0
+        fi
+        sleep 2
+    done
+
+    for svc in "${services[@]}"; do
+        local cid status
+        cid=$(docker compose ps -q "$svc" 2>/dev/null)
+        if [[ -z "$cid" ]]; then
+            err "$svc — container never started"
+            continue
+        fi
+        status=$(docker inspect --format='{{.State.Health.Status}}' "$cid" 2>/dev/null || echo "unknown")
+        if [[ "$status" != "healthy" ]]; then
+            err "$svc — timed out (status: $status). Last 20 log lines:"
+            docker logs --tail 20 "$cid" 2>&1 | sed 's/^/         /'
+        fi
+    done
+    error "Timed out after ${timeout}s waiting for: ${services[*]}"
+}
+
+[[ "$EUID" -eq 0 ]] || error "Run as root: sudo ./setup.sh"
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
+
+# ══════════════════════════════════════════════════════════════
+# 0. Load .env
+# ══════════════════════════════════════════════════════════════
+if [[ ! -f ".env" ]]; then
+    cp .env.example .env
+    warn ".env not found — created from .env.example"
+fi
+set -a; source .env; set +a
+
+# Auto-detect Tailscale if not set in .env
+if [[ -z "${TAILSCALE_IP:-}" ]]; then
+    TAILSCALE_IP=$(tailscale ip -4 2>/dev/null || true)
+    [[ -z "$TAILSCALE_IP" ]] && error "Tailscale not running — install and run 'tailscale up' first"
+fi
+
+if [[ -z "${TAILSCALE_HOSTNAME:-}" ]] || [[ "$TAILSCALE_HOSTNAME" == your-pc-name* ]]; then
+    CURRENT_TS_NAME=$(tailscale status --json 2>/dev/null | python3 -c "import sys,json; print(json.load(sys.stdin)['Self']['DNSName'].rstrip('.'))" 2>/dev/null || echo "")
+    TS_TAILNET=$(echo "$CURRENT_TS_NAME" | sed 's/^[^.]*\.//')
+
+    printf "\n${YELLOW}Choose a short hostname for this server on Tailscale:${NC}\n"
+    printf "  Current: ${BLUE}${CURRENT_TS_NAME}${NC}\n"
+    printf "  Enter a short name (e.g. 'vibe') or press Enter to keep current: "
+    read -r CUSTOM_HOSTNAME
+    if [[ -n "$CUSTOM_HOSTNAME" ]]; then
+        tailscale set --hostname="$CUSTOM_HOSTNAME"
+        TAILSCALE_HOSTNAME="${CUSTOM_HOSTNAME}.${TS_TAILNET}"
+        info "Hostname set to $TAILSCALE_HOSTNAME"
+    else
+        TAILSCALE_HOSTNAME="$CURRENT_TS_NAME"
+    fi
+fi
+
+: "${WORKSPACE_PATH:=/srv/sftp/workspace/files}"
+: "${PAPERCLIP_SOURCE_DIR:=/home/prime/paperclip}"
+GIT_USER="${GIT_USER:-tmartin2113}"
+
+# Persist auto-detected values to .env
+_update_env_var() {
+    local key="$1" val="$2" file=".env"
+    if grep -q "^${key}=" "$file" 2>/dev/null; then
+        sed -i "s|^${key}=.*|${key}=${val}|" "$file"
+    else
+        echo "${key}=${val}" >> "$file"
+    fi
+}
+
+touch .env
+_update_env_var "TAILSCALE_HOSTNAME" "${TAILSCALE_HOSTNAME}"
+_update_env_var "TAILSCALE_IP" "${TAILSCALE_IP}"
+_update_env_var "WORKSPACE_PATH" "${WORKSPACE_PATH}"
+_update_env_var "PAPERCLIP_SOURCE_DIR" "${PAPERCLIP_SOURCE_DIR}"
+_update_env_var "GIT_USER" "${GIT_USER}"
+success ".env loaded (Tailscale: $TAILSCALE_HOSTNAME / $TAILSCALE_IP)"
+
+# Verify Paperclip source exists
+if [[ ! -f "$PAPERCLIP_SOURCE_DIR/Dockerfile" ]]; then
+    error "Paperclip source not found at $PAPERCLIP_SOURCE_DIR — set PAPERCLIP_SOURCE_DIR in .env"
+fi
+success "Paperclip source: $PAPERCLIP_SOURCE_DIR"
+
+# ══════════════════════════════════════════════════════════════
+# 1. Detect host versions
+# ══════════════════════════════════════════════════════════════
+info "Detecting host versions..."
+HOST_UBUNTU_VERSION=$(lsb_release -rs 2>/dev/null || echo "24.04")
+HOST_PYTHON_VERSION=$(python3 --version 2>&1 | grep -oP '\d+\.\d+' | head -1 || echo "3.12")
+info "Ubuntu $HOST_UBUNTU_VERSION / Python $HOST_PYTHON_VERSION"
+success "Host versions detected"
+
+# ══════════════════════════════════════════════════════════════
+# 2. System prerequisites
+# ══════════════════════════════════════════════════════════════
+info "Installing system prerequisites..."
+apt-get update -qq
+apt-get install -y --no-install-recommends \
+    apt-transport-https ca-certificates curl gnupg lsb-release \
+    inotify-tools git git-lfs acl \
+    iptables-persistent netfilter-persistent \
+    fail2ban auditd audispd-plugins \
+    unattended-upgrades jq wget logwatch \
+    dnsutils python3-pip python3-venv
+success "Prerequisites installed"
+
+# ══════════════════════════════════════════════════════════════
+# 3. Docker
+# ══════════════════════════════════════════════════════════════
+if ! command -v docker &>/dev/null; then
+    info "Installing Docker CE..."
+    curl -fsSL https://download.docker.com/linux/ubuntu/gpg \
+        | gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] \
+        https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" \
+        > /etc/apt/sources.list.d/docker.list
+    apt-get update -qq
+    apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
+    systemctl enable --now docker
+    success "Docker CE installed"
+elif dpkg -l docker-ce 2>/dev/null | grep -q "^ii"; then
+    success "Docker CE already present"
+    if ! docker compose version &>/dev/null; then
+        info "Installing docker-compose-plugin..."
+        apt-get update -qq
+        apt-get install -y docker-compose-plugin
+        success "docker-compose-plugin installed"
+    fi
+else
+    success "Docker (docker.io) already present"
+    if ! docker compose version &>/dev/null; then
+        info "Installing docker-compose-v2 plugin..."
+        apt-get update -qq
+        apt-get install -y docker-compose-v2
+        success "docker-compose-v2 installed"
+    fi
+fi
+
+if ! docker buildx version &>/dev/null; then
+    info "Installing docker-buildx..."
+    apt-get update -qq
+    apt-get install -y docker-buildx
+    success "docker-buildx installed"
+fi
+
+if ! docker compose version &>/dev/null; then
+    error "Docker Compose plugin not available — 'docker compose version' failed"
+fi
+success "Docker Compose $(docker compose version --short) available"
+
+# ══════════════════════════════════════════════════════════════
+# 4. NVIDIA Container Toolkit
+# ══════════════════════════════════════════════════════════════
+if ! dpkg -s nvidia-container-toolkit &>/dev/null; then
+    info "Installing NVIDIA Container Toolkit..."
+    curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey \
+        | gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
+    curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list \
+        | sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' \
+        > /etc/apt/sources.list.d/nvidia-container-toolkit.list
+    apt-get update -qq
+    apt-get install -y nvidia-container-toolkit
+    nvidia-ctk runtime configure --runtime=docker
+    systemctl restart docker
+    success "NVIDIA Container Toolkit installed"
+else
+    success "NVIDIA Container Toolkit already present"
+fi
+
+# ══════════════════════════════════════════════════════════════
+# 5. Caddy with rate-limit plugin
+# ══════════════════════════════════════════════════════════════
+if ! command -v caddy &>/dev/null || ! caddy list-modules 2>/dev/null | grep -q "rate_limit"; then
+    info "Building Caddy with rate-limit plugin..."
+
+    GO_REQUIRED="1.25"
+    GO_INSTALL_VER="1.25.4"
+    GO_CURRENT=$(go version 2>/dev/null | grep -oP '\d+\.\d+' | head -1 || echo "0.0")
+    if ! printf '%s\n%s\n' "$GO_REQUIRED" "$GO_CURRENT" | sort -V -C; then
+        info "Go $GO_CURRENT too old (need >= $GO_REQUIRED) — installing Go $GO_INSTALL_VER..."
+        curl -fsSL "https://dl.google.com/go/go${GO_INSTALL_VER}.linux-amd64.tar.gz" -o /tmp/go.tar.gz
+        rm -rf /usr/local/go
+        tar -C /usr/local -xzf /tmp/go.tar.gz
+        rm /tmp/go.tar.gz
+        export PATH="/usr/local/go/bin:$PATH"
+        success "Go $(go version | grep -oP '\d+\.\d+\.\d+') installed"
+    fi
+
+    info "Installing xcaddy via go install..."
+    GOBIN=/usr/local/bin go install github.com/caddyserver/xcaddy/cmd/xcaddy@latest
+    xcaddy build --with github.com/mholt/caddy-ratelimit --output /usr/local/bin/caddy
+    chmod +x /usr/local/bin/caddy
+    useradd -r -s /usr/sbin/nologin -d /var/lib/caddy caddy 2>/dev/null || true
+    mkdir -p /etc/caddy /var/log/caddy /var/lib/caddy
+    chown caddy:caddy /var/log/caddy /var/lib/caddy
+    cat > /etc/systemd/system/caddy.service << 'UNIT'
+[Unit]
+Description=Caddy Web Server
+After=network-online.target
+Requires=network-online.target
+
+[Service]
+Type=notify
+User=caddy
+Group=caddy
+ExecStart=/usr/local/bin/caddy run --environ --config /etc/caddy/Caddyfile
+ExecReload=/usr/local/bin/caddy reload --config /etc/caddy/Caddyfile --force
+TimeoutStopSec=5s
+LimitNOFILE=1048576
+PrivateTmp=true
+ProtectSystem=full
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+EnvironmentFile=-/etc/caddy/caddy.env
+[Install]
+WantedBy=multi-user.target
+UNIT
+    success "Caddy built with rate-limit"
+else
+    success "Caddy already present"
+fi
+usermod -aG tailscale caddy 2>/dev/null || true
+
+# ══════════════════════════════════════════════════════════════
+# 6. Secrets
+# ══════════════════════════════════════════════════════════════
+info "Generating secrets..."
+mkdir -p secrets; chmod 700 secrets
+
+gen_secret() {
+    local file="secrets/$1" val="$2"
+    [[ -f "$file" ]] && info "Exists: $file" && return
+    printf "%s" "$val" > "$file"; chmod 444 "$file"; success "Generated: $file"
+}
+
+gen_secret "better_auth_secret.txt"         "$(openssl rand -hex 32)"
+gen_secret "agent_jwt_secret.txt"           "$(openssl rand -hex 32)"
+gen_secret "paperclip_postgres_password.txt" "$(openssl rand -hex 32)"
+gen_secret "n8n_postgres_user.txt"          "n8n_user"
+gen_secret "n8n_postgres_password.txt"      "$(openssl rand -hex 32)"
+gen_secret "searxng_secret.txt"             "$(openssl rand -hex 32)"
+
+# SSH deploy keys for git access (per-repo)
+mkdir -p secrets/ssh; chmod 700 secrets/ssh
+if [ -z "$(ls -A secrets/ssh/ 2>/dev/null)" ]; then
+    warn "secrets/ssh/ is empty — no git push until deploy keys are added"
+    warn "-> ssh-keygen -t ed25519 -f secrets/ssh/repo-name -N ''"
+    warn "-> Add secrets/ssh/repo-name.pub as a deploy key on GitHub repo"
+fi
+
+success "Secrets ready"
+
+# ══════════════════════════════════════════════════════════════
+# 7. Workspace
+# ══════════════════════════════════════════════════════════════
+info "Configuring workspace: $WORKSPACE_PATH"
+SFTP_ROOT=$(dirname "$WORKSPACE_PATH")
+mkdir -p "$WORKSPACE_PATH"
+chown root:root "$SFTP_ROOT" 2>/dev/null || true
+chmod 755 "$SFTP_ROOT"
+id sftp-vibe &>/dev/null || useradd -r -s /usr/sbin/nologin sftp-vibe
+chown sftp-vibe:sftp-vibe "$WORKSPACE_PATH"
+chmod 775 "$WORKSPACE_PATH"
+setfacl -R  -m u:sftp-vibe:rwx "$WORKSPACE_PATH"
+setfacl -Rd -m u:sftp-vibe:rwx "$WORKSPACE_PATH"
+setfacl -Rd -m u:root:rwx "$WORKSPACE_PATH"
+
+if [[ ! -d "$WORKSPACE_PATH/.git" ]]; then
+    git config --global --add safe.directory "$WORKSPACE_PATH"
+    git -C "$WORKSPACE_PATH" init
+    git -C "$WORKSPACE_PATH" config user.email "watchdog@localhost"
+    git -C "$WORKSPACE_PATH" config user.name  "Vibe Watchdog"
+    cat > "$WORKSPACE_PATH/CONTEXT.md" << 'CTX'
+# Project Context
+
+## Current Project
+Name:
+Repo:
+Description:
+
+## Current Task
+
+
+## Decisions Made
+
+
+## Where We Left Off
+
+
+## Known Issues
+
+
+## Environment Notes
+
+CTX
+    git -C "$WORKSPACE_PATH" add .
+    git -C "$WORKSPACE_PATH" commit -m "Initial commit — workspace initialized"
+    success "Workspace git initialized with CONTEXT.md"
+fi
+
+mkdir -p /home/sftp-vibe/.ssh
+touch /home/sftp-vibe/.ssh/authorized_keys
+chown -R sftp-vibe:sftp-vibe /home/sftp-vibe/.ssh
+chmod 700 /home/sftp-vibe/.ssh; chmod 600 /home/sftp-vibe/.ssh/authorized_keys
+warn "Add phone SSH key: echo 'ssh-ed25519 AAAA...' >> /home/sftp-vibe/.ssh/authorized_keys"
+success "Workspace configured"
+
+# ══════════════════════════════════════════════════════════════
+# 8. SSH
+# ══════════════════════════════════════════════════════════════
+info "Configuring SSH..."
+sed -e "s|100\.x\.x\.x|${TAILSCALE_IP}|g" \
+    -e "s|/srv/sftp/workspace|${SFTP_ROOT}|g" \
+    sshd_config_additions > /tmp/sshd_resolved
+if ! grep -q "# ── BEGIN vibe-stack" /etc/ssh/sshd_config; then
+    if ! grep -q "^Port 2222" /etc/ssh/sshd_config; then
+        sed -i '1s/^/Port 22\nPort 2222\n/' /etc/ssh/sshd_config
+    fi
+    printf '\n# ── BEGIN vibe-stack ──\n' >> /etc/ssh/sshd_config
+    cat /tmp/sshd_resolved >> /etc/ssh/sshd_config
+    printf '# ── END vibe-stack ──\n' >> /etc/ssh/sshd_config
+fi
+
+mkdir -p /etc/systemd/system/ssh.socket.d
+cat > /etc/systemd/system/ssh.socket.d/override.conf << 'EOF'
+[Socket]
+ListenStream=
+ListenStream=0.0.0.0:22
+ListenStream=[::]:22
+ListenStream=0.0.0.0:2222
+ListenStream=[::]:2222
+EOF
+systemctl daemon-reload
+
+mkdir -p /run/sshd
+sshd -t || error "sshd config invalid"
+systemctl restart ssh.socket
+systemctl restart ssh
+success "SSH configured (port 22 + 2222)"
+
+# ══════════════════════════════════════════════════════════════
+# 9. Tailscale SSH
+# ══════════════════════════════════════════════════════════════
+info "Enabling Tailscale SSH..."
+tailscale set --ssh=true
+success "Tailscale SSH enabled (port 22 — interactive sessions)"
+
+# ══════════════════════════════════════════════════════════════
+# 10. Caddy
+# ══════════════════════════════════════════════════════════════
+info "Configuring Caddy..."
+useradd -r -s /usr/sbin/nologin -d /var/lib/caddy caddy 2>/dev/null || true
+mkdir -p /etc/caddy /var/log/caddy /var/lib/caddy
+chown caddy:caddy /var/log/caddy /var/lib/caddy
+cp Caddyfile /etc/caddy/Caddyfile
+
+# Generate staging port blocks (8100-8119)
+if ! grep -q "TAILSCALE_HOSTNAME.*:8100" /etc/caddy/Caddyfile; then
+    info "Generating Caddy staging port blocks..."
+    STAGING_BLOCK=""
+    for port in $(seq 8100 8119); do
+        read -r -d '' BLOCK <<CADDYEOF || true
+https://{\$TAILSCALE_HOSTNAME}:${port} {
+    import tailscale_tls
+    import security_headers
+    import staging_csp
+    reverse_proxy 127.0.0.1:${port} {
+        transport http {
+            response_header_timeout 60s
+        }
+    }
+}
+CADDYEOF
+        STAGING_BLOCK+="$BLOCK"$'\n\n'
+    done
+    awk -v block="$STAGING_BLOCK" '{print} /# STAGING_PORTS_START/{printf "%s", block}' \
+        /etc/caddy/Caddyfile > /tmp/Caddyfile.tmp \
+        && mv /tmp/Caddyfile.tmp /etc/caddy/Caddyfile
+else
+    info "Caddy staging port blocks already present — skipping"
+fi
+
+if [[ ! -f /etc/systemd/system/caddy.service ]]; then
+    cat > /etc/systemd/system/caddy.service << 'UNIT'
+[Unit]
+Description=Caddy Web Server
+After=network-online.target
+Requires=network-online.target
+
+[Service]
+Type=notify
+User=caddy
+Group=caddy
+ExecStart=/usr/local/bin/caddy run --environ --config /etc/caddy/Caddyfile
+ExecReload=/usr/local/bin/caddy reload --config /etc/caddy/Caddyfile --force
+TimeoutStopSec=5s
+LimitNOFILE=1048576
+PrivateTmp=true
+ProtectSystem=full
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+EnvironmentFile=-/etc/caddy/caddy.env
+[Install]
+WantedBy=multi-user.target
+UNIT
+fi
+
+cat > /etc/caddy/caddy.env << EOF
+TAILSCALE_HOSTNAME=${TAILSCALE_HOSTNAME}
+TAILSCALE_IP=${TAILSCALE_IP}
+EOF
+chmod 640 /etc/caddy/caddy.env; chown root:caddy /etc/caddy/caddy.env
+systemctl daemon-reload
+caddy validate --config /etc/caddy/Caddyfile || error "Caddyfile invalid"
+systemctl enable --now caddy
+systemctl reload caddy 2>/dev/null || systemctl restart caddy
+success "Caddy running (self-signed TLS)"
+
+# ══════════════════════════════════════════════════════════════
+# 11. Pull and build Docker images
+# ══════════════════════════════════════════════════════════════
+info "Pulling Docker images..."
+for svc in searxng n8n postgres-n8n watchtower; do
+    info "  Pulling $svc..."
+    docker compose pull --policy missing --quiet "$svc"
+done
+success "Images pulled"
+
+info "Building custom images..."
+for svc in ssh-relay dev-runner server deerflow-langgraph deerflow-gateway; do
+    info "  Building $svc..."
+    docker compose build "$svc"
+done
+success "Images built"
+
+# ══════════════════════════════════════════════════════════════
+# 12. Start stack (staged for reliable startup)
+# ══════════════════════════════════════════════════════════════
+info "Starting stack — databases..."
+docker compose up -d db postgres-n8n
+info "Waiting for databases to become healthy..."
+wait_healthy 60 db postgres-n8n
+
+info "Starting stack — infrastructure services..."
+docker compose up -d searxng ssh-relay dev-runner
+info "Waiting for infrastructure..."
+wait_healthy 60 searxng ssh-relay dev-runner
+
+info "Starting stack — n8n..."
+docker compose up -d n8n
+wait_healthy 120 n8n
+
+info "Starting stack — DeerFlow services..."
+docker compose up -d deerflow-langgraph deerflow-gateway
+info "Waiting for DeerFlow to become healthy..."
+wait_healthy 120 deerflow-langgraph deerflow-gateway
+
+info "Starting stack — Paperclip server..."
+docker compose up -d server
+info "Waiting for Paperclip to become healthy..."
+wait_healthy 120 server
+
+info "Starting stack — watchtower..."
+docker compose up -d watchtower
+success "Stack started"
+
+# ══════════════════════════════════════════════════════════════
+# 13. iptables
+# ══════════════════════════════════════════════════════════════
+info "Applying iptables rules..."
+chmod +x iptables-setup.sh
+./iptables-setup.sh
+success "iptables rules applied"
+
+cat > /etc/systemd/system/vibe-iptables.service << EOF
+[Unit]
+Description=Vibe Stack iptables rules (re-applied after Docker)
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+ExecStartPre=/bin/sleep 5
+ExecStart=/bin/bash "${SCRIPT_DIR}/iptables-setup.sh"
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+EOF
+systemctl daemon-reload
+systemctl enable vibe-iptables
+success "iptables auto-refresh service installed"
+
+# ══════════════════════════════════════════════════════════════
+# 14. Watchdog service
+# ══════════════════════════════════════════════════════════════
+info "Installing workspace watchdog..."
+cp workspace-watchdog.sh /usr/local/bin/workspace-watchdog.sh
+chmod +x /usr/local/bin/workspace-watchdog.sh
+cat > /etc/systemd/system/workspace-watchdog.service << EOF
+[Unit]
+Description=Vibe Workspace Git Watchdog
+After=network.target docker.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/workspace-watchdog.sh
+Restart=always
+RestartSec=5
+Environment=WATCH_DIR=${WORKSPACE_PATH}
+Environment=GIT_USER=${GIT_USER}
+Environment=DEPLOY_KEYS_DIR=${SCRIPT_DIR}/secrets/ssh
+StandardOutput=journal
+StandardError=journal
+User=root
+
+[Install]
+WantedBy=multi-user.target
+EOF
+systemctl daemon-reload
+systemctl enable --now workspace-watchdog
+success "Watchdog installed"
+
+# ══════════════════════════════════════════════════════════════
+# 15. auditd
+# ══════════════════════════════════════════════════════════════
+info "Installing auditd rules..."
+sed "s|/srv/sftp/workspace/files|${WORKSPACE_PATH}|g" \
+    auditd-vibe-stack.rules > /etc/audit/rules.d/vibe-stack.rules
+augenrules --load >/dev/null 2>&1 || true
+success "auditd configured"
+
+# ══════════════════════════════════════════════════════════════
+# 16. fail2ban
+# ══════════════════════════════════════════════════════════════
+info "Installing fail2ban..."
+cp fail2ban/vibe-stack.conf    /etc/fail2ban/jail.d/vibe-stack.conf
+cp fail2ban/caddy-paperclip.conf /etc/fail2ban/filter.d/caddy-paperclip.conf
+systemctl enable --now fail2ban && systemctl restart fail2ban
+success "fail2ban configured"
+
+# ══════════════════════════════════════════════════════════════
+# 17. Unattended upgrades
+# ══════════════════════════════════════════════════════════════
+info "Enabling unattended security upgrades..."
+cat > /etc/apt/apt.conf.d/20auto-upgrades-vibe << 'EOF'
+APT::Periodic::Update-Package-Lists "1";
+APT::Periodic::Unattended-Upgrade "1";
+EOF
+success "Unattended upgrades enabled"
+
+# ══════════════════════════════════════════════════════════════
+# 18. Claude Code login check
+# ══════════════════════════════════════════════════════════════
+info "Checking Claude Code credentials..."
+CREDS_PATH="/paperclip/.claude/.credentials.json"
+if docker compose exec -T server test -f "$CREDS_PATH" 2>/dev/null; then
+    success "Claude Code credentials found in container"
+else
+    warn "Claude Code not authenticated inside the Paperclip container"
+    warn "Run: docker compose exec -it server claude login"
+fi
+
+# ══════════════════════════════════════════════════════════════
+# DONE
+# ══════════════════════════════════════════════════════════════
+printf "\n${GREEN}══════════════════════════════════════════════════════${NC}\n"
+printf "${GREEN}  Vibe Stack 2.0 deployment complete!${NC}\n"
+printf "${GREEN}══════════════════════════════════════════════════════${NC}\n\n"
+printf "  Paperclip:   ${BLUE}https://${TAILSCALE_HOSTNAME}${NC}\n"
+printf "  n8n:         ${BLUE}https://${TAILSCALE_HOSTNAME}:5678${NC}\n\n"
+
+printf "${YELLOW}Required manual steps:${NC}\n"
+printf "  1. Navigate to https://${TAILSCALE_HOSTNAME} and create your admin account\n\n"
+printf "  2. Authenticate Claude Code inside the Paperclip container:\n"
+printf "     docker compose exec -it server claude login\n\n"
+printf "  3. Add phone SSH public key (SFTP on port 2222):\n"
+printf "     echo 'ssh-ed25519 AAAA...' >> /home/sftp-vibe/.ssh/authorized_keys\n"
+printf "     Connect with Termius: host=${TAILSCALE_IP} port=2222 user=sftp-vibe\n\n"
+printf "  4. Add SSH deploy keys (per-repo):\n"
+printf "     ssh-keygen -t ed25519 -f %s/secrets/ssh/your-repo -N ''\n" "$SCRIPT_DIR"
+printf "     Add the .pub key as a deploy key on the GitHub repo\n"
+printf "     (Settings -> Deploy Keys -> Add, check 'Allow write access')\n\n"
+printf "  5. Enable Tailscale 2FA on your account\n\n"
+printf "  6. Bootstrap Paperclip (create company, hire agents):\n"
+printf "     docker compose exec server node server/dist/cli.js bootstrap-ceo\n\n"

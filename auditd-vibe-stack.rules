@@ -1,0 +1,65 @@
+# /etc/audit/rules.d/vibe-stack.rules
+# auditd rules for vibe coding workspace monitoring
+#
+# Install:
+#   sudo cp vibe-stack.rules /etc/audit/rules.d/
+#   sudo augenrules --load
+#   sudo systemctl restart auditd
+#
+# View logs:
+#   sudo ausearch -k workspace-write --interpret | tail -50
+#   sudo ausearch -k workspace-delete --interpret | tail -50
+#   sudo ausearch -k suspicious-exec --interpret | tail -50
+
+# ── Delete existing rules to ensure idempotency ──────────────
+-D
+
+# ── Buffer size for high-volume file activity ─────────────────
+-b 8192
+
+# ── Failure mode: 1 = log, 2 = panic ─────────────────────────
+-f 1
+
+# ── Workspace: all file write/create/delete/attribute ops ─────
+-a always,exit -F dir=/srv/sftp/workspace/files \
+    -F perm=w -k workspace-write
+
+-a always,exit -F dir=/srv/sftp/workspace/files \
+    -F perm=a -k workspace-write
+
+-a always,exit -F dir=/srv/sftp/workspace/files \
+    -F perm=r -k workspace-read
+
+# Track deletions specifically
+-a always,exit -F arch=b64 -S unlink,unlinkat,rename,renameat \
+    -F dir=/srv/sftp/workspace/files -k workspace-delete
+
+-a always,exit -F arch=b32 -S unlink,unlinkat,rename,renameat \
+    -F dir=/srv/sftp/workspace/files -k workspace-delete
+
+# ── Suspicious: execution from workspace ─────────────────────
+# Model should never execute binaries directly from workspace
+-a always,exit -F arch=b64 -S execve \
+    -F dir=/srv/sftp/workspace -k suspicious-exec
+
+-a always,exit -F arch=b32 -S execve \
+    -F dir=/srv/sftp/workspace -k suspicious-exec
+
+# ── SSH logins ────────────────────────────────────────────────
+-w /var/log/auth.log -p wa -k auth-log
+-w /etc/ssh/sshd_config -p wa -k sshd-config-change
+
+# ── Docker socket access ──────────────────────────────────────
+-w /var/run/docker.sock -p rwa -k docker-socket-access
+
+# ── Privilege escalation attempts ────────────────────────────
+-a always,exit -F arch=b64 -S setuid -k priv-escalation
+-a always,exit -F arch=b32 -S setuid -k priv-escalation
+
+# ── iptables changes ──────────────────────────────────────────
+-w /etc/iptables -p wa -k iptables-change
+-w /sbin/iptables -p x -k iptables-exec
+
+# ── Lock the ruleset ─────────────────────────────────────────
+# Prevents runtime modifications without reboot
+-e 2
