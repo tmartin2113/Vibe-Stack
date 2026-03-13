@@ -1,0 +1,11 @@
+[Unit]
+Description=Run Vibe Stack health monitor every 5 minutes
+Requires=vibe-health.service
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=5min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

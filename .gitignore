@@ -4,3 +4,9 @@ secrets/
 __pycache__/
 *.egg-info/
 .DS_Store
+docker-compose.override.yml
+skill-sources/anthropics-skills/
+skill-sources/obra-superpowers/
+skill-sources/vercel-agent-skills/
+skill-sources/voltagent-skills/
+skill-sources/openclaw-skills/

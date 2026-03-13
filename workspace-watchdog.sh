@@ -16,7 +16,7 @@ BRANCH_NAME="principal-coder"
 LOG_FILE="/var/log/vibe-watchdog.log"
 MAX_LOG_BYTES=$((10 * 1024 * 1024))
 DEPLOY_KEYS_DIR="${DEPLOY_KEYS_DIR:-/root/.ssh/deploy-keys}"
-GIT_USER="${GIT_USER:-tmartin2113}"
+GIT_USER="${GIT_USER:?GIT_USER env var is required}"
 
 log() {
     local level="$1"; shift
@@ -207,7 +207,7 @@ main
 # Restart=always
 # RestartSec=5
 # Environment=WATCH_DIR=/srv/sftp/workspace/files
-# Environment=GIT_USER=tmartin2113
+# Environment=GIT_USER=your-github-username
 # Environment=DEPLOY_KEYS_DIR=/path/to/secrets/ssh
 # StandardOutput=journal
 # StandardError=journal

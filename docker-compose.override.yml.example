@@ -1,0 +1,51 @@
+# ══════════════════════════════════════════════════════════════
+# Developer Override — copy to docker-compose.override.yml
+# ══════════════════════════════════════════════════════════════
+#
+# This file adds local build contexts and source bind mounts
+# for development. Docker Compose automatically merges it with
+# docker-compose.yml when present.
+#
+# Required env vars (set in .env):
+#   PAPERCLIP_SOURCE_DIR  — path to your local paperclip checkout
+#   HOME                  — your home directory (usually auto-set)
+
+services:
+
+  server:
+    build:
+      context: ${PAPERCLIP_SOURCE_DIR}
+      dockerfile: Dockerfile
+    volumes:
+      - ${HOME}/.claude:/paperclip/.claude
+      - ${PAPERCLIP_SOURCE_DIR}/server/dist:/app/server/dist
+      - ${PAPERCLIP_SOURCE_DIR}/packages/db/src:/app/packages/db/src
+      - ${PAPERCLIP_SOURCE_DIR}/packages/shared/src:/app/packages/shared/src
+
+  deerflow-langgraph:
+    build:
+      context: ${PAPERCLIP_SOURCE_DIR}/deerflow
+      dockerfile: backend/Dockerfile
+    volumes:
+      - ${PAPERCLIP_SOURCE_DIR}/deerflow/backend/:/app/backend/
+      - ${PAPERCLIP_SOURCE_DIR}/deerflow/config.yaml:/app/config.yaml:ro
+      - ${PAPERCLIP_SOURCE_DIR}/deerflow/skills:/app/skills
+
+  deerflow-gateway:
+    build:
+      context: ${PAPERCLIP_SOURCE_DIR}/deerflow
+      dockerfile: backend/Dockerfile
+    volumes:
+      - ${PAPERCLIP_SOURCE_DIR}/deerflow/backend/:/app/backend/
+      - ${PAPERCLIP_SOURCE_DIR}/deerflow/config.yaml:/app/config.yaml:ro
+      - ${PAPERCLIP_SOURCE_DIR}/deerflow/skills:/app/skills
+
+  ssh-relay:
+    build:
+      context: ./ssh-relay
+      dockerfile: Dockerfile
+
+  dev-runner:
+    build:
+      context: ./dev-runner
+      dockerfile: Dockerfile

@@ -99,8 +99,7 @@ if [[ -z "${TAILSCALE_HOSTNAME:-}" ]] || [[ "$TAILSCALE_HOSTNAME" == your-pc-nam
 fi
 
 : "${WORKSPACE_PATH:=/srv/sftp/workspace/files}"
-: "${PAPERCLIP_SOURCE_DIR:=/home/prime/paperclip}"
-GIT_USER="${GIT_USER:-tmartin2113}"
+[[ -z "${GIT_USER:-}" || "$GIT_USER" == "your-github-username" ]] && error "GIT_USER not set — edit .env with your GitHub username"
 
 # Persist auto-detected values to .env
 _update_env_var() {
@@ -116,15 +115,18 @@ touch .env
 _update_env_var "TAILSCALE_HOSTNAME" "${TAILSCALE_HOSTNAME}"
 _update_env_var "TAILSCALE_IP" "${TAILSCALE_IP}"
 _update_env_var "WORKSPACE_PATH" "${WORKSPACE_PATH}"
-_update_env_var "PAPERCLIP_SOURCE_DIR" "${PAPERCLIP_SOURCE_DIR}"
 _update_env_var "GIT_USER" "${GIT_USER}"
 success ".env loaded (Tailscale: $TAILSCALE_HOSTNAME / $TAILSCALE_IP)"
 
-# Verify Paperclip source exists
-if [[ ! -f "$PAPERCLIP_SOURCE_DIR/Dockerfile" ]]; then
-    error "Paperclip source not found at $PAPERCLIP_SOURCE_DIR — set PAPERCLIP_SOURCE_DIR in .env"
+# PAPERCLIP_SOURCE_DIR only needed for local dev builds (docker-compose.override.yml)
+if [[ -n "${PAPERCLIP_SOURCE_DIR:-}" ]]; then
+    if [[ ! -f "$PAPERCLIP_SOURCE_DIR/Dockerfile" ]]; then
+        warn "PAPERCLIP_SOURCE_DIR set to $PAPERCLIP_SOURCE_DIR but no Dockerfile found — local builds will fail"
+    else
+        _update_env_var "PAPERCLIP_SOURCE_DIR" "${PAPERCLIP_SOURCE_DIR}"
+        success "Paperclip source: $PAPERCLIP_SOURCE_DIR (for local builds)"
+    fi
 fi
-success "Paperclip source: $PAPERCLIP_SOURCE_DIR"
 
 # ══════════════════════════════════════════════════════════════
 # 1. Detect host versions
@@ -292,7 +294,39 @@ if [ -z "$(ls -A secrets/ssh/ 2>/dev/null)" ]; then
     warn "-> Add secrets/ssh/repo-name.pub as a deploy key on GitHub repo"
 fi
 
+if [[ ! -f "secrets/github_token.txt" ]] || [[ ! -s "secrets/github_token.txt" ]]; then
+    warn "secrets/github_token.txt is missing or empty"
+    warn "Claude Code agents need a GitHub token for git operations."
+    warn "-> echo 'ghp_your_token_here' > secrets/github_token.txt && chmod 444 secrets/github_token.txt"
+fi
+
 success "Secrets ready"
+
+# ══════════════════════════════════════════════════════════════
+# 6b. Skill Sources
+# ══════════════════════════════════════════════════════════════
+info "Setting up skill sources..."
+mkdir -p skill-sources
+
+clone_if_missing() {
+    local url="$1" dest="$2"
+    if [[ -d "$dest/.git" ]]; then
+        info "  Exists: $dest"
+    else
+        info "  Cloning $url → $dest"
+        git clone --depth 1 "$url" "$dest"
+    fi
+}
+
+clone_if_missing "https://github.com/anthropics/skills.git"            "skill-sources/anthropics-skills"
+clone_if_missing "https://github.com/nichochar/obra-superpowers.git"   "skill-sources/obra-superpowers"
+clone_if_missing "https://github.com/nichochar/vercel-agent-skills.git" "skill-sources/vercel-agent-skills"
+clone_if_missing "https://github.com/nichochar/voltagent-skills.git"   "skill-sources/voltagent-skills"
+
+info "Fetching OpenClaw skills..."
+node fetch-openclaw-skills.mjs || warn "OpenClaw skill fetch failed (non-fatal)"
+
+success "Skill sources ready"
 
 # ══════════════════════════════════════════════════════════════
 # 7. Workspace
@@ -482,11 +516,16 @@ for svc in $CUSTOM_SERVICES; do
 done
 
 if [[ -n "$BUILD_NEEDED" ]]; then
-    info "Building missing images locally:$BUILD_NEEDED"
-    for svc in $BUILD_NEEDED; do
-        info "  Building $svc..."
-        docker compose build "$svc"
-    done
+    if [[ -f "docker-compose.override.yml" ]]; then
+        info "Building missing images locally (using override):$BUILD_NEEDED"
+        for svc in $BUILD_NEEDED; do
+            info "  Building $svc..."
+            docker compose build "$svc"
+        done
+    else
+        err "The following images could not be pulled from GHCR:$BUILD_NEEDED"
+        error "Either push images to GHCR first, or copy docker-compose.override.yml.example to docker-compose.override.yml for local builds"
+    fi
 fi
 success "All images ready"
 

@@ -1,0 +1,38 @@
+# vLLM systemd service template
+# Install: sed "s|__HF_CACHE__|$HOME/.cache/huggingface|g" vllm.service | sudo tee /etc/systemd/system/vllm.service
+# Then:    sudo systemctl daemon-reload && sudo systemctl enable --now vllm
+
+[Unit]
+Description=vLLM OpenAI-Compatible Server (Qwen3.5-9B)
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=simple
+Restart=unless-stopped
+RestartSec=10
+
+ExecStartPre=-/usr/bin/docker rm -f vibe-vllm
+ExecStart=/usr/bin/docker run \
+  --name vibe-vllm \
+  --gpus all \
+  --ipc=host \
+  -p 8000:8000 \
+  -v __HF_CACHE__:/root/.cache/huggingface \
+  vllm/vllm-openai:latest \
+    Qwen/Qwen3.5-9B \
+    --host 0.0.0.0 \
+    --port 8000 \
+    --max-model-len 32768 \
+    --gpu-memory-utilization 0.95 \
+    --enable-prefix-caching \
+    --enable-chunked-prefill \
+    --max-num-seqs 8 \
+    --trust-remote-code \
+    --enable-auto-tool-choice \
+    --tool-call-parser hermes
+
+ExecStop=/usr/bin/docker stop vibe-vllm
+
+[Install]
+WantedBy=multi-user.target

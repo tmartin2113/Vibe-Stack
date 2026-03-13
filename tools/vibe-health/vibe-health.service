@@ -1,0 +1,12 @@
+[Unit]
+Description=Vibe Stack health monitor
+After=network.target
+
+[Service]
+Type=oneshot
+# setup.sh will substitute VIBE_USER and VIBE_STACK_DIR when installing
+User=__VIBE_USER__
+WorkingDirectory=__VIBE_STACK_DIR__
+ExecStart=/usr/bin/node __VIBE_STACK_DIR__/tools/vibe-health/index.js --log /var/log/vibe-health.log
+StandardOutput=journal
+StandardError=journal

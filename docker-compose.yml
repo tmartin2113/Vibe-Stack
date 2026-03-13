@@ -117,9 +117,6 @@ services:
   # ────────────────────────────────────────────────────────────────
   server:
     image: ghcr.io/tmartin2113/paperclip-server:latest
-    build:
-      context: ${PAPERCLIP_SOURCE_DIR:-/home/prime/paperclip}
-      dockerfile: Dockerfile
     container_name: vibe-server
     restart: always
     entrypoint:
@@ -130,7 +127,7 @@ services:
         export PAPERCLIP_AGENT_JWT_SECRET=$$(cat /run/secrets/agent_jwt_secret)
         export DATABASE_URL="postgres://paperclip:$$(cat /run/secrets/paperclip_postgres_password)@db:5432/paperclip"
         export GH_TOKEN=$$(cat /run/secrets/github_token)
-        node /home/prime/Repos/Vibe-Stack-2/refresh-claude-token.mjs || echo "[boot] Claude token refresh failed (non-fatal)"
+        node /app/refresh-claude-token.mjs || echo "[boot] Claude token refresh failed (non-fatal)"
         exec node --import ./server/node_modules/tsx/dist/loader.mjs server/dist/index.js
     ports:
       - "127.0.0.1:3100:3100"
@@ -148,13 +145,7 @@ services:
       - github_token
     volumes:
       - paperclip-data:/paperclip
-      - /home/prime/.claude:/paperclip/.claude
-      - /home/prime/paperclip:/home/prime/paperclip
-      - /home/prime/paperclip/server/dist:/app/server/dist
-      - /home/prime/paperclip/packages/db/src:/app/packages/db/src
-      - /home/prime/paperclip/packages/shared/src:/app/packages/shared/src
-      - /home/prime/Projects:/home/prime/Projects
-      - /home/prime/Repos:/home/prime/Repos
+      - ./refresh-claude-token.mjs:/app/refresh-claude-token.mjs:ro
       - ${SKILL_SOURCES_DIR:-./skill-sources}/openclaw-skills/skills:/app/skills/custom/openclaw:ro
     depends_on:
       db:
@@ -178,9 +169,6 @@ services:
   # ────────────────────────────────────────────────────────────────
   deerflow-langgraph:
     image: ghcr.io/tmartin2113/paperclip-deerflow:latest
-    build:
-      context: ${PAPERCLIP_SOURCE_DIR:-/home/prime/paperclip}/deerflow
-      dockerfile: backend/Dockerfile
     container_name: vibe-deerflow-langgraph
     restart: always
     command: >
@@ -189,10 +177,7 @@ services:
       --host 0.0.0.0 --port 2024
       --n-jobs-per-worker 4"
     volumes:
-      - ${PAPERCLIP_SOURCE_DIR:-/home/prime/paperclip}/deerflow/backend/:/app/backend/
       - langgraph-venv:/app/backend/.venv
-      - ${PAPERCLIP_SOURCE_DIR:-/home/prime/paperclip}/deerflow/config.yaml:/app/config.yaml:ro
-      - ${PAPERCLIP_SOURCE_DIR:-/home/prime/paperclip}/deerflow/skills:/app/skills
       - ${SKILL_SOURCES_DIR:-./skill-sources}/anthropics-skills/skills:/app/skills/custom/anthropics:ro
       - ${SKILL_SOURCES_DIR:-./skill-sources}/obra-superpowers/skills:/app/skills/custom/obra:ro
       - ${SKILL_SOURCES_DIR:-./skill-sources}/vercel-agent-skills/skills:/app/skills/custom/vercel:ro
@@ -218,19 +203,13 @@ services:
   # ────────────────────────────────────────────────────────────────
   deerflow-gateway:
     image: ghcr.io/tmartin2113/paperclip-deerflow:latest
-    build:
-      context: ${PAPERCLIP_SOURCE_DIR:-/home/prime/paperclip}/deerflow
-      dockerfile: backend/Dockerfile
     container_name: vibe-deerflow-gateway
     restart: always
     command: >
       sh -c "cd backend && uv run uvicorn src.gateway.app:app
       --host 0.0.0.0 --port 8001"
     volumes:
-      - ${PAPERCLIP_SOURCE_DIR:-/home/prime/paperclip}/deerflow/backend/:/app/backend/
       - gateway-venv:/app/backend/.venv
-      - ${PAPERCLIP_SOURCE_DIR:-/home/prime/paperclip}/deerflow/config.yaml:/app/config.yaml:ro
-      - ${PAPERCLIP_SOURCE_DIR:-/home/prime/paperclip}/deerflow/skills:/app/skills
       - ${SKILL_SOURCES_DIR:-./skill-sources}/anthropics-skills/skills:/app/skills/custom/anthropics:ro
       - ${SKILL_SOURCES_DIR:-./skill-sources}/obra-superpowers/skills:/app/skills/custom/obra:ro
       - ${SKILL_SOURCES_DIR:-./skill-sources}/vercel-agent-skills/skills:/app/skills/custom/vercel:ro
@@ -361,9 +340,6 @@ services:
   # Deploy keys mounted read-only — no PAT anywhere in the stack
   # ────────────────────────────────────────────────────────────────
   ssh-relay:
-    build:
-      context: ./ssh-relay
-      dockerfile: Dockerfile
     image: ghcr.io/tmartin2113/vibe-ssh-relay:latest
     container_name: vibe-ssh-relay
     restart: always
@@ -384,9 +360,6 @@ services:
   # Dynamic ports 8100-8119 mapped through Caddy
   # ────────────────────────────────────────────────────────────────
   dev-runner:
-    build:
-      context: ./dev-runner
-      dockerfile: Dockerfile
     image: ghcr.io/tmartin2113/vibe-dev-runner:latest
     container_name: vibe-dev-runner
     restart: always
