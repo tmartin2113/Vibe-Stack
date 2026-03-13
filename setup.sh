@@ -100,6 +100,7 @@ fi
 
 : "${WORKSPACE_PATH:=/srv/sftp/workspace/files}"
 [[ -z "${GIT_USER:-}" || "$GIT_USER" == "your-github-username" ]] && error "GIT_USER not set — edit .env with your GitHub username"
+[[ -z "${GHCR_ORG:-}" || "$GHCR_ORG" == "your-github-username" ]] && error "GHCR_ORG not set — edit .env with the GitHub org/user that hosts the GHCR images"
 
 # Persist auto-detected values to .env
 _update_env_var() {
