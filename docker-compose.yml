@@ -116,7 +116,7 @@ services:
   # All interaction happens here: companies, agents, tasks, approvals
   # ────────────────────────────────────────────────────────────────
   server:
-    image: ghcr.io/tmartin2113/paperclip-server:latest
+    image: ghcr.io/${GHCR_ORG:-tmartin2113}/paperclip-server:latest
     container_name: vibe-server
     restart: always
     entrypoint:
@@ -168,7 +168,7 @@ services:
   # Runs Qwen3.5-9B via vLLM on host for local model agents
   # ────────────────────────────────────────────────────────────────
   deerflow-langgraph:
-    image: ghcr.io/tmartin2113/paperclip-deerflow:latest
+    image: ghcr.io/${GHCR_ORG:-tmartin2113}/paperclip-deerflow:latest
     container_name: vibe-deerflow-langgraph
     restart: always
     command: >
@@ -202,7 +202,7 @@ services:
   # DeerFlow Gateway — REST API for DeerFlow
   # ────────────────────────────────────────────────────────────────
   deerflow-gateway:
-    image: ghcr.io/tmartin2113/paperclip-deerflow:latest
+    image: ghcr.io/${GHCR_ORG:-tmartin2113}/paperclip-deerflow:latest
     container_name: vibe-deerflow-gateway
     restart: always
     command: >
@@ -340,7 +340,7 @@ services:
   # Deploy keys mounted read-only — no PAT anywhere in the stack
   # ────────────────────────────────────────────────────────────────
   ssh-relay:
-    image: ghcr.io/tmartin2113/vibe-ssh-relay:latest
+    image: ghcr.io/${GHCR_ORG:-tmartin2113}/vibe-ssh-relay:latest
     container_name: vibe-ssh-relay
     restart: always
     read_only: true
@@ -360,7 +360,7 @@ services:
   # Dynamic ports 8100-8119 mapped through Caddy
   # ────────────────────────────────────────────────────────────────
   dev-runner:
-    image: ghcr.io/tmartin2113/vibe-dev-runner:latest
+    image: ghcr.io/${GHCR_ORG:-tmartin2113}/vibe-dev-runner:latest
     container_name: vibe-dev-runner
     restart: always
     ports:
