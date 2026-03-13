@@ -129,7 +129,29 @@ if [[ -n "${PAPERCLIP_SOURCE_DIR:-}" ]]; then
 fi
 
 # ══════════════════════════════════════════════════════════════
-# 1. Detect host versions
+# 1. Port conflict check
+# ══════════════════════════════════════════════════════════════
+info "Checking for port conflicts..."
+REQUIRED_PORTS="2222 3100 5678 8000 8100 8101 8102 8103 8104 8105 8106 8107 8108 8109 8110 8111 8112 8113 8114 8115 8116 8117 8118 8119 9000"
+CONFLICTS=""
+for port in $REQUIRED_PORTS; do
+    pid=$(ss -tlnp "sport = :$port" 2>/dev/null | awk 'NR>1 {print $6}' | grep -oP 'pid=\K\d+' | head -1)
+    if [[ -n "$pid" ]]; then
+        pname=$(ps -p "$pid" -o comm= 2>/dev/null || echo "unknown")
+        CONFLICTS="${CONFLICTS}\n  Port $port — PID $pid ($pname)"
+    fi
+done
+
+if [[ -n "$CONFLICTS" ]]; then
+    warn "The following ports are already in use:${CONFLICTS}"
+    printf "\n${YELLOW}Vibe Stack needs these ports. Stop the conflicting processes or press Enter to continue anyway.${NC}\n"
+    printf "  Press Ctrl+C to abort, or Enter to continue: "
+    read -r
+fi
+success "Port check complete"
+
+# ══════════════════════════════════════════════════════════════
+# 2. Detect host versions
 # ══════════════════════════════════════════════════════════════
 info "Detecting host versions..."
 HOST_UBUNTU_VERSION=$(lsb_release -rs 2>/dev/null || echo "24.04")
@@ -138,7 +160,7 @@ info "Ubuntu $HOST_UBUNTU_VERSION / Python $HOST_PYTHON_VERSION"
 success "Host versions detected"
 
 # ══════════════════════════════════════════════════════════════
-# 2. System prerequisites
+# 3. System prerequisites
 # ══════════════════════════════════════════════════════════════
 info "Installing system prerequisites..."
 apt-get update -qq
@@ -152,7 +174,7 @@ apt-get install -y --no-install-recommends \
 success "Prerequisites installed"
 
 # ══════════════════════════════════════════════════════════════
-# 3. Docker
+# 4. Docker
 # ══════════════════════════════════════════════════════════════
 if ! command -v docker &>/dev/null; then
     info "Installing Docker CE..."
@@ -196,7 +218,7 @@ fi
 success "Docker Compose $(docker compose version --short) available"
 
 # ══════════════════════════════════════════════════════════════
-# 4. NVIDIA Container Toolkit
+# 5. NVIDIA Container Toolkit
 # ══════════════════════════════════════════════════════════════
 if ! dpkg -s nvidia-container-toolkit &>/dev/null; then
     info "Installing NVIDIA Container Toolkit..."
@@ -215,7 +237,7 @@ else
 fi
 
 # ══════════════════════════════════════════════════════════════
-# 5. Caddy with rate-limit plugin
+# 6. Caddy with rate-limit plugin
 # ══════════════════════════════════════════════════════════════
 if ! command -v caddy &>/dev/null || ! caddy list-modules 2>/dev/null | grep -q "rate_limit"; then
     info "Building Caddy with rate-limit plugin..."
@@ -268,7 +290,7 @@ fi
 usermod -aG tailscale caddy 2>/dev/null || true
 
 # ══════════════════════════════════════════════════════════════
-# 6. Secrets
+# 7. Secrets
 # ══════════════════════════════════════════════════════════════
 info "Generating secrets..."
 mkdir -p secrets; chmod 700 secrets
@@ -303,7 +325,7 @@ fi
 success "Secrets ready"
 
 # ══════════════════════════════════════════════════════════════
-# 6b. Skill Sources
+# 7b. Skill Sources
 # ══════════════════════════════════════════════════════════════
 info "Setting up skill sources..."
 mkdir -p skill-sources
@@ -329,7 +351,7 @@ node fetch-openclaw-skills.mjs || warn "OpenClaw skill fetch failed (non-fatal)"
 success "Skill sources ready"
 
 # ══════════════════════════════════════════════════════════════
-# 7. Workspace
+# 8. Workspace
 # ══════════════════════════════════════════════════════════════
 info "Configuring workspace: $WORKSPACE_PATH"
 SFTP_ROOT=$(dirname "$WORKSPACE_PATH")
@@ -384,7 +406,7 @@ warn "Add phone SSH key: echo 'ssh-ed25519 AAAA...' >> /home/sftp-vibe/.ssh/auth
 success "Workspace configured"
 
 # ══════════════════════════════════════════════════════════════
-# 8. SSH
+# 9. SSH
 # ══════════════════════════════════════════════════════════════
 info "Configuring SSH..."
 sed -e "s|100\.x\.x\.x|${TAILSCALE_IP}|g" \
@@ -417,14 +439,14 @@ systemctl restart ssh
 success "SSH configured (port 22 + 2222)"
 
 # ══════════════════════════════════════════════════════════════
-# 9. Tailscale SSH
+# 10. Tailscale SSH
 # ══════════════════════════════════════════════════════════════
 info "Enabling Tailscale SSH..."
 tailscale set --ssh=true
 success "Tailscale SSH enabled (port 22 — interactive sessions)"
 
 # ══════════════════════════════════════════════════════════════
-# 10. Caddy
+# 11. Caddy
 # ══════════════════════════════════════════════════════════════
 info "Configuring Caddy..."
 useradd -r -s /usr/sbin/nologin -d /var/lib/caddy caddy 2>/dev/null || true
@@ -494,7 +516,7 @@ systemctl reload caddy 2>/dev/null || systemctl restart caddy
 success "Caddy running (self-signed TLS)"
 
 # ══════════════════════════════════════════════════════════════
-# 11. Pull and build Docker images
+# 12. Pull and build Docker images
 # ══════════════════════════════════════════════════════════════
 info "Pulling public Docker images..."
 for svc in searxng n8n postgres-n8n watchtower; do
@@ -530,7 +552,7 @@ fi
 success "All images ready"
 
 # ══════════════════════════════════════════════════════════════
-# 12. Start stack (staged for reliable startup)
+# 13. Start stack (staged for reliable startup)
 # ══════════════════════════════════════════════════════════════
 info "Starting stack — databases..."
 docker compose up -d db postgres-n8n
@@ -561,7 +583,7 @@ docker compose up -d watchtower
 success "Stack started"
 
 # ══════════════════════════════════════════════════════════════
-# 13. iptables
+# 14. iptables
 # ══════════════════════════════════════════════════════════════
 info "Applying iptables rules..."
 chmod +x iptables-setup.sh
@@ -588,7 +610,7 @@ systemctl enable vibe-iptables
 success "iptables auto-refresh service installed"
 
 # ══════════════════════════════════════════════════════════════
-# 14. Watchdog service
+# 15. Watchdog service
 # ══════════════════════════════════════════════════════════════
 info "Installing workspace watchdog..."
 cp workspace-watchdog.sh /usr/local/bin/workspace-watchdog.sh
@@ -618,7 +640,7 @@ systemctl enable --now workspace-watchdog
 success "Watchdog installed"
 
 # ══════════════════════════════════════════════════════════════
-# 15. auditd
+# 16. auditd
 # ══════════════════════════════════════════════════════════════
 info "Installing auditd rules..."
 sed "s|/srv/sftp/workspace/files|${WORKSPACE_PATH}|g" \
@@ -627,7 +649,7 @@ augenrules --load >/dev/null 2>&1 || true
 success "auditd configured"
 
 # ══════════════════════════════════════════════════════════════
-# 16. fail2ban
+# 17. fail2ban
 # ══════════════════════════════════════════════════════════════
 info "Installing fail2ban..."
 cp fail2ban/vibe-stack.conf    /etc/fail2ban/jail.d/vibe-stack.conf
@@ -636,7 +658,7 @@ systemctl enable --now fail2ban && systemctl restart fail2ban
 success "fail2ban configured"
 
 # ══════════════════════════════════════════════════════════════
-# 17. Unattended upgrades
+# 18. Unattended upgrades
 # ══════════════════════════════════════════════════════════════
 info "Enabling unattended security upgrades..."
 cat > /etc/apt/apt.conf.d/20auto-upgrades-vibe << 'EOF'
@@ -646,7 +668,7 @@ EOF
 success "Unattended upgrades enabled"
 
 # ══════════════════════════════════════════════════════════════
-# 18. Claude Code login check
+# 19. Claude Code login check
 # ══════════════════════════════════════════════════════════════
 info "Checking Claude Code credentials..."
 CREDS_PATH="/paperclip/.claude/.credentials.json"
