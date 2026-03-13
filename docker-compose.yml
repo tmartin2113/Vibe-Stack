@@ -116,7 +116,7 @@ services:
   # All interaction happens here: companies, agents, tasks, approvals
   # ────────────────────────────────────────────────────────────────
   server:
-    image: ghcr.io/paperclipai/paperclip-server:latest
+    image: ghcr.io/tmartin2113/paperclip-server:latest
     build:
       context: ${PAPERCLIP_SOURCE_DIR:-/home/prime/paperclip}
       dockerfile: Dockerfile
@@ -177,7 +177,7 @@ services:
   # Runs Qwen3.5-9B via vLLM on host for local model agents
   # ────────────────────────────────────────────────────────────────
   deerflow-langgraph:
-    image: ghcr.io/paperclipai/paperclip-deerflow:latest
+    image: ghcr.io/tmartin2113/paperclip-deerflow:latest
     build:
       context: ${PAPERCLIP_SOURCE_DIR:-/home/prime/paperclip}/deerflow
       dockerfile: backend/Dockerfile
@@ -217,7 +217,7 @@ services:
   # DeerFlow Gateway — REST API for DeerFlow
   # ────────────────────────────────────────────────────────────────
   deerflow-gateway:
-    image: ghcr.io/paperclipai/paperclip-deerflow:latest
+    image: ghcr.io/tmartin2113/paperclip-deerflow:latest
     build:
       context: ${PAPERCLIP_SOURCE_DIR:-/home/prime/paperclip}/deerflow
       dockerfile: backend/Dockerfile
