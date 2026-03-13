@@ -9,6 +9,7 @@ A self-hosted autonomous agent network for software development — deploy a tea
 - **One-command setup** — `sudo ./setup.sh` handles Docker, Caddy, secrets, firewall, and systemd services
 - **Staging previews** — 20 isolated preview ports (8100-8119) behind Tailscale TLS with strict CSP
 - **Self-hosted search** — SearXNG for web research without third-party API keys
+- **Inter-agent memory** — shared fact store with TF-IDF relevance scoring; agents learn from each other across sessions
 - **Workflow automation** — n8n for orchestrating pipelines, notifications, and integrations
 
 ---
@@ -226,6 +227,91 @@ The `agent-core-net` is fully internal — no host or internet access. The `git-
 | `test-adapters.js` | Test claude_local and deerflow adapter envs | — |
 | `fetch-openclaw-skills.mjs` | Download OpenClaw skill catalog | — |
 | `refresh-claude-token.mjs` | Refresh Claude OAuth access token | — |
+
+---
+
+## Inter-Agent Memory
+
+All agents share a persistent memory layer built into the DeerFlow runtime. Facts learned during any agent's session are stored in a shared `memory.json` file and automatically injected into every agent's context on subsequent interactions.
+
+### How It Works
+
+```
+  Agent conversation ──► MemoryMiddleware extracts last 3 turns
+                                │
+                         ┌──────▼──────┐
+                         │  Debounced   │  (30s queue, per-thread dedup)
+                         │  fact queue  │
+                         └──────┬──────┘
+                                │
+                         ┌──────▼──────┐
+                         │ LLM extracts │  Facts with category + confidence
+                         │ new facts    │
+                         └──────┬──────┘
+                                │
+                         ┌──────▼──────┐
+                         │ memory.json  │  Shared across all agents
+                         └──────┬──────┘
+                                │
+                    ┌───────────▼───────────┐
+                    │  Next agent invocation │
+                    │  TF-IDF ranks facts    │
+                    │  by conversation topic  │
+                    │  Injects as <memory>   │
+                    └───────────────────────┘
+```
+
+### Context-Aware Fact Selection
+
+Facts are ranked using a combined score before injection:
+
+```
+score = (TF-IDF similarity to current conversation × 0.6) + (confidence × 0.4)
+```
+
+- **Similarity (60%)** — cosine similarity between fact content and the last 3 turns of conversation (user messages + final AI responses, excluding tool calls)
+- **Confidence (40%)** — LLM-assigned confidence score (0-1)
+
+This means different facts surface depending on what the agent is currently working on. An agent debugging a Python test gets Python/pytest facts; an agent setting up infrastructure gets Docker/deployment facts.
+
+### Fact Categories
+
+Each extracted fact is tagged with a category:
+
+| Category | Example |
+|----------|---------|
+| `preference` | "User prefers pytest over unittest" |
+| `knowledge` | "Project uses FastAPI with SQLAlchemy" |
+| `context` | "Currently refactoring the auth module" |
+| `behavior` | "Always run linting before committing" |
+| `goal` | "Target: 90% test coverage by end of sprint" |
+
+### Configuration
+
+In DeerFlow's `config.yaml`:
+
+```yaml
+memory:
+  enabled: true
+  injection_enabled: true
+  max_injection_tokens: 2000
+  debounce_seconds: 30
+  max_facts: 100
+  fact_confidence_threshold: 0.7
+  similarity_weight: 0.6
+  confidence_weight: 0.4
+```
+
+### Memory API
+
+The DeerFlow Gateway exposes memory endpoints:
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /api/memory` | View all stored facts and context |
+| `POST /api/memory/reload` | Force reload from disk |
+| `GET /api/memory/config` | Current memory configuration |
+| `GET /api/memory/status` | Config + data combined |
 
 ---
 
