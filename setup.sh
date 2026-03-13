@@ -462,19 +462,33 @@ success "Caddy running (self-signed TLS)"
 # ══════════════════════════════════════════════════════════════
 # 11. Pull and build Docker images
 # ══════════════════════════════════════════════════════════════
-info "Pulling Docker images..."
+info "Pulling public Docker images..."
 for svc in searxng n8n postgres-n8n watchtower; do
     info "  Pulling $svc..."
     docker compose pull --policy missing --quiet "$svc"
 done
-success "Images pulled"
+success "Public images pulled"
 
-info "Building custom images..."
-for svc in ssh-relay dev-runner server deerflow-langgraph deerflow-gateway; do
-    info "  Building $svc..."
-    docker compose build "$svc"
+CUSTOM_SERVICES="ssh-relay dev-runner server deerflow-langgraph deerflow-gateway"
+BUILD_NEEDED=""
+
+info "Pulling pre-built images from GHCR..."
+for svc in $CUSTOM_SERVICES; do
+    info "  Pulling $svc..."
+    if ! docker compose pull --quiet "$svc" 2>/dev/null; then
+        warn "  $svc — pre-built image not available, will build locally"
+        BUILD_NEEDED="$BUILD_NEEDED $svc"
+    fi
 done
-success "Images built"
+
+if [[ -n "$BUILD_NEEDED" ]]; then
+    info "Building missing images locally:$BUILD_NEEDED"
+    for svc in $BUILD_NEEDED; do
+        info "  Building $svc..."
+        docker compose build "$svc"
+    done
+fi
+success "All images ready"
 
 # ══════════════════════════════════════════════════════════════
 # 12. Start stack (staged for reliable startup)

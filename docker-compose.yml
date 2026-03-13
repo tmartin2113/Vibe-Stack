@@ -72,10 +72,14 @@ secrets:
     file: ./secrets/n8n_postgres_password.txt
   searxng_secret:
     file: ./secrets/searxng_secret.txt
+  github_token:
+    file: ./secrets/github_token.txt
 
 volumes:
   paperclip-pgdata:
   paperclip-data:
+  langgraph-venv:
+  gateway-venv:
   n8n-postgres-data:
   n8n-data:
   searxng-data:
@@ -89,7 +93,7 @@ services:
   db:
     image: postgres:17-alpine
     container_name: vibe-db
-    restart: unless-stopped
+    restart: always
     environment:
       POSTGRES_USER: paperclip
       POSTGRES_PASSWORD_FILE: /run/secrets/paperclip_postgres_password
@@ -112,11 +116,12 @@ services:
   # All interaction happens here: companies, agents, tasks, approvals
   # ────────────────────────────────────────────────────────────────
   server:
+    image: ghcr.io/paperclipai/paperclip-server:latest
     build:
       context: ${PAPERCLIP_SOURCE_DIR:-/home/prime/paperclip}
       dockerfile: Dockerfile
     container_name: vibe-server
-    restart: unless-stopped
+    restart: always
     entrypoint:
       - /bin/sh
       - -c
@@ -124,6 +129,8 @@ services:
         export BETTER_AUTH_SECRET=$$(cat /run/secrets/better_auth_secret)
         export PAPERCLIP_AGENT_JWT_SECRET=$$(cat /run/secrets/agent_jwt_secret)
         export DATABASE_URL="postgres://paperclip:$$(cat /run/secrets/paperclip_postgres_password)@db:5432/paperclip"
+        export GH_TOKEN=$$(cat /run/secrets/github_token)
+        node /home/prime/Repos/Vibe-Stack-2/refresh-claude-token.mjs || echo "[boot] Claude token refresh failed (non-fatal)"
         exec node --import ./server/node_modules/tsx/dist/loader.mjs server/dist/index.js
     ports:
       - "127.0.0.1:3100:3100"
@@ -138,16 +145,22 @@ services:
       - better_auth_secret
       - agent_jwt_secret
       - paperclip_postgres_password
+      - github_token
     volumes:
       - paperclip-data:/paperclip
-      - /home/prime/paperclip:/home/prime/paperclip:ro
-      - /home/prime/Projects:/home/prime/Projects:ro
-      - /home/prime/Repos:/home/prime/Repos:ro
+      - /home/prime/.claude:/paperclip/.claude
+      - /home/prime/paperclip:/home/prime/paperclip
+      - /home/prime/paperclip/server/dist:/app/server/dist
+      - /home/prime/paperclip/packages/db/src:/app/packages/db/src
+      - /home/prime/paperclip/packages/shared/src:/app/packages/shared/src
+      - /home/prime/Projects:/home/prime/Projects
+      - /home/prime/Repos:/home/prime/Repos
+      - ${SKILL_SOURCES_DIR:-./skill-sources}/openclaw-skills/skills:/app/skills/custom/openclaw:ro
     depends_on:
       db:
         condition: service_healthy
     extra_hosts:
-      - "host.docker.internal:host-gateway"
+      - "host.docker.internal:192.168.92.1"
     networks:
       - agent-core-net
       - internet-access
@@ -164,16 +177,30 @@ services:
   # Runs Qwen3.5-9B via vLLM on host for local model agents
   # ────────────────────────────────────────────────────────────────
   deerflow-langgraph:
+    image: ghcr.io/paperclipai/paperclip-deerflow:latest
     build:
-      context: ${PAPERCLIP_SOURCE_DIR:-/home/prime/paperclip}/deerflow/backend
-      dockerfile: Dockerfile
+      context: ${PAPERCLIP_SOURCE_DIR:-/home/prime/paperclip}/deerflow
+      dockerfile: backend/Dockerfile
     container_name: vibe-deerflow-langgraph
-    restart: unless-stopped
+    restart: always
+    command: >
+      sh -c "cd backend && uv run langgraph dev
+      --no-browser --allow-blocking
+      --host 0.0.0.0 --port 2024
+      --n-jobs-per-worker 4"
+    volumes:
+      - ${PAPERCLIP_SOURCE_DIR:-/home/prime/paperclip}/deerflow/backend/:/app/backend/
+      - langgraph-venv:/app/backend/.venv
+      - ${PAPERCLIP_SOURCE_DIR:-/home/prime/paperclip}/deerflow/config.yaml:/app/config.yaml:ro
+      - ${PAPERCLIP_SOURCE_DIR:-/home/prime/paperclip}/deerflow/skills:/app/skills
+      - ${SKILL_SOURCES_DIR:-./skill-sources}/anthropics-skills/skills:/app/skills/custom/anthropics:ro
+      - ${SKILL_SOURCES_DIR:-./skill-sources}/obra-superpowers/skills:/app/skills/custom/obra:ro
+      - ${SKILL_SOURCES_DIR:-./skill-sources}/vercel-agent-skills/skills:/app/skills/custom/vercel:ro
     environment:
       CI: "true"
       VLLM_API_URL: ${VLLM_API_URL:-http://host.docker.internal:8000/v1}
     extra_hosts:
-      - "host.docker.internal:host-gateway"
+      - "host.docker.internal:192.168.92.1"
     networks:
       - agent-core-net
       - internet-access
@@ -190,17 +217,28 @@ services:
   # DeerFlow Gateway — REST API for DeerFlow
   # ────────────────────────────────────────────────────────────────
   deerflow-gateway:
+    image: ghcr.io/paperclipai/paperclip-deerflow:latest
     build:
-      context: ${PAPERCLIP_SOURCE_DIR:-/home/prime/paperclip}/deerflow/backend
-      dockerfile: Dockerfile
+      context: ${PAPERCLIP_SOURCE_DIR:-/home/prime/paperclip}/deerflow
+      dockerfile: backend/Dockerfile
     container_name: vibe-deerflow-gateway
-    restart: unless-stopped
-    command: ["python", "-m", "deerflow_service.gateway"]
+    restart: always
+    command: >
+      sh -c "cd backend && uv run uvicorn src.gateway.app:app
+      --host 0.0.0.0 --port 8001"
+    volumes:
+      - ${PAPERCLIP_SOURCE_DIR:-/home/prime/paperclip}/deerflow/backend/:/app/backend/
+      - gateway-venv:/app/backend/.venv
+      - ${PAPERCLIP_SOURCE_DIR:-/home/prime/paperclip}/deerflow/config.yaml:/app/config.yaml:ro
+      - ${PAPERCLIP_SOURCE_DIR:-/home/prime/paperclip}/deerflow/skills:/app/skills
+      - ${SKILL_SOURCES_DIR:-./skill-sources}/anthropics-skills/skills:/app/skills/custom/anthropics:ro
+      - ${SKILL_SOURCES_DIR:-./skill-sources}/obra-superpowers/skills:/app/skills/custom/obra:ro
+      - ${SKILL_SOURCES_DIR:-./skill-sources}/vercel-agent-skills/skills:/app/skills/custom/vercel:ro
     environment:
       CI: "true"
       VLLM_API_URL: ${VLLM_API_URL:-http://host.docker.internal:8000/v1}
     extra_hosts:
-      - "host.docker.internal:host-gateway"
+      - "host.docker.internal:192.168.92.1"
     networks:
       - agent-core-net
       - internet-access
@@ -218,7 +256,7 @@ services:
   postgres-n8n:
     image: postgres:16-alpine
     container_name: vibe-postgres-n8n
-    restart: unless-stopped
+    restart: always
     volumes:
       - n8n-postgres-data:/var/lib/postgresql/data
     environment:
@@ -246,7 +284,7 @@ services:
   n8n:
     image: n8nio/n8n:latest
     container_name: vibe-n8n
-    restart: unless-stopped
+    restart: always
     entrypoint:
       - /bin/sh
       - -c
@@ -293,7 +331,7 @@ services:
   searxng:
     image: searxng/searxng:latest
     container_name: vibe-searxng
-    restart: unless-stopped
+    restart: always
     entrypoint:
       - /bin/sh
       - -c
@@ -326,9 +364,9 @@ services:
     build:
       context: ./ssh-relay
       dockerfile: Dockerfile
-    image: vibe-ssh-relay:local
+    image: ghcr.io/tmartin2113/vibe-ssh-relay:latest
     container_name: vibe-ssh-relay
-    restart: unless-stopped
+    restart: always
     read_only: true
     networks:
       - git-relay-net
@@ -349,9 +387,9 @@ services:
     build:
       context: ./dev-runner
       dockerfile: Dockerfile
-    image: vibe-dev-runner:local
+    image: ghcr.io/tmartin2113/vibe-dev-runner:latest
     container_name: vibe-dev-runner
-    restart: unless-stopped
+    restart: always
     ports:
       - "127.0.0.1:9000:9000"
       - "127.0.0.1:8100-8119:8100-8119"
@@ -379,7 +417,7 @@ services:
   watchtower:
     image: containrrr/watchtower:latest
     container_name: vibe-watchtower
-    restart: unless-stopped
+    restart: always
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     environment:
