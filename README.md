@@ -125,8 +125,8 @@ A self-hosted autonomous agent network for software development — deploy a tea
 
 ```bash
 # 1. Clone and enter the repo
-git clone https://github.com/YOUR_ORG/vibe-stack-2.git
-cd vibe-stack-2
+git clone https://github.com/YOUR_ORG/vibe-stack.git
+cd vibe-stack
 
 # 2. Copy and configure environment
 cp .env.example .env
