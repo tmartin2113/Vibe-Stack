@@ -134,8 +134,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          repository: paperclipai/paperclip
-          ref: master
+          repository: bytedance/deer-flow
 
       - uses: docker/setup-buildx-action@v3
 
@@ -155,8 +154,8 @@ jobs:
 
       - uses: docker/build-push-action@v6
         with:
-          context: ./deerflow
-          file: ./deerflow/backend/Dockerfile
+          context: .
+          file: ./backend/Dockerfile
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
