@@ -517,7 +517,73 @@ systemctl reload caddy 2>/dev/null || systemctl restart caddy
 success "Caddy running (self-signed TLS)"
 
 # ══════════════════════════════════════════════════════════════
-# 12. Pull and build Docker images
+# 12a. Docker credential helper + GHCR authentication
+# ══════════════════════════════════════════════════════════════
+info "Configuring Docker credential storage..."
+
+# Install credential helper if not present
+if ! command -v docker-credential-secretservice &>/dev/null && \
+   ! command -v docker-credential-pass &>/dev/null; then
+    apt-get install -y --no-install-recommends golang-docker-credential-helpers >/dev/null 2>&1 || true
+fi
+
+# Determine which credential helper to use
+CRED_HELPER=""
+if command -v docker-credential-secretservice &>/dev/null; then
+    CRED_HELPER="secretservice"
+elif command -v docker-credential-pass &>/dev/null; then
+    CRED_HELPER="pass"
+fi
+
+# Configure Docker for the deploying user (not root)
+DEPLOY_USER="${SUDO_USER:-$USER}"
+DEPLOY_HOME=$(eval echo "~$DEPLOY_USER")
+DOCKER_CONFIG_DIR="$DEPLOY_HOME/.docker"
+DOCKER_CONFIG="$DOCKER_CONFIG_DIR/config.json"
+
+mkdir -p "$DOCKER_CONFIG_DIR"
+
+if [[ -n "$CRED_HELPER" ]]; then
+    # Add credsStore if not already configured
+    if [[ -f "$DOCKER_CONFIG" ]]; then
+        if ! grep -q '"credsStore"' "$DOCKER_CONFIG"; then
+            # Merge credsStore into existing config
+            python3 -c "
+import json, sys
+with open('$DOCKER_CONFIG') as f: cfg = json.load(f)
+cfg['credsStore'] = '$CRED_HELPER'
+cfg.get('auths', {}).pop('ghcr.io', None)  # remove plaintext cred
+with open('$DOCKER_CONFIG', 'w') as f: json.dump(cfg, f, indent=2)
+" 2>/dev/null || true
+        fi
+    else
+        echo '{"auths":{},"credsStore":"'"$CRED_HELPER"'"}' > "$DOCKER_CONFIG"
+    fi
+    chown -R "$DEPLOY_USER:$DEPLOY_USER" "$DOCKER_CONFIG_DIR"
+    success "Docker credential helper: $CRED_HELPER"
+else
+    warn "No credential helper available — Docker credentials will be stored in plaintext"
+    warn "Install golang-docker-credential-helpers to fix this"
+fi
+
+# Authenticate with GHCR if not already logged in
+if ! docker pull "ghcr.io/${GHCR_ORG}/paperclip-server:latest" >/dev/null 2>&1; then
+    info "GHCR authentication required for private images"
+    if [[ -f "secrets/github_token.txt" ]] && [[ -s "secrets/github_token.txt" ]]; then
+        cat secrets/github_token.txt | su "$DEPLOY_USER" -c "docker login ghcr.io -u ${GIT_USER} --password-stdin" 2>&1 \
+            | grep -v "WARNING" || true
+        success "Authenticated with GHCR via github_token.txt"
+    else
+        warn "Cannot authenticate with GHCR — secrets/github_token.txt missing"
+        warn "Run: echo 'ghp_...' > secrets/github_token.txt"
+        warn "Or:  docker login ghcr.io -u ${GIT_USER}"
+    fi
+else
+    success "GHCR authentication already configured"
+fi
+
+# ══════════════════════════════════════════════════════════════
+# 12b. Pull and build Docker images
 # ══════════════════════════════════════════════════════════════
 info "Pulling public Docker images..."
 for svc in searxng n8n postgres-n8n watchtower; do
