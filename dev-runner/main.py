@@ -591,7 +591,8 @@ async def deploy(req: DeployRequest):
         install_cmd = _sanitize_command(req.install_command, 0)  # no port needed
         logger.info("Running install step for %s: %s", req.app_id, install_cmd)
         try:
-            result = subprocess.run(
+            result = await asyncio.to_thread(
+                subprocess.run,
                 shlex.split(install_cmd),
                 cwd=str(app_dir),
                 capture_output=True,

@@ -93,8 +93,13 @@ _write_push_status() {
     local status="$1" error="$2" branch="$3"
     local ts; ts=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
     local commit_sha; commit_sha=$(git -C "$WATCH_DIR" rev-parse --short HEAD 2>/dev/null || echo "unknown")
-    # Escape double-quotes in error message for valid JSON
+    # Sanitize error for JSON: escape backslashes, double-quotes, and
+    # replace control chars (newlines, tabs, carriage returns) with spaces.
+    error="${error//\\/\\\\}"
     error="${error//\"/\\\"}"
+    error="${error//$'\n'/ }"
+    error="${error//$'\r'/}"
+    error="${error//$'\t'/ }"
     cat > "$PUSH_STATUS_FILE" <<JSONEOF
 {"status":"${status}","branch":"${branch}","commit":"${commit_sha}","error":"${error}","timestamp":"${ts}"}
 JSONEOF
