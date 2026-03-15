@@ -1,0 +1,307 @@
+{
+  "name": "dev_runner",
+  "description": "Staging app lifecycle manager — deploy, test, screenshot, and tear down apps built by agents.",
+  "base_url": "http://dev-runner:9000",
+  "tools": [
+    {
+      "type": "function",
+      "function": {
+        "name": "deploy_app",
+        "description": "Deploy a staging app from /workspace. Returns a staging URL for human review. The app process is started on an allocated port (8100-8119). If an app with the same ID is already running, it is terminated and redeployed.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "app_id": {
+              "type": "string",
+              "description": "Unique identifier for this app instance"
+            },
+            "app_dir": {
+              "type": "string",
+              "description": "Path relative to /workspace (e.g. 'my-app')"
+            },
+            "command": {
+              "type": "string",
+              "description": "Start command. Use {port} as placeholder for the allocated port (e.g. 'uvicorn main:app --port {port}')"
+            },
+            "runtime": {
+              "type": "string",
+              "enum": ["python", "node", "bash"],
+              "description": "Runtime environment",
+              "default": "python"
+            }
+          },
+          "required": ["app_id", "app_dir", "command"]
+        },
+        "returns": {
+          "type": "object",
+          "properties": {
+            "app_id":      { "type": "string" },
+            "port":        { "type": "integer" },
+            "staging_url": { "type": "string" },
+            "status":      { "type": "string" }
+          }
+        },
+        "method": "POST",
+        "path": "/deploy"
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "get_app_status",
+        "description": "Get the current status of a deployed app, including uptime, exit code, and last stderr output for debugging.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "app_id": {
+              "type": "string",
+              "description": "The app instance ID"
+            }
+          },
+          "required": ["app_id"]
+        },
+        "returns": {
+          "type": "object",
+          "properties": {
+            "app_id":         { "type": "string" },
+            "port":           { "type": "integer" },
+            "staging_url":    { "type": "string" },
+            "status":         { "type": "string" },
+            "uptime_seconds": { "type": "number" },
+            "alive":          { "type": "boolean" },
+            "exit_code":      { "type": "integer", "nullable": true },
+            "stderr_tail":    { "type": "array", "items": { "type": "string" }, "description": "Last lines of stderr output" }
+          }
+        },
+        "method": "GET",
+        "path": "/status/{app_id}"
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "teardown_app",
+        "description": "Tear down a staging app — call on approval or rejection. Terminates the process and releases the port.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "app_id": {
+              "type": "string",
+              "description": "The app instance ID to tear down"
+            }
+          },
+          "required": ["app_id"]
+        },
+        "returns": {
+          "type": "object",
+          "properties": {
+            "status": { "type": "string" },
+            "app_id": { "type": "string" }
+          }
+        },
+        "method": "DELETE",
+        "path": "/teardown/{app_id}"
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "list_apps",
+        "description": "List all running staging apps with their status, ports, and uptime.",
+        "parameters": {
+          "type": "object",
+          "properties": {}
+        },
+        "returns": {
+          "type": "object",
+          "description": "Map of app_id to app status objects"
+        },
+        "method": "GET",
+        "path": "/list"
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "browse_app",
+        "description": "Navigate to a staging app via headless browser (Lightpanda) and return its DOM content including title, HTML, and extracted text. Useful for verifying page content without a screenshot.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "app_id": {
+              "type": "string",
+              "description": "The app instance ID to browse"
+            },
+            "width": {
+              "type": "integer",
+              "description": "Viewport width in pixels",
+              "default": 1280
+            },
+            "height": {
+              "type": "integer",
+              "description": "Viewport height in pixels",
+              "default": 720
+            },
+            "wait_ms": {
+              "type": "integer",
+              "description": "Wait after load before extraction (ms, 0-10000)",
+              "default": 2000
+            }
+          },
+          "required": ["app_id"]
+        },
+        "returns": {
+          "type": "object",
+          "properties": {
+            "app_id":      { "type": "string" },
+            "staging_url": { "type": "string" },
+            "title":       { "type": "string" },
+            "html":        { "type": "string", "description": "Page HTML (max 500KB)" },
+            "text":        { "type": "string", "description": "Body text content (max 100KB)" }
+          }
+        },
+        "method": "POST",
+        "path": "/browse/{app_id}"
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "screenshot_app",
+        "description": "Capture a rendered PNG screenshot of a staging app using local Chromium. Returns base64-encoded image data.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "app_id": {
+              "type": "string",
+              "description": "The app instance ID to screenshot"
+            },
+            "width": {
+              "type": "integer",
+              "description": "Viewport width in pixels",
+              "default": 1280
+            },
+            "height": {
+              "type": "integer",
+              "description": "Viewport height in pixels",
+              "default": 720
+            },
+            "full_page": {
+              "type": "boolean",
+              "description": "Capture full scrollable page",
+              "default": false
+            },
+            "wait_ms": {
+              "type": "integer",
+              "description": "Wait after load before capture (ms, 0-10000)",
+              "default": 2000
+            }
+          },
+          "required": ["app_id"]
+        },
+        "returns": {
+          "type": "object",
+          "properties": {
+            "app_id":         { "type": "string" },
+            "staging_url":    { "type": "string" },
+            "screenshot_b64": { "type": "string", "description": "Base64-encoded PNG" },
+            "content_type":   { "type": "string" },
+            "viewport":       { "type": "object" }
+          }
+        },
+        "method": "POST",
+        "path": "/screenshot/{app_id}"
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "browser_test",
+        "description": "Run a sequence of browser test steps (click, fill, assert_text, assert_visible, wait) against a staging app. Returns pass/fail with error details.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "app_id": {
+              "type": "string",
+              "description": "The app instance ID to test"
+            },
+            "steps": {
+              "type": "array",
+              "description": "Ordered list of browser test steps",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "action": {
+                    "type": "string",
+                    "enum": ["click", "fill", "assert_text", "assert_visible", "wait"],
+                    "description": "Action to perform"
+                  },
+                  "selector": {
+                    "type": "string",
+                    "description": "CSS selector for the target element (required for click, fill, assert_text, assert_visible)"
+                  },
+                  "value": {
+                    "type": "string",
+                    "description": "Value for fill action, or expected text for assert_text"
+                  },
+                  "timeout_ms": {
+                    "type": "integer",
+                    "description": "Timeout for this step in ms",
+                    "default": 5000
+                  }
+                },
+                "required": ["action"]
+              }
+            },
+            "width": {
+              "type": "integer",
+              "description": "Viewport width in pixels",
+              "default": 1280
+            },
+            "height": {
+              "type": "integer",
+              "description": "Viewport height in pixels",
+              "default": 720
+            }
+          },
+          "required": ["app_id", "steps"]
+        },
+        "returns": {
+          "type": "object",
+          "properties": {
+            "app_id":          { "type": "string" },
+            "staging_url":     { "type": "string" },
+            "passed":          { "type": "boolean" },
+            "steps_completed": { "type": "integer" },
+            "total_steps":     { "type": "integer" },
+            "error":           { "type": "string", "nullable": true },
+            "final_text":      { "type": "string", "nullable": true }
+          }
+        },
+        "method": "POST",
+        "path": "/browser-test/{app_id}"
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "health_check",
+        "description": "Check dev-runner health — returns available port count and running app count.",
+        "parameters": {
+          "type": "object",
+          "properties": {}
+        },
+        "returns": {
+          "type": "object",
+          "properties": {
+            "status":          { "type": "string" },
+            "available_ports": { "type": "integer" },
+            "running_apps":    { "type": "integer" }
+          }
+        },
+        "method": "GET",
+        "path": "/health"
+      }
+    }
+  ]
+}
