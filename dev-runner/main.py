@@ -323,43 +323,61 @@ def _terminate_app(app: ManagedApp):
 
 
 # ── Browser helpers ──────────────────────────────────────────────────────────
-def _internal_url(managed_app: ManagedApp) -> str:
-    """URL to reach the staging app from within the Docker network."""
+_browser_semaphore = asyncio.Semaphore(3)  # max 3 concurrent browser sessions
+
+
+def _remote_url(managed_app: ManagedApp) -> str:
+    """URL to reach the staging app from a separate container (Lightpanda)."""
     return f"http://dev-runner:{managed_app.port}"
+
+
+def _local_url(managed_app: ManagedApp) -> str:
+    """URL to reach the staging app from within this container (local Chromium)."""
+    return f"http://localhost:{managed_app.port}"
 
 
 async def _with_lightpanda_page(managed_app: ManagedApp, width: int, height: int, callback):
     """Connect to Lightpanda via CDP, run callback(page), cleanup."""
-    async with async_playwright() as pw:
-        browser = await pw.chromium.connect_over_cdp(LIGHTPANDA_CDP_URL)
-        try:
-            context = await browser.new_context(viewport={"width": width, "height": height})
-            page = await context.new_page()
+    async with _browser_semaphore:
+        async with async_playwright() as pw:
+            browser = await pw.chromium.connect_over_cdp(LIGHTPANDA_CDP_URL)
             try:
-                await page.goto(_internal_url(managed_app), wait_until="networkidle", timeout=BROWSER_TIMEOUT)
-                return await callback(page)
+                context = await browser.new_context()
+                page = await context.new_page()
+                try:
+                    await page.goto(
+                        _remote_url(managed_app),
+                        wait_until="domcontentloaded",
+                        timeout=BROWSER_TIMEOUT,
+                    )
+                    return await callback(page)
+                finally:
+                    await page.close()
+                    await context.close()
             finally:
-                await page.close()
-                await context.close()
-        finally:
-            await browser.close()
+                await browser.close()
 
 
 async def _with_chromium_page(managed_app: ManagedApp, width: int, height: int, callback):
     """Launch local Chromium (for rendering/screenshots), run callback(page), cleanup."""
-    async with async_playwright() as pw:
-        browser = await pw.chromium.launch(headless=True)
-        try:
-            context = await browser.new_context(viewport={"width": width, "height": height})
-            page = await context.new_page()
+    async with _browser_semaphore:
+        async with async_playwright() as pw:
+            browser = await pw.chromium.launch(headless=True)
             try:
-                await page.goto(_internal_url(managed_app), wait_until="networkidle", timeout=BROWSER_TIMEOUT)
-                return await callback(page)
+                context = await browser.new_context(viewport={"width": width, "height": height})
+                page = await context.new_page()
+                try:
+                    await page.goto(
+                        _local_url(managed_app),
+                        wait_until="networkidle",
+                        timeout=BROWSER_TIMEOUT,
+                    )
+                    return await callback(page)
+                finally:
+                    await page.close()
+                    await context.close()
             finally:
-                await page.close()
-                await context.close()
-        finally:
-            await browser.close()
+                await browser.close()
 
 
 def _get_managed_app(app_id: str) -> ManagedApp:
@@ -370,6 +388,27 @@ def _get_managed_app(app_id: str) -> ManagedApp:
     if not managed.is_alive():
         raise HTTPException(status_code=409, detail=f"App {app_id!r} is not running")
     return managed
+
+
+def _sanitize_browser_error(error: Exception) -> str:
+    """Strip internal hostnames/URLs from browser error messages."""
+    msg = str(error)
+    msg = re.sub(r"http://(?:dev-runner|localhost|127\.0\.0\.1):\d+", "<staging-app>", msg)
+    msg = re.sub(r"ws://[^/\s]+:\d+", "<cdp-endpoint>", msg)
+    return msg
+
+
+_VALID_SELECTOR_RE = re.compile(r"^[a-zA-Z0-9\s\-_.*#\[\]=:()\"',>+~^$|@]+$")
+
+
+def _validate_selector(selector: Optional[str], action: str):
+    """Validate CSS selector to prevent injection via Playwright selectors."""
+    if selector is None:
+        raise HTTPException(status_code=400, detail=f"Selector required for '{action}' action")
+    if len(selector) > 500:
+        raise HTTPException(status_code=400, detail="Selector too long (max 500 chars)")
+    if not _VALID_SELECTOR_RE.match(selector):
+        raise HTTPException(status_code=400, detail=f"Invalid characters in selector: {selector[:100]}")
 
 
 # ── Background cleanup task ───────────────────────────────────────────────────
@@ -492,7 +531,7 @@ async def deploy(req: DeployRequest):
             cwd=str(app_dir),
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
-            env={**os.environ, "PORT": str(port)},
+            env={**os.environ, "PORT": str(port), "HOST": "0.0.0.0"},
             start_new_session=True,
         )
     except (FileNotFoundError, PermissionError) as e:
@@ -585,7 +624,7 @@ async def browse(app_id: str, req: BrowseRequest = BrowseRequest()):
                 await page.wait_for_timeout(req.wait_ms)
             title = await page.title()
             html = await page.content()
-            text = await page.inner_text("body")
+            text = await page.evaluate("() => document.body ? document.body.textContent : ''")
             return title, html, text
 
         title, html, text = await _with_lightpanda_page(managed, req.width, req.height, extract)
@@ -594,13 +633,13 @@ async def browse(app_id: str, req: BrowseRequest = BrowseRequest()):
             staging_url=managed.staging_url,
             title=title,
             html=html[:500_000],
-            text=text[:100_000],
+            text=(text or "")[:100_000],
         )
     except PlaywrightTimeout:
         raise HTTPException(status_code=504, detail="Browser timed out loading the page")
     except Exception as e:
         logger.error("Browse failed for %s: %s", app_id, e)
-        raise HTTPException(status_code=502, detail=f"Browser error: {e}")
+        raise HTTPException(status_code=502, detail=f"Browser error: {_sanitize_browser_error(e)}")
 
 
 @app.post("/screenshot/{app_id}", response_model=ScreenshotResponse)
@@ -626,7 +665,7 @@ async def screenshot(app_id: str, req: ScreenshotRequest = ScreenshotRequest()):
         raise HTTPException(status_code=504, detail="Browser timed out loading the page")
     except Exception as e:
         logger.error("Screenshot failed for %s: %s", app_id, e)
-        raise HTTPException(status_code=502, detail=f"Browser error: {e}")
+        raise HTTPException(status_code=502, detail=f"Browser error: {_sanitize_browser_error(e)}")
 
 
 @app.post("/browser-test/{app_id}", response_model=BrowserTestResult)
@@ -634,14 +673,33 @@ async def browser_test(app_id: str, req: BrowserTestRequest):
     """Run a sequence of browser actions against a staging app."""
     managed = _get_managed_app(app_id)
 
+    # Validate selectors upfront before launching a browser session
+    for i, step in enumerate(req.steps):
+        if step.action in ("click", "fill", "assert_text", "assert_visible"):
+            _validate_selector(step.selector, step.action)
+
     try:
         async def run_steps(page):
             for i, step in enumerate(req.steps):
                 try:
                     if step.action == "click":
-                        await page.click(step.selector, timeout=step.timeout_ms)
+                        # Use JS click fallback — Lightpanda may not support coordinate-based clicks
+                        try:
+                            await page.click(step.selector, timeout=step.timeout_ms)
+                        except Exception:
+                            await page.evaluate(
+                                "(sel) => { const el = document.querySelector(sel); if (el) el.click(); else throw new Error('not found'); }",
+                                step.selector,
+                            )
                     elif step.action == "fill":
-                        await page.fill(step.selector, step.value or "", timeout=step.timeout_ms)
+                        # Use JS value assignment as fallback for Lightpanda
+                        try:
+                            await page.fill(step.selector, step.value or "", timeout=step.timeout_ms)
+                        except Exception:
+                            await page.evaluate(
+                                "([sel, val]) => { const el = document.querySelector(sel); if (el) { el.value = val; el.dispatchEvent(new Event('input', {bubbles:true})); } else throw new Error('not found'); }",
+                                [step.selector, step.value or ""],
+                            )
                     elif step.action == "assert_text":
                         locator = page.locator(step.selector)
                         await locator.wait_for(timeout=step.timeout_ms)
@@ -655,10 +713,10 @@ async def browser_test(app_id: str, req: BrowserTestRequest):
                     else:
                         return (False, i, f"Step {i}: unknown action '{step.action}'", None)
                 except Exception as e:
-                    return (False, i, f"Step {i} ({step.action}): {e}", None)
-            # All passed — capture final page text
-            final_text = await page.inner_text("body")
-            return (True, len(req.steps), None, final_text[:50_000])
+                    return (False, i, f"Step {i} ({step.action}): {_sanitize_browser_error(e)}", None)
+            # All passed — capture final page text (use textContent, not innerText)
+            final_text = await page.evaluate("() => document.body ? document.body.textContent : ''")
+            return (True, len(req.steps), None, (final_text or "")[:50_000])
 
         passed, completed, error, final_text = await _with_lightpanda_page(
             managed, req.width, req.height, run_steps,
@@ -676,4 +734,4 @@ async def browser_test(app_id: str, req: BrowserTestRequest):
         raise HTTPException(status_code=504, detail="Browser timed out loading the page")
     except Exception as e:
         logger.error("Browser test failed for %s: %s", app_id, e)
-        raise HTTPException(status_code=502, detail=f"Browser error: {e}")
+        raise HTTPException(status_code=502, detail=f"Browser error: {_sanitize_browser_error(e)}")

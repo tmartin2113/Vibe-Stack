@@ -370,7 +370,7 @@ services:
           memory: 512M
           cpus: "1.0"
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:9222/json/version || exit 1"]
+      test: ["CMD-SHELL", "grep -q ':2406' /proc/net/tcp || exit 1"]
       interval: 15s
       timeout: 5s
       retries: 5
@@ -404,7 +404,7 @@ services:
       - agent-core-net
       - host-access
     healthcheck:
-      test: ["CMD", "curl", "-fs", "http://localhost:9000/health"]
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:9000/health')\" 2>/dev/null || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3
