@@ -307,6 +307,29 @@
         "method": "GET",
         "path": "/health"
       }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "get_push_status",
+        "description": "Check the result of the last git push by workspace-watchdog. Returns success/failed status, commit SHA, branch, error message, and timestamp. Use this after approval to verify code was pushed.",
+        "parameters": {
+          "type": "object",
+          "properties": {}
+        },
+        "returns": {
+          "type": "object",
+          "properties": {
+            "status":    { "type": "string", "enum": ["success", "failed", "unknown"] },
+            "branch":    { "type": "string" },
+            "commit":    { "type": "string" },
+            "error":     { "type": "string" },
+            "timestamp": { "type": "string" }
+          }
+        },
+        "method": "GET",
+        "path": "/push-status"
+      }
     }
   ]
 }

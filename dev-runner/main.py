@@ -537,6 +537,19 @@ async def health():
     }
 
 
+@app.get("/push-status")
+async def push_status():
+    """Return the last git push status written by workspace-watchdog."""
+    import json as _json
+    status_file = Path(WORKSPACE_PATH) / ".push-status.json"
+    if not status_file.exists():
+        return {"status": "unknown", "message": "No push attempts recorded yet"}
+    try:
+        return _json.loads(status_file.read_text())
+    except (ValueError, OSError) as e:
+        raise HTTPException(status_code=500, detail=f"Failed to read push status: {e}")
+
+
 @app.post("/deploy", response_model=DeployResponse)
 async def deploy(req: DeployRequest):
     """
