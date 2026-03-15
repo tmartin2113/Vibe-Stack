@@ -28,6 +28,11 @@
               "enum": ["python", "node", "bash"],
               "description": "Runtime environment",
               "default": "python"
+            },
+            "install_command": {
+              "type": "string",
+              "description": "Optional install step run before start (e.g. 'npm install', 'pip install -r requirements.txt'). Times out after 120s.",
+              "nullable": true
             }
           },
           "required": ["app_id", "app_dir", "command"]

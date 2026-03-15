@@ -114,10 +114,11 @@ _apps: Dict[str, ManagedApp] = {}
 
 # ── Models ────────────────────────────────────────────────────────────────────
 class DeployRequest(BaseModel):
-    app_id:    str  = Field(..., description="Unique identifier for this app instance")
-    app_dir:   str  = Field(..., description="Path relative to /workspace (e.g. 'my-app')")
-    command:   str  = Field(..., description="Start command (e.g. 'uvicorn main:app --port {port}')")
-    runtime:   str  = Field("python", description="Runtime: python | node | bash")
+    app_id:          str            = Field(..., description="Unique identifier for this app instance")
+    app_dir:         str            = Field(..., description="Path relative to /workspace (e.g. 'my-app')")
+    command:         str            = Field(..., description="Start command (e.g. 'uvicorn main:app --port {port}')")
+    runtime:         str            = Field("python", description="Runtime: python | node | bash")
+    install_command: Optional[str]  = Field(None, description="Optional install step run before start (e.g. 'npm install')")
 
 
 class DeployResponse(BaseModel):
@@ -571,6 +572,39 @@ async def deploy(req: DeployRequest):
                 "findings": findings[:20],
             },
         )
+
+    # Run optional install command (e.g. "npm install") before allocating a port
+    if req.install_command:
+        install_cmd = _sanitize_command(req.install_command, 0)  # no port needed
+        logger.info("Running install step for %s: %s", req.app_id, install_cmd)
+        try:
+            result = subprocess.run(
+                shlex.split(install_cmd),
+                cwd=str(app_dir),
+                capture_output=True,
+                timeout=120,
+                env={**os.environ},
+            )
+        except subprocess.TimeoutExpired:
+            raise HTTPException(
+                status_code=504,
+                detail=f"Install command timed out after 120s: {install_cmd}",
+            )
+        except FileNotFoundError as e:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Install command not found: {e}",
+            )
+        if result.returncode != 0:
+            stderr_out = result.stderr.decode("utf-8", errors="replace")[-2000:]
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "message": f"Install command failed (exit {result.returncode}): {install_cmd}",
+                    "stderr": stderr_out,
+                },
+            )
+        logger.info("Install step completed for %s (exit 0)", req.app_id)
 
     port = _allocate_port(req.app_id)
 
