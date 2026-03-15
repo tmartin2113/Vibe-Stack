@@ -324,6 +324,8 @@ def _terminate_app(app: ManagedApp):
 
 # ── Browser helpers ──────────────────────────────────────────────────────────
 _browser_semaphore = asyncio.Semaphore(3)  # max 3 concurrent browser sessions
+CDP_CONNECT_RETRIES = 3
+CDP_RETRY_BACKOFF   = [1.0, 2.0, 4.0]  # seconds between retries
 
 
 def _remote_url(managed_app: ManagedApp) -> str:
@@ -336,12 +338,50 @@ def _local_url(managed_app: ManagedApp) -> str:
     return f"http://localhost:{managed_app.port}"
 
 
+async def _connect_cdp_with_retry(pw):
+    """Connect to Lightpanda CDP with retry + backoff for flaky connections."""
+    last_error = None
+    for attempt in range(CDP_CONNECT_RETRIES):
+        try:
+            browser = await pw.chromium.connect_over_cdp(LIGHTPANDA_CDP_URL)
+            if attempt > 0:
+                logger.info("CDP connection succeeded on attempt %d", attempt + 1)
+            return browser
+        except Exception as e:
+            last_error = e
+            if attempt < CDP_CONNECT_RETRIES - 1:
+                delay = CDP_RETRY_BACKOFF[attempt]
+                logger.warning(
+                    "CDP connection attempt %d failed: %s — retrying in %.1fs",
+                    attempt + 1, e, delay,
+                )
+                await asyncio.sleep(delay)
+    raise last_error  # type: ignore[misc]
+
+
+async def _wait_for_body_content(page, timeout_ms: int = 3000):
+    """After domcontentloaded, wait for <body> to have non-empty text.
+    Helps with SPAs that render client-side. Best-effort — does not raise."""
+    try:
+        await page.wait_for_function(
+            "() => document.body && document.body.textContent.trim().length > 0",
+            timeout=timeout_ms,
+        )
+    except Exception:
+        pass  # page may legitimately have empty body; don't fail
+
+
 async def _with_lightpanda_page(managed_app: ManagedApp, width: int, height: int, callback):
-    """Connect to Lightpanda via CDP, run callback(page), cleanup."""
+    """Connect to Lightpanda via CDP, run callback(page), cleanup.
+
+    Lightpanda supports only 1 context + 1 page per CDP connection, so we
+    create a fresh connection per call (protected by the semaphore).
+    """
     async with _browser_semaphore:
         async with async_playwright() as pw:
-            browser = await pw.chromium.connect_over_cdp(LIGHTPANDA_CDP_URL)
+            browser = await _connect_cdp_with_retry(pw)
             try:
+                # Lightpanda ignores viewport (no renderer) — skip setting it
                 context = await browser.new_context()
                 page = await context.new_page()
                 try:
@@ -350,6 +390,7 @@ async def _with_lightpanda_page(managed_app: ManagedApp, width: int, height: int
                         wait_until="domcontentloaded",
                         timeout=BROWSER_TIMEOUT,
                     )
+                    await _wait_for_body_content(page)
                     return await callback(page)
                 finally:
                     await page.close()
@@ -531,7 +572,16 @@ async def deploy(req: DeployRequest):
             cwd=str(app_dir),
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
-            env={**os.environ, "PORT": str(port), "HOST": "0.0.0.0"},
+            env={
+                **os.environ,
+                "PORT": str(port),
+                # Bind to all interfaces so Lightpanda container can reach the app.
+                # Different frameworks check different env vars, so set them all.
+                "HOST": "0.0.0.0",
+                "BIND_ADDR": "0.0.0.0",
+                "HOSTNAME": "0.0.0.0",
+                "LISTEN_ADDR": f"0.0.0.0:{port}",
+            },
             start_new_session=True,
         )
     except (FileNotFoundError, PermissionError) as e:
@@ -686,18 +736,26 @@ async def browser_test(app_id: str, req: BrowserTestRequest):
                         # Use JS click fallback — Lightpanda may not support coordinate-based clicks
                         try:
                             await page.click(step.selector, timeout=step.timeout_ms)
-                        except Exception:
+                        except Exception as click_err:
+                            logger.warning(
+                                "Step %d: native click failed (%s), falling back to JS click for %r",
+                                i, click_err, step.selector,
+                            )
                             await page.evaluate(
-                                "(sel) => { const el = document.querySelector(sel); if (el) el.click(); else throw new Error('not found'); }",
+                                "(sel) => { const el = document.querySelector(sel); if (el) el.click(); else throw new Error('Element not found: ' + sel); }",
                                 step.selector,
                             )
                     elif step.action == "fill":
                         # Use JS value assignment as fallback for Lightpanda
                         try:
                             await page.fill(step.selector, step.value or "", timeout=step.timeout_ms)
-                        except Exception:
+                        except Exception as fill_err:
+                            logger.warning(
+                                "Step %d: native fill failed (%s), falling back to JS fill for %r",
+                                i, fill_err, step.selector,
+                            )
                             await page.evaluate(
-                                "([sel, val]) => { const el = document.querySelector(sel); if (el) { el.value = val; el.dispatchEvent(new Event('input', {bubbles:true})); } else throw new Error('not found'); }",
+                                "([sel, val]) => { const el = document.querySelector(sel); if (el) { el.value = val; el.dispatchEvent(new Event('input', {bubbles:true})); } else throw new Error('Element not found: ' + sel); }",
                                 [step.selector, step.value or ""],
                             )
                     elif step.action == "assert_text":
