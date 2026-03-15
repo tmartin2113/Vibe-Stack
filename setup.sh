@@ -627,9 +627,9 @@ info "Waiting for databases to become healthy..."
 wait_healthy 60 db postgres-n8n
 
 info "Starting stack — infrastructure services..."
-docker compose up -d searxng ssh-relay dev-runner
+docker compose up -d searxng ssh-relay lightpanda dev-runner
 info "Waiting for infrastructure..."
-wait_healthy 60 searxng ssh-relay dev-runner
+wait_healthy 60 searxng ssh-relay lightpanda dev-runner
 
 info "Starting stack — n8n..."
 docker compose up -d n8n

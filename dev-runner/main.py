@@ -17,6 +17,7 @@ You access staging apps via Tailscale on your phone.
 from __future__ import annotations
 
 import asyncio
+import base64
 import logging
 import os
 import re
@@ -32,6 +33,7 @@ from typing import Dict, Optional
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
+from playwright.async_api import async_playwright, TimeoutError as PlaywrightTimeout
 from pydantic import BaseModel, Field
 
 logging.basicConfig(
@@ -45,6 +47,8 @@ PORT_RANGE_START  = int(os.environ.get("PORT_RANGE_START", "8100"))
 PORT_RANGE_END    = int(os.environ.get("PORT_RANGE_END", "8119"))
 WORKSPACE_PATH    = os.environ.get("WORKSPACE_PATH", "/workspace")
 PUBLIC_BASE_URL   = os.environ.get("PUBLIC_BASE_URL", "https://localhost")
+LIGHTPANDA_CDP_URL = os.environ.get("LIGHTPANDA_CDP_URL", "ws://lightpanda:9222")
+BROWSER_TIMEOUT    = 15_000  # ms
 
 MAX_CONCURRENT_APPS = 10
 MAX_APP_LIFETIME    = 1800  # 30 minutes
@@ -108,6 +112,59 @@ class AppStatus(BaseModel):
     status:         str
     uptime_seconds: float
     alive:          bool
+
+
+# ── Browser models ───────────────────────────────────────────────────────
+class BrowseRequest(BaseModel):
+    width:   int = Field(1280, description="Viewport width")
+    height:  int = Field(720, description="Viewport height")
+    wait_ms: int = Field(2000, description="Wait after load before extraction (ms)", ge=0, le=10000)
+
+
+class BrowseResponse(BaseModel):
+    app_id:      str
+    staging_url: str
+    title:       str
+    html:        str
+    text:        str
+
+
+class ScreenshotRequest(BaseModel):
+    width:     int  = Field(1280, description="Viewport width")
+    height:    int  = Field(720, description="Viewport height")
+    full_page: bool = Field(False, description="Capture full scrollable page")
+    wait_ms:   int  = Field(2000, description="Wait after load before capture (ms)", ge=0, le=10000)
+
+
+class ScreenshotResponse(BaseModel):
+    app_id:         str
+    staging_url:    str
+    screenshot_b64: str
+    content_type:   str = "image/png"
+    viewport:       dict
+
+
+class BrowserTestStep(BaseModel):
+    action:     str          = Field(..., description="Action: click | fill | assert_text | assert_visible | wait")
+    selector:   Optional[str] = Field(None, description="CSS selector for the target element")
+    value:      Optional[str] = Field(None, description="Value for fill or expected text for assert_text")
+    timeout_ms: int          = Field(5000, description="Timeout for this step in ms")
+
+
+class BrowserTestRequest(BaseModel):
+    steps:  list[BrowserTestStep] = Field(..., description="Ordered list of browser test steps")
+    width:  int = Field(1280, description="Viewport width")
+    height: int = Field(720, description="Viewport height")
+
+
+class BrowserTestResult(BaseModel):
+    app_id:          str
+    staging_url:     str
+    passed:          bool
+    steps_completed: int
+    total_steps:     int
+    error:           Optional[str] = None
+    final_text:      Optional[str] = None
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -263,6 +320,56 @@ def _terminate_app(app: ManagedApp):
     app.status = "stopped"
     _release_port(app.app_id)
     logger.info("Terminated app %s (port %d)", app.app_id, app.port)
+
+
+# ── Browser helpers ──────────────────────────────────────────────────────────
+def _internal_url(managed_app: ManagedApp) -> str:
+    """URL to reach the staging app from within the Docker network."""
+    return f"http://dev-runner:{managed_app.port}"
+
+
+async def _with_lightpanda_page(managed_app: ManagedApp, width: int, height: int, callback):
+    """Connect to Lightpanda via CDP, run callback(page), cleanup."""
+    async with async_playwright() as pw:
+        browser = await pw.chromium.connect_over_cdp(LIGHTPANDA_CDP_URL)
+        try:
+            context = await browser.new_context(viewport={"width": width, "height": height})
+            page = await context.new_page()
+            try:
+                await page.goto(_internal_url(managed_app), wait_until="networkidle", timeout=BROWSER_TIMEOUT)
+                return await callback(page)
+            finally:
+                await page.close()
+                await context.close()
+        finally:
+            await browser.close()
+
+
+async def _with_chromium_page(managed_app: ManagedApp, width: int, height: int, callback):
+    """Launch local Chromium (for rendering/screenshots), run callback(page), cleanup."""
+    async with async_playwright() as pw:
+        browser = await pw.chromium.launch(headless=True)
+        try:
+            context = await browser.new_context(viewport={"width": width, "height": height})
+            page = await context.new_page()
+            try:
+                await page.goto(_internal_url(managed_app), wait_until="networkidle", timeout=BROWSER_TIMEOUT)
+                return await callback(page)
+            finally:
+                await page.close()
+                await context.close()
+        finally:
+            await browser.close()
+
+
+def _get_managed_app(app_id: str) -> ManagedApp:
+    """Look up a running app or raise appropriate HTTP error."""
+    managed = _apps.get(app_id)
+    if not managed:
+        raise HTTPException(status_code=404, detail=f"App {app_id!r} not found")
+    if not managed.is_alive():
+        raise HTTPException(status_code=409, detail=f"App {app_id!r} is not running")
+    return managed
 
 
 # ── Background cleanup task ───────────────────────────────────────────────────
@@ -463,3 +570,110 @@ async def list_apps():
         }
         for app_id, a in _apps.items()
     }
+
+
+# ── Browser endpoints ────────────────────────────────────────────────────────
+
+@app.post("/browse/{app_id}", response_model=BrowseResponse)
+async def browse(app_id: str, req: BrowseRequest = BrowseRequest()):
+    """Navigate to a staging app and return its DOM content."""
+    managed = _get_managed_app(app_id)
+
+    try:
+        async def extract(page):
+            if req.wait_ms > 0:
+                await page.wait_for_timeout(req.wait_ms)
+            title = await page.title()
+            html = await page.content()
+            text = await page.inner_text("body")
+            return title, html, text
+
+        title, html, text = await _with_lightpanda_page(managed, req.width, req.height, extract)
+        return BrowseResponse(
+            app_id=app_id,
+            staging_url=managed.staging_url,
+            title=title,
+            html=html[:500_000],
+            text=text[:100_000],
+        )
+    except PlaywrightTimeout:
+        raise HTTPException(status_code=504, detail="Browser timed out loading the page")
+    except Exception as e:
+        logger.error("Browse failed for %s: %s", app_id, e)
+        raise HTTPException(status_code=502, detail=f"Browser error: {e}")
+
+
+@app.post("/screenshot/{app_id}", response_model=ScreenshotResponse)
+async def screenshot(app_id: str, req: ScreenshotRequest = ScreenshotRequest()):
+    """Take a rendered screenshot of a staging app (uses local Chromium)."""
+    managed = _get_managed_app(app_id)
+
+    try:
+        async def capture(page):
+            if req.wait_ms > 0:
+                await page.wait_for_timeout(req.wait_ms)
+            png_bytes = await page.screenshot(full_page=req.full_page)
+            return base64.b64encode(png_bytes).decode("ascii")
+
+        b64 = await _with_chromium_page(managed, req.width, req.height, capture)
+        return ScreenshotResponse(
+            app_id=app_id,
+            staging_url=managed.staging_url,
+            screenshot_b64=b64,
+            viewport={"width": req.width, "height": req.height},
+        )
+    except PlaywrightTimeout:
+        raise HTTPException(status_code=504, detail="Browser timed out loading the page")
+    except Exception as e:
+        logger.error("Screenshot failed for %s: %s", app_id, e)
+        raise HTTPException(status_code=502, detail=f"Browser error: {e}")
+
+
+@app.post("/browser-test/{app_id}", response_model=BrowserTestResult)
+async def browser_test(app_id: str, req: BrowserTestRequest):
+    """Run a sequence of browser actions against a staging app."""
+    managed = _get_managed_app(app_id)
+
+    try:
+        async def run_steps(page):
+            for i, step in enumerate(req.steps):
+                try:
+                    if step.action == "click":
+                        await page.click(step.selector, timeout=step.timeout_ms)
+                    elif step.action == "fill":
+                        await page.fill(step.selector, step.value or "", timeout=step.timeout_ms)
+                    elif step.action == "assert_text":
+                        locator = page.locator(step.selector)
+                        await locator.wait_for(timeout=step.timeout_ms)
+                        text = await locator.text_content()
+                        if step.value not in (text or ""):
+                            return (False, i, f"Step {i}: expected '{step.value}' in '{text}'", None)
+                    elif step.action == "assert_visible":
+                        await page.wait_for_selector(step.selector, state="visible", timeout=step.timeout_ms)
+                    elif step.action == "wait":
+                        await page.wait_for_timeout(step.timeout_ms)
+                    else:
+                        return (False, i, f"Step {i}: unknown action '{step.action}'", None)
+                except Exception as e:
+                    return (False, i, f"Step {i} ({step.action}): {e}", None)
+            # All passed — capture final page text
+            final_text = await page.inner_text("body")
+            return (True, len(req.steps), None, final_text[:50_000])
+
+        passed, completed, error, final_text = await _with_lightpanda_page(
+            managed, req.width, req.height, run_steps,
+        )
+        return BrowserTestResult(
+            app_id=app_id,
+            staging_url=managed.staging_url,
+            passed=passed,
+            steps_completed=completed,
+            total_steps=len(req.steps),
+            error=error,
+            final_text=final_text,
+        )
+    except PlaywrightTimeout:
+        raise HTTPException(status_code=504, detail="Browser timed out loading the page")
+    except Exception as e:
+        logger.error("Browser test failed for %s: %s", app_id, e)
+        raise HTTPException(status_code=502, detail=f"Browser error: {e}")

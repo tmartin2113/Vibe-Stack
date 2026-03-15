@@ -355,6 +355,28 @@ services:
       start_period: 10s
 
   # ────────────────────────────────────────────────────────────────
+  # Lightpanda — headless browser for agent QA/UX verification
+  # CDP endpoint on port 9222, accessible only from agent-core-net
+  # ────────────────────────────────────────────────────────────────
+  lightpanda:
+    image: lightpanda/browser:nightly
+    container_name: vibe-lightpanda
+    restart: always
+    networks:
+      - agent-core-net
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: "1.0"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:9222/json/version || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # ────────────────────────────────────────────────────────────────
   # Dev-Runner — staging app host for human-in-the-loop review
   # Agent deploys apps here, you test on phone, approve in Paperclip
   # Dynamic ports 8100-8119 mapped through Caddy
@@ -369,11 +391,15 @@ services:
     volumes:
       - ${WORKSPACE_PATH:-/srv/sftp/workspace/files}:/workspace:rw
       - dev-runner-apps:/apps
+    depends_on:
+      lightpanda:
+        condition: service_healthy
     environment:
       PORT_RANGE_START: "8100"
       PORT_RANGE_END: "8119"
       WORKSPACE_PATH: "/workspace"
       PUBLIC_BASE_URL: "https://${TAILSCALE_HOSTNAME}"
+      LIGHTPANDA_CDP_URL: "ws://lightpanda:9222"
     networks:
       - agent-core-net
       - host-access
