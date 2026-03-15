@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import collections
 import logging
 import os
 import re
@@ -26,6 +27,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import threading
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -52,10 +54,23 @@ BROWSER_TIMEOUT    = 15_000  # ms
 
 MAX_CONCURRENT_APPS = 10
 MAX_APP_LIFETIME    = 1800  # 30 minutes
+STDERR_RING_SIZE    = 200   # max lines of stderr kept per app
 
 # ── Port pool ─────────────────────────────────────────────────────────────────
 _available_ports: set[int] = set(range(PORT_RANGE_START, PORT_RANGE_END + 1))
 _allocated_ports: Dict[str, int] = {}   # app_id → port
+
+# ── Stderr ring buffer ────────────────────────────────────────────────────────
+def _drain_stderr(pipe, ring: collections.deque):
+    """Read stderr line-by-line in a daemon thread. Avoids pipe deadlock."""
+    try:
+        for raw_line in iter(pipe.readline, b""):
+            ring.append(raw_line.decode("utf-8", errors="replace").rstrip("\n"))
+    except ValueError:
+        pass  # pipe closed
+    finally:
+        pipe.close()
+
 
 # ── Process registry ──────────────────────────────────────────────────────────
 class ManagedApp:
@@ -67,14 +82,16 @@ class ManagedApp:
         app_dir:   str,
         command:   str,
         started_at: float,
+        stderr_ring: collections.deque,
     ):
-        self.app_id     = app_id
-        self.port       = port
-        self.process    = process
-        self.app_dir    = app_dir
-        self.command    = command
-        self.started_at = started_at
-        self.status     = "running"
+        self.app_id      = app_id
+        self.port        = port
+        self.process     = process
+        self.app_dir     = app_dir
+        self.command     = command
+        self.started_at  = started_at
+        self.status      = "running"
+        self.stderr_ring = stderr_ring
 
     @property
     def staging_url(self) -> str:
@@ -86,6 +103,11 @@ class ManagedApp:
 
     def is_alive(self) -> bool:
         return self.process.poll() is None
+
+    @property
+    def stderr_tail(self) -> list[str]:
+        """Return the last STDERR_RING_SIZE lines of stderr output."""
+        return list(self.stderr_ring)
 
 
 _apps: Dict[str, ManagedApp] = {}
@@ -112,6 +134,8 @@ class AppStatus(BaseModel):
     status:         str
     uptime_seconds: float
     alive:          bool
+    exit_code:      Optional[int] = None
+    stderr_tail:    list[str] = Field(default_factory=list, description="Last lines of stderr output")
 
 
 # ── Browser models ───────────────────────────────────────────────────────
@@ -465,8 +489,13 @@ async def _cleanup_loop():
                 to_remove.append((app_id, f"exceeded {MAX_APP_LIFETIME}s lifetime"))
         for app_id, reason in to_remove:
             managed = _apps.pop(app_id)
+            stderr_snippet = managed.stderr_tail[-10:]
             _terminate_app(managed)
-            logger.warning("App %s removed: %s (port %d released)", app_id, reason, managed.port)
+            logger.warning(
+                "App %s removed: %s (port %d released)%s",
+                app_id, reason, managed.port,
+                f" | last stderr: {stderr_snippet}" if stderr_snippet else "",
+            )
 
 
 # ── App ───────────────────────────────────────────────────────────────────────
@@ -565,13 +594,14 @@ async def deploy(req: DeployRequest):
     else:
         args = [runtime] + args
 
-    # Start the process — stdout to /dev/null to avoid pipe deadlock
+    # Start the process — stdout to /dev/null, stderr piped to ring buffer
+    stderr_ring: collections.deque = collections.deque(maxlen=STDERR_RING_SIZE)
     try:
         process = subprocess.Popen(
             args,
             cwd=str(app_dir),
             stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
             env={
                 **os.environ,
                 "PORT": str(port),
@@ -588,6 +618,10 @@ async def deploy(req: DeployRequest):
         _release_port(req.app_id)
         raise HTTPException(status_code=500, detail=f"Failed to start process: {e}")
 
+    # Drain stderr in a daemon thread to avoid pipe deadlock
+    t = threading.Thread(target=_drain_stderr, args=(process.stderr, stderr_ring), daemon=True)
+    t.start()
+
     managed = ManagedApp(
         app_id=req.app_id,
         port=port,
@@ -595,17 +629,22 @@ async def deploy(req: DeployRequest):
         app_dir=str(app_dir),
         command=command,
         started_at=time.time(),
+        stderr_ring=stderr_ring,
     )
     _apps[req.app_id] = managed
 
     # Wait for port to be ready
     ready = await _wait_for_port(port, timeout=30.0)
     if not ready:
+        stderr_snapshot = managed.stderr_tail
         _terminate_app(managed)
         _apps.pop(req.app_id, None)
         raise HTTPException(
             status_code=504,
-            detail=f"App {req.app_id} did not bind to port {port} within 30s",
+            detail={
+                "message": f"App {req.app_id} did not bind to port {port} within 30s",
+                "stderr_tail": stderr_snapshot[-50:],
+            },
         )
 
     logger.info("App %s ready at %s", req.app_id, managed.staging_url)
@@ -631,6 +670,8 @@ async def get_status(app_id: str):
         status=app_instance.status,
         uptime_seconds=app_instance.uptime_seconds,
         alive=app_instance.is_alive(),
+        exit_code=app_instance.process.poll(),
+        stderr_tail=app_instance.stderr_tail[-50:],
     )
 
 
