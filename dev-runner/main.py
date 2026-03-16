@@ -17,6 +17,8 @@ You access staging apps via Tailscale on your phone.
 from __future__ import annotations
 
 import asyncio
+import base64
+import collections
 import logging
 import os
 import re
@@ -25,6 +27,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import threading
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -32,6 +35,7 @@ from typing import Dict, Optional
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
+from playwright.async_api import async_playwright, TimeoutError as PlaywrightTimeout
 from pydantic import BaseModel, Field
 
 logging.basicConfig(
@@ -45,13 +49,28 @@ PORT_RANGE_START  = int(os.environ.get("PORT_RANGE_START", "8100"))
 PORT_RANGE_END    = int(os.environ.get("PORT_RANGE_END", "8119"))
 WORKSPACE_PATH    = os.environ.get("WORKSPACE_PATH", "/workspace")
 PUBLIC_BASE_URL   = os.environ.get("PUBLIC_BASE_URL", "https://localhost")
+LIGHTPANDA_CDP_URL = os.environ.get("LIGHTPANDA_CDP_URL", "ws://lightpanda:9222")
+BROWSER_TIMEOUT    = 15_000  # ms
 
 MAX_CONCURRENT_APPS = 10
 MAX_APP_LIFETIME    = 1800  # 30 minutes
+STDERR_RING_SIZE    = 200   # max lines of stderr kept per app
 
 # ── Port pool ─────────────────────────────────────────────────────────────────
 _available_ports: set[int] = set(range(PORT_RANGE_START, PORT_RANGE_END + 1))
 _allocated_ports: Dict[str, int] = {}   # app_id → port
+
+# ── Stderr ring buffer ────────────────────────────────────────────────────────
+def _drain_stderr(pipe, ring: collections.deque):
+    """Read stderr line-by-line in a daemon thread. Avoids pipe deadlock."""
+    try:
+        for raw_line in iter(pipe.readline, b""):
+            ring.append(raw_line.decode("utf-8", errors="replace").rstrip("\n"))
+    except ValueError:
+        pass  # pipe closed
+    finally:
+        pipe.close()
+
 
 # ── Process registry ──────────────────────────────────────────────────────────
 class ManagedApp:
@@ -63,14 +82,16 @@ class ManagedApp:
         app_dir:   str,
         command:   str,
         started_at: float,
+        stderr_ring: collections.deque,
     ):
-        self.app_id     = app_id
-        self.port       = port
-        self.process    = process
-        self.app_dir    = app_dir
-        self.command    = command
-        self.started_at = started_at
-        self.status     = "running"
+        self.app_id      = app_id
+        self.port        = port
+        self.process     = process
+        self.app_dir     = app_dir
+        self.command     = command
+        self.started_at  = started_at
+        self.status      = "running"
+        self.stderr_ring = stderr_ring
 
     @property
     def staging_url(self) -> str:
@@ -83,15 +104,21 @@ class ManagedApp:
     def is_alive(self) -> bool:
         return self.process.poll() is None
 
+    @property
+    def stderr_tail(self) -> list[str]:
+        """Return the last STDERR_RING_SIZE lines of stderr output."""
+        return list(self.stderr_ring)
+
 
 _apps: Dict[str, ManagedApp] = {}
 
 # ── Models ────────────────────────────────────────────────────────────────────
 class DeployRequest(BaseModel):
-    app_id:    str  = Field(..., description="Unique identifier for this app instance")
-    app_dir:   str  = Field(..., description="Path relative to /workspace (e.g. 'my-app')")
-    command:   str  = Field(..., description="Start command (e.g. 'uvicorn main:app --port {port}')")
-    runtime:   str  = Field("python", description="Runtime: python | node | bash")
+    app_id:          str            = Field(..., description="Unique identifier for this app instance")
+    app_dir:         str            = Field(..., description="Path relative to /workspace (e.g. 'my-app')")
+    command:         str            = Field(..., description="Start command (e.g. 'uvicorn main:app --port {port}')")
+    runtime:         str            = Field("python", description="Runtime: python | node | bash")
+    install_command: Optional[str]  = Field(None, description="Optional install step run before start (e.g. 'npm install')")
 
 
 class DeployResponse(BaseModel):
@@ -108,6 +135,61 @@ class AppStatus(BaseModel):
     status:         str
     uptime_seconds: float
     alive:          bool
+    exit_code:      Optional[int] = None
+    stderr_tail:    list[str] = Field(default_factory=list, description="Last lines of stderr output")
+
+
+# ── Browser models ───────────────────────────────────────────────────────
+class BrowseRequest(BaseModel):
+    width:   int = Field(1280, description="Viewport width")
+    height:  int = Field(720, description="Viewport height")
+    wait_ms: int = Field(2000, description="Wait after load before extraction (ms)", ge=0, le=10000)
+
+
+class BrowseResponse(BaseModel):
+    app_id:      str
+    staging_url: str
+    title:       str
+    html:        str
+    text:        str
+
+
+class ScreenshotRequest(BaseModel):
+    width:     int  = Field(1280, description="Viewport width")
+    height:    int  = Field(720, description="Viewport height")
+    full_page: bool = Field(False, description="Capture full scrollable page")
+    wait_ms:   int  = Field(2000, description="Wait after load before capture (ms)", ge=0, le=10000)
+
+
+class ScreenshotResponse(BaseModel):
+    app_id:         str
+    staging_url:    str
+    screenshot_b64: str
+    content_type:   str = "image/png"
+    viewport:       dict
+
+
+class BrowserTestStep(BaseModel):
+    action:     str          = Field(..., description="Action: click | fill | assert_text | assert_visible | wait")
+    selector:   Optional[str] = Field(None, description="CSS selector for the target element")
+    value:      Optional[str] = Field(None, description="Value for fill or expected text for assert_text")
+    timeout_ms: int          = Field(5000, description="Timeout for this step in ms")
+
+
+class BrowserTestRequest(BaseModel):
+    steps:  list[BrowserTestStep] = Field(..., description="Ordered list of browser test steps")
+    width:  int = Field(1280, description="Viewport width")
+    height: int = Field(720, description="Viewport height")
+
+
+class BrowserTestResult(BaseModel):
+    app_id:          str
+    staging_url:     str
+    passed:          bool
+    steps_completed: int
+    total_steps:     int
+    error:           Optional[str] = None
+    final_text:      Optional[str] = None
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -265,6 +347,136 @@ def _terminate_app(app: ManagedApp):
     logger.info("Terminated app %s (port %d)", app.app_id, app.port)
 
 
+# ── Browser helpers ──────────────────────────────────────────────────────────
+_browser_semaphore = asyncio.Semaphore(3)  # max 3 concurrent browser sessions
+CDP_CONNECT_RETRIES = 3
+CDP_RETRY_BACKOFF   = [1.0, 2.0, 4.0]  # seconds between retries
+
+
+def _remote_url(managed_app: ManagedApp) -> str:
+    """URL to reach the staging app from a separate container (Lightpanda)."""
+    return f"http://dev-runner:{managed_app.port}"
+
+
+def _local_url(managed_app: ManagedApp) -> str:
+    """URL to reach the staging app from within this container (local Chromium)."""
+    return f"http://localhost:{managed_app.port}"
+
+
+async def _connect_cdp_with_retry(pw):
+    """Connect to Lightpanda CDP with retry + backoff for flaky connections."""
+    last_error = None
+    for attempt in range(CDP_CONNECT_RETRIES):
+        try:
+            browser = await pw.chromium.connect_over_cdp(LIGHTPANDA_CDP_URL)
+            if attempt > 0:
+                logger.info("CDP connection succeeded on attempt %d", attempt + 1)
+            return browser
+        except Exception as e:
+            last_error = e
+            if attempt < CDP_CONNECT_RETRIES - 1:
+                delay = CDP_RETRY_BACKOFF[attempt]
+                logger.warning(
+                    "CDP connection attempt %d failed: %s — retrying in %.1fs",
+                    attempt + 1, e, delay,
+                )
+                await asyncio.sleep(delay)
+    raise last_error  # type: ignore[misc]
+
+
+async def _wait_for_body_content(page, timeout_ms: int = 3000):
+    """After domcontentloaded, wait for <body> to have non-empty text.
+    Helps with SPAs that render client-side. Best-effort — does not raise."""
+    try:
+        await page.wait_for_function(
+            "() => document.body && document.body.textContent.trim().length > 0",
+            timeout=timeout_ms,
+        )
+    except Exception:
+        pass  # page may legitimately have empty body; don't fail
+
+
+async def _with_lightpanda_page(managed_app: ManagedApp, width: int, height: int, callback):
+    """Connect to Lightpanda via CDP, run callback(page), cleanup.
+
+    Lightpanda supports only 1 context + 1 page per CDP connection, so we
+    create a fresh connection per call (protected by the semaphore).
+    """
+    async with _browser_semaphore:
+        async with async_playwright() as pw:
+            browser = await _connect_cdp_with_retry(pw)
+            try:
+                # Lightpanda ignores viewport (no renderer) — skip setting it
+                context = await browser.new_context()
+                page = await context.new_page()
+                try:
+                    await page.goto(
+                        _remote_url(managed_app),
+                        wait_until="domcontentloaded",
+                        timeout=BROWSER_TIMEOUT,
+                    )
+                    await _wait_for_body_content(page)
+                    return await callback(page)
+                finally:
+                    await page.close()
+                    await context.close()
+            finally:
+                await browser.close()
+
+
+async def _with_chromium_page(managed_app: ManagedApp, width: int, height: int, callback):
+    """Launch local Chromium (for rendering/screenshots), run callback(page), cleanup."""
+    async with _browser_semaphore:
+        async with async_playwright() as pw:
+            browser = await pw.chromium.launch(headless=True)
+            try:
+                context = await browser.new_context(viewport={"width": width, "height": height})
+                page = await context.new_page()
+                try:
+                    await page.goto(
+                        _local_url(managed_app),
+                        wait_until="networkidle",
+                        timeout=BROWSER_TIMEOUT,
+                    )
+                    return await callback(page)
+                finally:
+                    await page.close()
+                    await context.close()
+            finally:
+                await browser.close()
+
+
+def _get_managed_app(app_id: str) -> ManagedApp:
+    """Look up a running app or raise appropriate HTTP error."""
+    managed = _apps.get(app_id)
+    if not managed:
+        raise HTTPException(status_code=404, detail=f"App {app_id!r} not found")
+    if not managed.is_alive():
+        raise HTTPException(status_code=409, detail=f"App {app_id!r} is not running")
+    return managed
+
+
+def _sanitize_browser_error(error: Exception) -> str:
+    """Strip internal hostnames/URLs from browser error messages."""
+    msg = str(error)
+    msg = re.sub(r"http://(?:dev-runner|localhost|127\.0\.0\.1):\d+", "<staging-app>", msg)
+    msg = re.sub(r"ws://[^/\s]+:\d+", "<cdp-endpoint>", msg)
+    return msg
+
+
+_VALID_SELECTOR_RE = re.compile(r"^[a-zA-Z0-9\s\-_.*#\[\]=:()\"',>+~^$|@]+$")
+
+
+def _validate_selector(selector: Optional[str], action: str):
+    """Validate CSS selector to prevent injection via Playwright selectors."""
+    if selector is None:
+        raise HTTPException(status_code=400, detail=f"Selector required for '{action}' action")
+    if len(selector) > 500:
+        raise HTTPException(status_code=400, detail="Selector too long (max 500 chars)")
+    if not _VALID_SELECTOR_RE.match(selector):
+        raise HTTPException(status_code=400, detail=f"Invalid characters in selector: {selector[:100]}")
+
+
 # ── Background cleanup task ───────────────────────────────────────────────────
 async def _cleanup_loop():
     """Periodically reap dead processes, enforce max lifetime, release ports."""
@@ -278,8 +490,13 @@ async def _cleanup_loop():
                 to_remove.append((app_id, f"exceeded {MAX_APP_LIFETIME}s lifetime"))
         for app_id, reason in to_remove:
             managed = _apps.pop(app_id)
+            stderr_snippet = managed.stderr_tail[-10:]
             _terminate_app(managed)
-            logger.warning("App %s removed: %s (port %d released)", app_id, reason, managed.port)
+            logger.warning(
+                "App %s removed: %s (port %d released)%s",
+                app_id, reason, managed.port,
+                f" | last stderr: {stderr_snippet}" if stderr_snippet else "",
+            )
 
 
 # ── App ───────────────────────────────────────────────────────────────────────
@@ -320,6 +537,19 @@ async def health():
     }
 
 
+@app.get("/push-status")
+async def push_status():
+    """Return the last git push status written by workspace-watchdog."""
+    import json as _json
+    status_file = Path(WORKSPACE_PATH) / ".push-status.json"
+    if not status_file.exists():
+        return {"status": "unknown", "message": "No push attempts recorded yet"}
+    try:
+        return _json.loads(status_file.read_text())
+    except (ValueError, OSError) as e:
+        raise HTTPException(status_code=500, detail=f"Failed to read push status: {e}")
+
+
 @app.post("/deploy", response_model=DeployResponse)
 async def deploy(req: DeployRequest):
     """
@@ -356,6 +586,40 @@ async def deploy(req: DeployRequest):
             },
         )
 
+    # Run optional install command (e.g. "npm install") before allocating a port
+    if req.install_command:
+        install_cmd = _sanitize_command(req.install_command, 0)  # no port needed
+        logger.info("Running install step for %s: %s", req.app_id, install_cmd)
+        try:
+            result = await asyncio.to_thread(
+                subprocess.run,
+                shlex.split(install_cmd),
+                cwd=str(app_dir),
+                capture_output=True,
+                timeout=120,
+                env={**os.environ},
+            )
+        except subprocess.TimeoutExpired:
+            raise HTTPException(
+                status_code=504,
+                detail=f"Install command timed out after 120s: {install_cmd}",
+            )
+        except FileNotFoundError as e:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Install command not found: {e}",
+            )
+        if result.returncode != 0:
+            stderr_out = result.stderr.decode("utf-8", errors="replace")[-2000:]
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "message": f"Install command failed (exit {result.returncode}): {install_cmd}",
+                    "stderr": stderr_out,
+                },
+            )
+        logger.info("Install step completed for %s (exit 0)", req.app_id)
+
     port = _allocate_port(req.app_id)
 
     try:
@@ -378,19 +642,33 @@ async def deploy(req: DeployRequest):
     else:
         args = [runtime] + args
 
-    # Start the process — stdout to /dev/null to avoid pipe deadlock
+    # Start the process — stdout to /dev/null, stderr piped to ring buffer
+    stderr_ring: collections.deque = collections.deque(maxlen=STDERR_RING_SIZE)
     try:
         process = subprocess.Popen(
             args,
             cwd=str(app_dir),
             stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            env={**os.environ, "PORT": str(port)},
+            stderr=subprocess.PIPE,
+            env={
+                **os.environ,
+                "PORT": str(port),
+                # Bind to all interfaces so Lightpanda container can reach the app.
+                # Different frameworks check different env vars, so set them all.
+                "HOST": "0.0.0.0",
+                "BIND_ADDR": "0.0.0.0",
+                "HOSTNAME": "0.0.0.0",
+                "LISTEN_ADDR": f"0.0.0.0:{port}",
+            },
             start_new_session=True,
         )
     except (FileNotFoundError, PermissionError) as e:
         _release_port(req.app_id)
         raise HTTPException(status_code=500, detail=f"Failed to start process: {e}")
+
+    # Drain stderr in a daemon thread to avoid pipe deadlock
+    t = threading.Thread(target=_drain_stderr, args=(process.stderr, stderr_ring), daemon=True)
+    t.start()
 
     managed = ManagedApp(
         app_id=req.app_id,
@@ -399,17 +677,22 @@ async def deploy(req: DeployRequest):
         app_dir=str(app_dir),
         command=command,
         started_at=time.time(),
+        stderr_ring=stderr_ring,
     )
     _apps[req.app_id] = managed
 
     # Wait for port to be ready
     ready = await _wait_for_port(port, timeout=30.0)
     if not ready:
+        stderr_snapshot = managed.stderr_tail
         _terminate_app(managed)
         _apps.pop(req.app_id, None)
         raise HTTPException(
             status_code=504,
-            detail=f"App {req.app_id} did not bind to port {port} within 30s",
+            detail={
+                "message": f"App {req.app_id} did not bind to port {port} within 30s",
+                "stderr_tail": stderr_snapshot[-50:],
+            },
         )
 
     logger.info("App %s ready at %s", req.app_id, managed.staging_url)
@@ -435,6 +718,8 @@ async def get_status(app_id: str):
         status=app_instance.status,
         uptime_seconds=app_instance.uptime_seconds,
         alive=app_instance.is_alive(),
+        exit_code=app_instance.process.poll(),
+        stderr_tail=app_instance.stderr_tail[-50:],
     )
 
 
@@ -463,3 +748,137 @@ async def list_apps():
         }
         for app_id, a in _apps.items()
     }
+
+
+# ── Browser endpoints ────────────────────────────────────────────────────────
+
+@app.post("/browse/{app_id}", response_model=BrowseResponse)
+async def browse(app_id: str, req: BrowseRequest = BrowseRequest()):
+    """Navigate to a staging app and return its DOM content."""
+    managed = _get_managed_app(app_id)
+
+    try:
+        async def extract(page):
+            if req.wait_ms > 0:
+                await page.wait_for_timeout(req.wait_ms)
+            title = await page.title()
+            html = await page.content()
+            text = await page.evaluate("() => document.body ? document.body.textContent : ''")
+            return title, html, text
+
+        title, html, text = await _with_lightpanda_page(managed, req.width, req.height, extract)
+        return BrowseResponse(
+            app_id=app_id,
+            staging_url=managed.staging_url,
+            title=title,
+            html=html[:500_000],
+            text=(text or "")[:100_000],
+        )
+    except PlaywrightTimeout:
+        raise HTTPException(status_code=504, detail="Browser timed out loading the page")
+    except Exception as e:
+        logger.error("Browse failed for %s: %s", app_id, e)
+        raise HTTPException(status_code=502, detail=f"Browser error: {_sanitize_browser_error(e)}")
+
+
+@app.post("/screenshot/{app_id}", response_model=ScreenshotResponse)
+async def screenshot(app_id: str, req: ScreenshotRequest = ScreenshotRequest()):
+    """Take a rendered screenshot of a staging app (uses local Chromium)."""
+    managed = _get_managed_app(app_id)
+
+    try:
+        async def capture(page):
+            if req.wait_ms > 0:
+                await page.wait_for_timeout(req.wait_ms)
+            png_bytes = await page.screenshot(full_page=req.full_page)
+            return base64.b64encode(png_bytes).decode("ascii")
+
+        b64 = await _with_chromium_page(managed, req.width, req.height, capture)
+        return ScreenshotResponse(
+            app_id=app_id,
+            staging_url=managed.staging_url,
+            screenshot_b64=b64,
+            viewport={"width": req.width, "height": req.height},
+        )
+    except PlaywrightTimeout:
+        raise HTTPException(status_code=504, detail="Browser timed out loading the page")
+    except Exception as e:
+        logger.error("Screenshot failed for %s: %s", app_id, e)
+        raise HTTPException(status_code=502, detail=f"Browser error: {_sanitize_browser_error(e)}")
+
+
+@app.post("/browser-test/{app_id}", response_model=BrowserTestResult)
+async def browser_test(app_id: str, req: BrowserTestRequest):
+    """Run a sequence of browser actions against a staging app."""
+    managed = _get_managed_app(app_id)
+
+    # Validate selectors upfront before launching a browser session
+    for i, step in enumerate(req.steps):
+        if step.action in ("click", "fill", "assert_text", "assert_visible"):
+            _validate_selector(step.selector, step.action)
+
+    try:
+        async def run_steps(page):
+            for i, step in enumerate(req.steps):
+                try:
+                    if step.action == "click":
+                        # Use JS click fallback — Lightpanda may not support coordinate-based clicks
+                        try:
+                            await page.click(step.selector, timeout=step.timeout_ms)
+                        except Exception as click_err:
+                            logger.warning(
+                                "Step %d: native click failed (%s), falling back to JS click for %r",
+                                i, click_err, step.selector,
+                            )
+                            await page.evaluate(
+                                "(sel) => { const el = document.querySelector(sel); if (el) el.click(); else throw new Error('Element not found: ' + sel); }",
+                                step.selector,
+                            )
+                    elif step.action == "fill":
+                        # Use JS value assignment as fallback for Lightpanda
+                        try:
+                            await page.fill(step.selector, step.value or "", timeout=step.timeout_ms)
+                        except Exception as fill_err:
+                            logger.warning(
+                                "Step %d: native fill failed (%s), falling back to JS fill for %r",
+                                i, fill_err, step.selector,
+                            )
+                            await page.evaluate(
+                                "([sel, val]) => { const el = document.querySelector(sel); if (el) { el.value = val; el.dispatchEvent(new Event('input', {bubbles:true})); } else throw new Error('Element not found: ' + sel); }",
+                                [step.selector, step.value or ""],
+                            )
+                    elif step.action == "assert_text":
+                        locator = page.locator(step.selector)
+                        await locator.wait_for(timeout=step.timeout_ms)
+                        text = await locator.text_content()
+                        if step.value not in (text or ""):
+                            return (False, i, f"Step {i}: expected '{step.value}' in '{text}'", None)
+                    elif step.action == "assert_visible":
+                        await page.wait_for_selector(step.selector, state="visible", timeout=step.timeout_ms)
+                    elif step.action == "wait":
+                        await page.wait_for_timeout(step.timeout_ms)
+                    else:
+                        return (False, i, f"Step {i}: unknown action '{step.action}'", None)
+                except Exception as e:
+                    return (False, i, f"Step {i} ({step.action}): {_sanitize_browser_error(e)}", None)
+            # All passed — capture final page text (use textContent, not innerText)
+            final_text = await page.evaluate("() => document.body ? document.body.textContent : ''")
+            return (True, len(req.steps), None, (final_text or "")[:50_000])
+
+        passed, completed, error, final_text = await _with_lightpanda_page(
+            managed, req.width, req.height, run_steps,
+        )
+        return BrowserTestResult(
+            app_id=app_id,
+            staging_url=managed.staging_url,
+            passed=passed,
+            steps_completed=completed,
+            total_steps=len(req.steps),
+            error=error,
+            final_text=final_text,
+        )
+    except PlaywrightTimeout:
+        raise HTTPException(status_code=504, detail="Browser timed out loading the page")
+    except Exception as e:
+        logger.error("Browser test failed for %s: %s", app_id, e)
+        raise HTTPException(status_code=502, detail=f"Browser error: {_sanitize_browser_error(e)}")

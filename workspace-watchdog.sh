@@ -84,6 +84,28 @@ normalize_remote_url() {
     fi
 }
 
+# ── Push status file (agent-readable) ─────────────────────────
+# Writes a JSON status file after each push attempt so agents and
+# the Paperclip server can detect push failures without parsing logs.
+PUSH_STATUS_FILE="${WATCH_DIR}/.push-status.json"
+
+_write_push_status() {
+    local status="$1" error="$2" branch="$3"
+    local ts; ts=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+    local commit_sha; commit_sha=$(git -C "$WATCH_DIR" rev-parse --short HEAD 2>/dev/null || echo "unknown")
+    # Sanitize error for JSON: escape backslashes, double-quotes, and
+    # replace control chars (newlines, tabs, carriage returns) with spaces.
+    error="${error//\\/\\\\}"
+    error="${error//\"/\\\"}"
+    error="${error//$'\n'/ }"
+    error="${error//$'\r'/}"
+    error="${error//$'\t'/ }"
+    cat > "$PUSH_STATUS_FILE" <<JSONEOF
+{"status":"${status}","branch":"${branch}","commit":"${commit_sha}","error":"${error}","timestamp":"${ts}"}
+JSONEOF
+    info "Push status written: status=$status commit=$commit_sha"
+}
+
 # ── Approval-gated commit + push ─────────────────────────────
 commit_and_push() {
     if ! is_git_repo; then
@@ -122,10 +144,13 @@ commit_and_push() {
         git branch "$BRANCH_NAME" "$current" 2>/dev/null || true
     fi
 
-    if git push "$remote_url" "HEAD:refs/heads/$BRANCH_NAME" --force-with-lease --quiet 2>/dev/null; then
+    local push_output
+    if push_output=$(git push "$remote_url" "HEAD:refs/heads/$BRANCH_NAME" --force-with-lease 2>&1); then
         info "Pushed to $remote_url → $BRANCH_NAME"
+        _write_push_status "success" "" "$BRANCH_NAME"
     else
-        warn "Remote push failed — local commit preserved"
+        warn "Remote push failed — local commit preserved | $push_output"
+        _write_push_status "failed" "$push_output" "$BRANCH_NAME"
     fi
 }
 
