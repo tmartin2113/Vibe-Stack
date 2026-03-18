@@ -54,7 +54,8 @@ services:
               capabilities: [gpu]
 
   opensandbox:
-    image: opensandbox/server:v0.1.4
+    image: opensandbox/server:v0.1.7
+    command: ["--config", "/root/.sandbox.toml"]
     ports:
       - "9090:8080"
     volumes:
@@ -62,7 +63,7 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./:/home/user/Vibe:ro
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/docs"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/docs')"]
       interval: 10s
       timeout: 5s
       retries: 5

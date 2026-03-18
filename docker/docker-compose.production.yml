@@ -44,6 +44,16 @@ services:
         max-size: "50m"
         max-file: "5"
 
+  opensandbox:
+    image: opensandbox/server:v0.1.7
+    volumes:
+      - ../sandbox/sandbox.production.toml:/root/.sandbox.toml:ro
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
+
   vllm:
     restart: unless-stopped
     logging:

@@ -1,0 +1,31 @@
+# OpenSandbox production configuration for Vibe
+# Uses gVisor (runsc) for defense-in-depth sandbox isolation.
+#
+# Prerequisites:
+#   - gVisor installed: https://gvisor.dev/docs/user_guide/install/
+#   - Docker configured with runsc runtime:
+#       sudo runsc install && sudo systemctl reload docker
+#
+# See: https://github.com/alibaba/OpenSandbox
+
+[server]
+host = "0.0.0.0"
+port = 8080
+log_level = "WARNING"
+api_key = ""  # Set a secret key in production
+
+[runtime]
+type = "docker"
+execd_image = "opensandbox/execd:v1.0.8"
+runtime = "runsc"
+
+[docker]
+network_mode = "bridge"
+host_ip = "localhost"
+no_new_privileges = true
+pids_limit = 256
+# memory_limit = "512m"
+# cpu_quota = 50000
+
+[storage]
+allowed_host_paths = ["/tmp"]

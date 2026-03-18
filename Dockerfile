@@ -22,8 +22,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Create non-root user for running the application
 RUN groupadd -r vibe && useradd -r -g vibe -m -d /home/vibe vibe
 
-# Copy installed Python packages from deps stage
-COPY --from=deps /usr/local/lib/python3.14/site-packages /usr/local/lib/python3.14/site-packages
+# Copy installed Python packages from deps stage.
+# Uses BuildKit mount to discover site-packages path dynamically so the build
+# doesn't break when Dependabot bumps the Python base image version.
+RUN --mount=from=deps,source=/usr/local,target=/deps \
+    PYVER=$(python -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")') && \
+    cp -a /deps/lib/python${PYVER}/site-packages/* /usr/local/lib/python${PYVER}/site-packages/
 COPY --from=deps /usr/local/bin /usr/local/bin
 
 # Copy application code (owned by vibe user)
@@ -32,8 +36,8 @@ COPY --chown=vibe:vibe agents/ agents/
 COPY --chown=vibe:vibe pyproject.toml .
 COPY --chown=vibe:vibe scripts/ scripts/
 
-# Install the vibe package itself
-RUN pip install --no-cache-dir -e .
+# Install the vibe package itself (non-editable for production)
+RUN pip install --no-cache-dir .
 
 # Create data directory for vibe user
 RUN mkdir -p /home/vibe/.vibe && chown -R vibe:vibe /home/vibe/.vibe

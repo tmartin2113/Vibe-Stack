@@ -12,6 +12,10 @@ api_key = ""
 [runtime]
 type = "docker"
 execd_image = "opensandbox/execd:latest"
+# Use gVisor (runsc) for stronger sandbox isolation in production.
+# Requires gVisor installed on the host: https://gvisor.dev/docs/user_guide/install/
+# Uncomment to enable:
+# runtime = "runsc"
 
 [docker]
 network_mode = "bridge"
