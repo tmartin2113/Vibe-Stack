@@ -1,9 +1,15 @@
 # vLLM systemd service template
-# Install: sed "s|__HF_CACHE__|$HOME/.cache/huggingface|g" vllm.service | sudo tee /etc/systemd/system/vllm.service
-# Then:    sudo systemctl daemon-reload && sudo systemctl enable --now vllm
+# Placeholders are filled by setup.sh based on GPU VRAM detection:
+#   __VLLM_MODEL__       — full HuggingFace model ID
+#   __VLLM_MODEL_SHORT__ — short name for Description line
+#   __MAX_MODEL_LEN__    — context window length
+#   __GPU_MEM_UTIL__     — memory utilization fraction (0.0-1.0)
+#   __MAX_NUM_SEQS__     — max concurrent sequences
+#   __EXTRA_ARGS__       — tier-specific flags (e.g. --enforce-eager)
+#   __HF_CACHE__         — HuggingFace cache directory
 
 [Unit]
-Description=vLLM OpenAI-Compatible Server (Qwen3.5-9B)
+Description=vLLM OpenAI-Compatible Server (__VLLM_MODEL_SHORT__)
 After=docker.service
 Requires=docker.service
 
@@ -20,17 +26,19 @@ ExecStart=/usr/bin/docker run \
   -p 8000:8000 \
   -v __HF_CACHE__:/root/.cache/huggingface \
   vllm/vllm-openai:latest \
-    Qwen/Qwen3.5-9B \
+    __VLLM_MODEL__ \
     --host 0.0.0.0 \
     --port 8000 \
-    --max-model-len 32768 \
-    --gpu-memory-utilization 0.95 \
+    --max-model-len __MAX_MODEL_LEN__ \
+    --gpu-memory-utilization __GPU_MEM_UTIL__ \
     --enable-prefix-caching \
     --enable-chunked-prefill \
-    --max-num-seqs 8 \
+    --max-num-seqs __MAX_NUM_SEQS__ \
     --trust-remote-code \
     --enable-auto-tool-choice \
-    --tool-call-parser hermes
+    --tool-call-parser hermes \
+    --reasoning-parser qwen3 \
+    __EXTRA_ARGS__
 
 ExecStop=/usr/bin/docker stop vibe-vllm
 

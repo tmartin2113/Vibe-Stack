@@ -85,7 +85,7 @@ function request(method, reqPath, cookie, data) {
 
   console.log("\n=== Testing deerflow adapter ===");
   const dfTest = await request("POST", "/api/companies/" + COMPANY_ID + "/adapters/deerflow/test-environment", cookie, {
-    config: { model: "Qwen/Qwen3.5-9B" },
+    config: { model: process.env.VLLM_MODEL || "Qwen/Qwen3.5-9B" },
   });
   console.log("HTTP:", dfTest.status);
   if (dfTest.body.checks) {

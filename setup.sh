@@ -238,6 +238,104 @@ else
 fi
 
 # ══════════════════════════════════════════════════════════════
+# 5b. vLLM — GPU-aware model selection + systemd service
+# ══════════════════════════════════════════════════════════════
+info "Detecting GPU for vLLM model selection..."
+
+VLLM_SKIP=false
+GPU_VRAM_MB=0
+
+if command -v nvidia-smi &>/dev/null; then
+    GPU_VRAM_MB=$(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits 2>/dev/null | head -1 | tr -d ' ')
+    if [[ -z "$GPU_VRAM_MB" || "$GPU_VRAM_MB" -eq 0 ]]; then
+        warn "nvidia-smi found but could not query VRAM — skipping vLLM"
+        VLLM_SKIP=true
+    else
+        GPU_VRAM_GB=$(( GPU_VRAM_MB / 1024 ))
+        info "Detected GPU VRAM: ${GPU_VRAM_MB}MB (~${GPU_VRAM_GB}GB)"
+    fi
+else
+    warn "nvidia-smi not found — skipping vLLM"
+    VLLM_SKIP=true
+fi
+
+if [[ "$VLLM_SKIP" == "false" ]]; then
+    # Select model + params based on VRAM tier
+    if (( GPU_VRAM_MB >= 49152 )); then
+        # >= 48GB — full 27B FP16
+        VLLM_MODEL="Qwen/Qwen3.5-27B"
+        VLLM_MODEL_SHORT="Qwen3.5-27B"
+        MAX_MODEL_LEN=65536
+        GPU_MEM_UTIL=0.92
+        MAX_NUM_SEQS=8
+        EXTRA_ARGS=""
+    elif (( GPU_VRAM_MB >= 20480 )); then
+        # >= 20GB — 27B GPTQ-Int4 (hybrid architecture, only 16/64 layers need KV cache)
+        VLLM_MODEL="Qwen/Qwen3.5-27B-GPTQ-Int4"
+        VLLM_MODEL_SHORT="Qwen3.5-27B-GPTQ-Int4"
+        MAX_MODEL_LEN=32768
+        GPU_MEM_UTIL=0.90
+        MAX_NUM_SEQS=4
+        EXTRA_ARGS="--enforce-eager"
+    elif (( GPU_VRAM_MB >= 12288 )); then
+        # >= 12GB — 9B FP16
+        VLLM_MODEL="Qwen/Qwen3.5-9B"
+        VLLM_MODEL_SHORT="Qwen3.5-9B"
+        MAX_MODEL_LEN=8192
+        GPU_MEM_UTIL=0.88
+        MAX_NUM_SEQS=4
+        EXTRA_ARGS="--enforce-eager"
+    elif (( GPU_VRAM_MB >= 8192 )); then
+        # >= 8GB — 4B FP16
+        VLLM_MODEL="Qwen/Qwen3.5-4B"
+        VLLM_MODEL_SHORT="Qwen3.5-4B"
+        MAX_MODEL_LEN=8192
+        GPU_MEM_UTIL=0.88
+        MAX_NUM_SEQS=2
+        EXTRA_ARGS="--enforce-eager"
+    else
+        warn "GPU VRAM (${GPU_VRAM_MB}MB) too low for vLLM — skipping"
+        VLLM_SKIP=true
+    fi
+fi
+
+if [[ "$VLLM_SKIP" == "false" ]]; then
+    success "Selected vLLM model: $VLLM_MODEL (context=$MAX_MODEL_LEN, mem=$GPU_MEM_UTIL)"
+
+    # Install systemd service from template
+    HF_CACHE="${SUDO_USER:+$(eval echo "~${SUDO_USER}")}/.cache/huggingface"
+    HF_CACHE="${HF_CACHE:-/root/.cache/huggingface}"
+    mkdir -p "$HF_CACHE"
+
+    sed -e "s|__VLLM_MODEL__|${VLLM_MODEL}|g" \
+        -e "s|__VLLM_MODEL_SHORT__|${VLLM_MODEL_SHORT}|g" \
+        -e "s|__MAX_MODEL_LEN__|${MAX_MODEL_LEN}|g" \
+        -e "s|__GPU_MEM_UTIL__|${GPU_MEM_UTIL}|g" \
+        -e "s|__MAX_NUM_SEQS__|${MAX_NUM_SEQS}|g" \
+        -e "s|__HF_CACHE__|${HF_CACHE}|g" \
+        -e "s|__EXTRA_ARGS__|${EXTRA_ARGS}|g" \
+        vllm.service > /etc/systemd/system/vllm.service
+
+    # Remove trailing whitespace from empty __EXTRA_ARGS__ substitution
+    sed -i 's/[[:space:]]*$//' /etc/systemd/system/vllm.service
+
+    systemctl daemon-reload
+    systemctl enable vllm
+    success "vLLM systemd service installed and enabled"
+
+    # Pre-pull the vLLM container image
+    info "Pulling vllm/vllm-openai:latest..."
+    docker pull vllm/vllm-openai:latest
+    success "vLLM Docker image pulled"
+
+    # Persist model selection to .env
+    _update_env_var "VLLM_MODEL" "${VLLM_MODEL}"
+    success "VLLM_MODEL=${VLLM_MODEL} written to .env"
+else
+    warn "vLLM will not be configured — no suitable GPU detected"
+fi
+
+# ══════════════════════════════════════════════════════════════
 # 6. Caddy with rate-limit plugin
 # ══════════════════════════════════════════════════════════════
 if ! command -v caddy &>/dev/null || ! caddy list-modules 2>/dev/null | grep -q "rate_limit"; then
@@ -635,6 +733,26 @@ info "Starting stack — n8n..."
 docker compose up -d n8n
 wait_healthy 120 n8n
 
+if [[ "${VLLM_SKIP:-true}" == "false" ]]; then
+    info "Starting stack — vLLM (model download may take several minutes on first run)..."
+    systemctl start vllm
+    VLLM_DEADLINE=$(( SECONDS + 300 ))
+    VLLM_READY=false
+    while (( SECONDS < VLLM_DEADLINE )); do
+        if curl -sf http://127.0.0.1:8000/v1/models >/dev/null 2>&1; then
+            VLLM_READY=true
+            break
+        fi
+        sleep 5
+    done
+    if $VLLM_READY; then
+        success "vLLM is serving ${VLLM_MODEL}"
+    else
+        warn "vLLM not ready after 300s — DeerFlow will start anyway"
+        warn "Check: journalctl -u vllm -f"
+    fi
+fi
+
 info "Starting stack — DeerFlow services..."
 docker compose up -d deerflow-langgraph deerflow-gateway
 info "Waiting for DeerFlow to become healthy..."
@@ -753,7 +871,11 @@ printf "\n${GREEN}════════════════════�
 printf "${GREEN}  Vibe Stack 2.0 deployment complete!${NC}\n"
 printf "${GREEN}══════════════════════════════════════════════════════${NC}\n\n"
 printf "  Paperclip:   ${BLUE}https://${TAILSCALE_HOSTNAME}${NC}\n"
-printf "  n8n:         ${BLUE}https://${TAILSCALE_HOSTNAME}:5678${NC}\n\n"
+printf "  n8n:         ${BLUE}https://${TAILSCALE_HOSTNAME}:5678${NC}\n"
+if [[ "${VLLM_SKIP:-true}" == "false" ]]; then
+    printf "  vLLM model:  ${BLUE}${VLLM_MODEL}${NC}\n"
+fi
+printf "\n"
 
 printf "${YELLOW}Required manual steps:${NC}\n"
 printf "  1. Navigate to https://${TAILSCALE_HOSTNAME} and create your admin account\n\n"

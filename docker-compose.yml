@@ -165,7 +165,7 @@ services:
 
   # ────────────────────────────────────────────────────────────────
   # DeerFlow LangGraph — agent runtime (replaces vibe_router)
-  # Runs Qwen3.5-9B via vLLM on host for local model agents
+  # Runs local model via vLLM on host (model auto-selected by setup.sh)
   # ────────────────────────────────────────────────────────────────
   deerflow-langgraph:
     image: ghcr.io/${GHCR_ORG}/paperclip-deerflow:latest
@@ -184,6 +184,7 @@ services:
     environment:
       CI: "true"
       VLLM_API_URL: ${VLLM_API_URL:-http://host.docker.internal:8000/v1}
+      VLLM_MODEL: ${VLLM_MODEL:-Qwen/Qwen3.5-9B}
     extra_hosts:
       - "host.docker.internal:192.168.92.1"
     networks:
@@ -216,6 +217,7 @@ services:
     environment:
       CI: "true"
       VLLM_API_URL: ${VLLM_API_URL:-http://host.docker.internal:8000/v1}
+      VLLM_MODEL: ${VLLM_MODEL:-Qwen/Qwen3.5-9B}
     extra_hosts:
       - "host.docker.internal:192.168.92.1"
     networks:
