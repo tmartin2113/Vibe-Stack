@@ -356,7 +356,7 @@ python -m agents.doctor  # Checks hardware, backends, sandbox, GPU
 - **Tools**: Dev tools + SEO tools with runtime permission enforcement
 - **Persistence**: SQLite (sessions), JSONL (skill outcomes)
 - **Language**: Python 3.14+ (agents), TypeScript (adapter)
-- **Model**: Qwen 3.5 7B (default)
+- **Model**: Qwen 3.5 9B (default)
 - **Testing**: ~1772 tests (Python + TypeScript)
 
 ## License
