@@ -7,3 +7,4 @@
 #   or: pip install -r requirements-dev.lock
 #
 requests>=2.31.0,<3.0.0
+websockets>=12.0

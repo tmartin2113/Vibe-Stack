@@ -138,13 +138,92 @@ class CancellationPoller:
                     return
 
 
+class WSCancellationWatcher:
+    """
+    Hybrid push + fallback-poll cancellation watcher.
+
+    Subscribes to WebSocket ``issue.status_changed`` events for instant
+    cancellation detection. A reduced-frequency HTTP poller (60s) runs
+    as a safety net in case the WS connection drops.
+    """
+
+    def __init__(
+        self,
+        ws_client,  # PaperclipWSClient
+        http_client,  # PaperclipClient
+        issue_id: str,
+        token: CancellationToken,
+        fallback_interval: float = 60.0,
+    ):
+        self._ws_client = ws_client
+        self._http_client = http_client
+        self._issue_id = issue_id
+        self._token = token
+        self._fallback_interval = fallback_interval
+        self._unsubscribe: Optional[callable] = None
+        self._fallback_poller: Optional[CancellationPoller] = None
+
+    def start(self) -> None:
+        """Subscribe to WS events and start fallback HTTP poller."""
+        issue_id = self._issue_id
+        token = self._token
+
+        def _filter(event: dict) -> bool:
+            payload = event.get("payload", {})
+            return (
+                event.get("type") == "issue.status_changed"
+                and payload.get("issueId") == issue_id
+            )
+
+        def _handler(event: dict) -> None:
+            payload = event.get("payload", {})
+            if payload.get("status") == "cancelled":
+                logger.info(
+                    "WS: issue %s cancelled — firing cancellation token",
+                    issue_id,
+                )
+                token.cancel("issue cancelled (WebSocket push)")
+
+        self._unsubscribe = self._ws_client.subscribe(_filter, _handler)
+
+        # Fallback HTTP poller at reduced frequency
+        self._fallback_poller = CancellationPoller(
+            self._http_client, self._issue_id, self._token,
+            interval=self._fallback_interval,
+        )
+        self._fallback_poller.start()
+
+    def stop(self) -> None:
+        """Unsubscribe from WS and stop fallback poller."""
+        if self._unsubscribe:
+            self._unsubscribe()
+            self._unsubscribe = None
+        if self._fallback_poller:
+            self._fallback_poller.stop()
+            self._fallback_poller = None
+
+
 def start_cancellation_poller(
     client,
     issue_id: str,
     token: CancellationToken,
     interval: float = 15.0,
-) -> CancellationPoller:
-    """Create and start a cancellation poller. Returns the poller for cleanup."""
+    ws_client=None,
+) -> "CancellationPoller | WSCancellationWatcher":
+    """
+    Create and start a cancellation watcher. Returns the watcher for cleanup.
+
+    If *ws_client* is provided, returns a WSCancellationWatcher (WS push +
+    60s HTTP fallback). Otherwise returns a CancellationPoller at 15s.
+    Both expose .stop() — caller code doesn't change.
+    """
+    if ws_client is not None:
+        watcher = WSCancellationWatcher(
+            ws_client, client, issue_id, token,
+        )
+        watcher.start()
+        return watcher
+
     poller = CancellationPoller(client, issue_id, token, interval=interval)
     poller.start()
     return poller

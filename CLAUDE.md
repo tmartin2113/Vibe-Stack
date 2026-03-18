@@ -34,6 +34,7 @@ Deterministic state machine: **Router → Skill Loader → Spec Builder → Spec
 | **Task Type Registry** | `agents/task_type_registry.py` | Unified registry of builtin + skill-defined types. Router, orchestrator, and LLM classifier all read from it |
 | **Workflow Factory** | `agents/workflow_factory.py` | Cached LLM backend + 16 adapters across heartbeat runs. Lazy init on first `run_workflow()` |
 | **Heartbeat Hardening** | `agents/heartbeat_progress.py`, `agents/heartbeat_signals.py` | Progress comments at key nodes, graceful SIGTERM with partial result posting |
+| **WebSocket Client** | `agents/ws_client.py` | Push-based Paperclip events via WS. Auto-reconnect with backoff. Used by orchestrator POLL and cancellation watcher |
 
 ## Execution Modes
 
@@ -108,12 +109,12 @@ cd paperclip-adapter && node --import tsx --test src/server/slack-notifier.test.
 
 ### Test Coverage
 
-~1772 tests across 18 test files covering all major subsystems:
+~1798 tests across 19 test files covering all major subsystems:
 - Heartbeat (142), workflow factory (9), lazy sandbox (4), heartbeat metrics (36), task type registry (22)
 - Skill reinforcement (49), routing (62), security (135), session store (38)
 - API key manager (39), retry/timeout (73), resource discovery (22), allocator (30)
 - Sandbox integration (50), tool system (100), LLM backends (72), messenger client (75)
-- Paperclip client (60), orchestrator (56)
+- Paperclip client (60), orchestrator (90), WebSocket client (26)
 - Adapter: notifier + reply poller (17)
 
 ### Environment Variables
@@ -140,6 +141,7 @@ agents/                    # Main agent pipeline
   heartbeat_progress.py    # Progress updates to Paperclip
   heartbeat_signals.py     # Graceful SIGTERM handling
   workflow_factory.py      # Cached LLM backend + adapter setup
+  ws_client.py             # WebSocket client for Paperclip push events
   daemon.py                # Mattermost/Slack polling mode
   llm_backend.py           # LLM abstraction (local + cloud)
   llm_retry.py             # Retry with exponential backoff

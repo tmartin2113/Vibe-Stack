@@ -239,6 +239,7 @@ class PaperclipConfig:
     orchestrator_retry_failed: bool = True  # Auto-retry blocked children
     orchestrator_max_retries: int = 1     # Max retries per child
     orchestrator_skip_decomposition_for_fast: bool = True  # Skip decomposition for fast-tier tasks
+    orchestrator_poll_timeout: int = 300  # Max seconds to WS-wait in POLL phase
 
 
 @dataclass
@@ -295,6 +296,11 @@ class SystemConfig:
         db_path = os.getenv("GENESIA_SPEND_DB_PATH")
         if db_path:
             config.spending.db_path = db_path
+
+        # Orchestrator poll timeout override
+        poll_timeout = os.getenv("PAPERCLIP_ORCHESTRATOR_POLL_TIMEOUT")
+        if poll_timeout:
+            config.paperclip.orchestrator_poll_timeout = int(poll_timeout)
 
         return config
 

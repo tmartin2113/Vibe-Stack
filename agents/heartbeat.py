@@ -97,6 +97,33 @@ class HeartbeatResult:
         return json.dumps(asdict(self), indent=2)
 
 
+def _try_connect_ws(client: PaperclipClient):
+    """Best-effort WebSocket connection. Returns PaperclipWSClient or None."""
+    try:
+        from .ws_client import PaperclipWSClient
+    except ImportError:
+        logger.debug("websockets not available — skipping WS client")
+        return None
+
+    try:
+        ws = PaperclipWSClient(
+            api_url=client.api_url,
+            company_id=client.company_id,
+            api_key=client.api_key,
+        )
+        ws.start()
+        if ws.wait_connected(timeout=3.0):
+            logger.info("WebSocket client connected")
+            return ws
+        else:
+            logger.debug("WebSocket connection timed out — continuing without WS")
+            ws.stop()
+            return None
+    except Exception as e:
+        logger.debug("WebSocket client init failed (non-fatal): %s", e)
+        return None
+
+
 def run_heartbeat(config: SystemConfig) -> HeartbeatResult:
     """
     Execute one Paperclip heartbeat cycle.
@@ -171,6 +198,9 @@ def run_heartbeat(config: SystemConfig) -> HeartbeatResult:
         metrics.increment("genesia_paperclip_api_errors_total", labels={"endpoint": "identity"})
         return _finish(HeartbeatResult(status="failed", summary=str(e), exit_code=1))
 
+    # ── Step 2b: Best-effort WebSocket connection ──
+    ws_client = _try_connect_ws(client)
+
     # ── Step 3: Get assignments ──
     try:
         assignments = client.get_assignments()
@@ -226,8 +256,12 @@ def run_heartbeat(config: SystemConfig) -> HeartbeatResult:
 
     # ── All remaining steps wrapped in try/finally to release checkout ──
     try:
-        return _finish(_execute_checked_out_task(config, client, issue, tracker=tracker))
+        return _finish(_execute_checked_out_task(
+            config, client, issue, tracker=tracker, ws_client=ws_client,
+        ))
     finally:
+        if ws_client is not None:
+            ws_client.stop()
         try:
             client.release_issue(issue.id)
         except PaperclipAPIError as e:
@@ -239,6 +273,7 @@ def _execute_checked_out_task(
     client: PaperclipClient,
     issue: Issue,
     tracker: "Optional[SpendingTracker]" = None,
+    ws_client=None,
 ) -> HeartbeatResult:
     """Execute the workflow for a checked-out task. Caller must release checkout."""
     # ── Step 6: Build context ──
@@ -276,15 +311,18 @@ def _execute_checked_out_task(
         return run_orchestrator_heartbeat(
             config, client, full_issue,
             clarification_reply=clarification_reply,
+            ws_client=ws_client,
         )
 
     # ── Step 7: Run workflow with cancellation monitoring ──
     # Extract complexity tier hint embedded by orchestrator parent
     complexity_tier = _extract_complexity_hint(full_issue.description)
 
-    # Start cancellation poller — polls issue status every 15s
+    # Start cancellation watcher — WS push if available, otherwise HTTP poll
     cancel_token = CancellationToken()
-    cancel_poller = start_cancellation_poller(client, issue.id, cancel_token)
+    cancel_poller = start_cancellation_poller(
+        client, issue.id, cancel_token, ws_client=ws_client,
+    )
 
     # Progress callback — posts updates to Paperclip at key workflow nodes
     progress_cb = _make_progress_callback(client, issue.id)

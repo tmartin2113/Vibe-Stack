@@ -20,6 +20,7 @@ Usage:
 
 import logging
 import re
+import threading
 from enum import Enum
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -59,6 +60,7 @@ def run_orchestrator_heartbeat(
     client: PaperclipClient,
     issue: Issue,
     clarification_reply: Optional[str] = None,
+    ws_client=None,
 ) -> HeartbeatResult:
     """
     Execute one orchestrator heartbeat cycle.
@@ -71,6 +73,7 @@ def run_orchestrator_heartbeat(
         client: Authenticated Paperclip API client
         issue: The parent issue assigned to the orchestrator
         clarification_reply: Human reply if resuming from clarification
+        ws_client: Optional PaperclipWSClient for push-based POLL blocking
 
     Returns:
         HeartbeatResult for the adapter to parse
@@ -100,7 +103,7 @@ def run_orchestrator_heartbeat(
     elif phase == OrchestratorPhase.AGGREGATE:
         return _aggregate_and_present(config, client, issue, children)
     else:
-        return _poll_children(config, client, issue, children)
+        return _poll_children(config, client, issue, children, ws_client=ws_client)
 
 
 def _detect_phase(children: List[Issue]) -> OrchestratorPhase:
@@ -373,6 +376,7 @@ def _poll_children(
     client: PaperclipClient,
     issue: Issue,
     children: List[Issue],
+    ws_client=None,
 ) -> HeartbeatResult:
     """
     Check child issue statuses and handle retries.
@@ -381,7 +385,27 @@ def _poll_children(
     - Child blocked and not retried → auto-retry (reset to todo)
     - Child blocked and already retried → permanently failed
     - Any permanently failed → block parent for human review
+
+    When *ws_client* is connected, blocks on WS events instead of
+    exiting idle — avoids container respawn cycles.
     """
+    poll_timeout = config.paperclip.orchestrator_poll_timeout
+
+    return _poll_children_once(
+        config, client, issue, children,
+        ws_client=ws_client, poll_timeout=poll_timeout,
+    )
+
+
+def _poll_children_once(
+    config: SystemConfig,
+    client: PaperclipClient,
+    issue: Issue,
+    children: List[Issue],
+    ws_client=None,
+    poll_timeout: int = 300,
+) -> HeartbeatResult:
+    """Single evaluation of child statuses with optional WS-blocking loop."""
     max_retries = config.paperclip.orchestrator_max_retries
     retry_enabled = config.paperclip.orchestrator_retry_failed
 
@@ -432,22 +456,139 @@ def _poll_children(
             exit_code=1,
         )
 
-    # Still waiting for children (pending_count must be > 0 here since
-    # _detect_phase routes all-done to AGGREGATE, not POLL)
+    # Still waiting for children
     logger.info(
         "Orchestrator %s: %d/%d done, %d pending",
         issue.id, done_count, len(children), pending_count,
     )
 
-    # Hint to Paperclip: poll again in 30s (short enough to avoid aggregation
-    # delay, long enough to avoid hammering the API). Paperclip can read this
-    # from resultJson to schedule the next heartbeat sooner than its default.
+    # ── WS-driven blocking: stay alive and wait for child status changes ──
+    if ws_client is not None and ws_client.is_connected and pending_count > 0:
+        result = _ws_wait_for_children(
+            config, client, issue, children, ws_client, poll_timeout,
+        )
+        if result is not None:
+            return result
+
+    # Fallback: exit idle with retry hint (original behavior)
     return HeartbeatResult(
         status="idle",
         issue_id=issue.id,
         summary=f"Waiting: {done_count}/{len(children)} subtasks done",
         retry_after_seconds=30,
     )
+
+
+def _ws_wait_for_children(
+    config: SystemConfig,
+    client: PaperclipClient,
+    issue: Issue,
+    children: List[Issue],
+    ws_client,
+    poll_timeout: int,
+) -> Optional[HeartbeatResult]:
+    """
+    Subscribe to child status changes via WS and block until all done or timeout.
+
+    Returns a HeartbeatResult if the phase resolves (AGGREGATE or permanent
+    failure), or None to fall through to the idle exit.
+    """
+    import time as _time
+
+    child_ids = {c.id for c in children if c.status != "done"}
+    if not child_ids:
+        return None
+
+    wake_event = threading.Event()
+
+    def _filter(event: dict) -> bool:
+        payload = event.get("payload", {})
+        return (
+            event.get("type") == "issue.status_changed"
+            and payload.get("issueId") in child_ids
+        )
+
+    def _handler(event: dict) -> None:
+        wake_event.set()
+
+    unsub = ws_client.subscribe(_filter, _handler)
+    deadline = _time.monotonic() + poll_timeout
+
+    try:
+        while _time.monotonic() < deadline:
+            remaining = deadline - _time.monotonic()
+            if remaining <= 0:
+                break
+
+            logger.debug(
+                "Orchestrator %s: WS-blocking for child updates (%.0fs remaining)",
+                issue.id, remaining,
+            )
+            wake_event.wait(timeout=min(remaining, 60.0))
+            wake_event.clear()
+
+            # Re-fetch children to detect new phase
+            try:
+                children = client.get_children(issue.id)
+            except PaperclipAPIError as e:
+                logger.warning("Failed to refresh children: %s", e)
+                continue
+
+            phase = _detect_phase(children)
+            if phase == OrchestratorPhase.AGGREGATE:
+                logger.info("Orchestrator %s: all children done — proceeding to aggregate", issue.id)
+                return _aggregate_and_present(config, client, issue, children)
+
+            # Re-evaluate for retries / permanent failures
+            pending = [c for c in children if c.status not in ("done",)]
+            permanently_failed = []
+            still_pending = 0
+            for c in pending:
+                if c.status == "blocked":
+                    if not (config.paperclip.orchestrator_retry_failed
+                            and _maybe_retry_child(client, c, config.paperclip.orchestrator_max_retries)):
+                        permanently_failed.append(c)
+                    else:
+                        still_pending += 1
+                else:
+                    still_pending += 1
+
+            if permanently_failed:
+                done_count = sum(1 for c in children if c.status == "done")
+                if done_count > 0:
+                    return _aggregate_with_partial_failures(
+                        config, client, issue, children, permanently_failed,
+                    )
+                failed_names = ", ".join(c.title[:50] for c in permanently_failed)
+                comment = (
+                    f"## Orchestrator: Blocked\n\n"
+                    f"{len(permanently_failed)} subtask(s) failed after retry:\n"
+                    f"- {failed_names}\n\n"
+                    f"**Needs human review.**"
+                )
+                try:
+                    client.update_issue(issue.id, status="blocked", comment=comment)
+                except PaperclipAPIError:
+                    pass
+                return HeartbeatResult(
+                    status="blocked",
+                    issue_id=issue.id,
+                    summary=f"{len(permanently_failed)} subtasks failed after retry",
+                    exit_code=1,
+                )
+
+            # Update child_ids set for subscription filtering
+            child_ids.clear()
+            child_ids.update(c.id for c in children if c.status != "done")
+            if not child_ids:
+                # All done — one more phase check
+                return _aggregate_and_present(config, client, issue, children)
+
+        # Timeout — fall through to idle exit
+        logger.info("Orchestrator %s: WS poll timeout (%ds) — exiting idle", issue.id, poll_timeout)
+        return None
+    finally:
+        unsub()
 
 
 def _maybe_retry_child(
