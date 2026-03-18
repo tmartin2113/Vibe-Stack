@@ -85,6 +85,24 @@ export VIBE_TASK_TYPE="code"
 python -m agents.main --heartbeat
 ```
 
+### Remote Access (Tailscale)
+
+Access Paperclip from your phone or any device on your tailnet with automatic HTTPS — no port forwarding or reverse proxy needed.
+
+```bash
+docker compose up tailscale
+```
+
+On first run, check logs for the auth URL:
+
+```bash
+docker compose logs tailscale
+```
+
+Visit the printed URL to add the node to your tailnet. Once connected, access Paperclip at `https://vibe.<your-tailnet>.ts.net` from any device.
+
+To skip interactive auth, set `TS_AUTHKEY` in `.env` (get one from [Tailscale admin](https://login.tailscale.com/admin/settings/keys)). Auth state persists across restarts — you only authenticate once.
+
 ### Health Check
 
 ```bash
