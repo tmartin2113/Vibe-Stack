@@ -1,5 +1,5 @@
 """
-Hardware auto-discovery for Genesia.
+Hardware auto-discovery for Vibe.
 
 Probes the host system at startup and produces a frozen SystemProfile
 that other modules (resource_allocator, doctor, sandbox) consume.

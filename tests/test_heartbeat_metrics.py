@@ -86,8 +86,8 @@ class TestHeartbeatCounters:
 
         run_heartbeat(config)
 
-        assert metrics.get_counter("genesia_heartbeat_total", {"status": "started"}) == 1
-        assert metrics.get_counter("genesia_heartbeat_total", {"status": "success"}) == 1
+        assert metrics.get_counter("vibe_heartbeat_total", {"status": "started"}) == 1
+        assert metrics.get_counter("vibe_heartbeat_total", {"status": "success"}) == 1
 
     @patch("agents.heartbeat.PaperclipClient")
     def test_idle_increments_counter(self, MockClient, config):
@@ -95,8 +95,8 @@ class TestHeartbeatCounters:
 
         run_heartbeat(config)
 
-        assert metrics.get_counter("genesia_heartbeat_total", {"status": "started"}) == 1
-        assert metrics.get_counter("genesia_heartbeat_total", {"status": "idle"}) == 1
+        assert metrics.get_counter("vibe_heartbeat_total", {"status": "started"}) == 1
+        assert metrics.get_counter("vibe_heartbeat_total", {"status": "idle"}) == 1
 
     @patch("agents.heartbeat._run_workflow")
     @patch("agents.heartbeat.PaperclipClient")
@@ -106,8 +106,8 @@ class TestHeartbeatCounters:
 
         run_heartbeat(config)
 
-        assert metrics.get_counter("genesia_heartbeat_total", {"status": "started"}) == 1
-        assert metrics.get_counter("genesia_heartbeat_total", {"status": "failed"}) == 1
+        assert metrics.get_counter("vibe_heartbeat_total", {"status": "started"}) == 1
+        assert metrics.get_counter("vibe_heartbeat_total", {"status": "failed"}) == 1
 
     @patch("agents.heartbeat._run_workflow")
     @patch("agents.heartbeat.PaperclipClient")
@@ -117,7 +117,7 @@ class TestHeartbeatCounters:
 
         run_heartbeat(config)
 
-        assert metrics.get_counter("genesia_heartbeat_total", {"status": "blocked"}) == 1
+        assert metrics.get_counter("vibe_heartbeat_total", {"status": "blocked"}) == 1
 
     @patch("agents.heartbeat._run_workflow")
     @patch("agents.heartbeat.PaperclipClient")
@@ -130,7 +130,7 @@ class TestHeartbeatCounters:
 
         run_heartbeat(config)
 
-        assert metrics.get_counter("genesia_heartbeat_total", {"status": "clarification_needed"}) == 1
+        assert metrics.get_counter("vibe_heartbeat_total", {"status": "clarification_needed"}) == 1
 
     @patch("agents.heartbeat.PaperclipClient")
     def test_identity_failure_increments_failed(self, MockClient, config):
@@ -139,7 +139,7 @@ class TestHeartbeatCounters:
 
         run_heartbeat(config)
 
-        assert metrics.get_counter("genesia_heartbeat_total", {"status": "failed"}) == 1
+        assert metrics.get_counter("vibe_heartbeat_total", {"status": "failed"}) == 1
 
     @patch("agents.heartbeat.PaperclipClient")
     def test_connection_failure_increments_failed(self, MockClient, config):
@@ -147,7 +147,7 @@ class TestHeartbeatCounters:
 
         run_heartbeat(config)
 
-        assert metrics.get_counter("genesia_heartbeat_total", {"status": "failed"}) == 1
+        assert metrics.get_counter("vibe_heartbeat_total", {"status": "failed"}) == 1
 
     @patch("agents.heartbeat.PaperclipClient")
     def test_checkout_conflict_increments_idle(self, MockClient, config):
@@ -159,7 +159,7 @@ class TestHeartbeatCounters:
 
         run_heartbeat(config)
 
-        assert metrics.get_counter("genesia_heartbeat_total", {"status": "idle"}) == 1
+        assert metrics.get_counter("vibe_heartbeat_total", {"status": "idle"}) == 1
 
     @patch("agents.heartbeat._run_workflow")
     @patch("agents.heartbeat.PaperclipClient")
@@ -170,8 +170,8 @@ class TestHeartbeatCounters:
         run_heartbeat(config)
         run_heartbeat(config)
 
-        assert metrics.get_counter("genesia_heartbeat_total", {"status": "started"}) == 2
-        assert metrics.get_counter("genesia_heartbeat_total", {"status": "success"}) == 2
+        assert metrics.get_counter("vibe_heartbeat_total", {"status": "started"}) == 2
+        assert metrics.get_counter("vibe_heartbeat_total", {"status": "success"}) == 2
 
 
 # ── Duration Histogram Tests ──
@@ -189,7 +189,7 @@ class TestHeartbeatDuration:
         # Should have at least one observation in the histogram
         with metrics._lock:
             key = metrics._labels_key({"status": "success"})
-            observations = metrics._histograms["genesia_heartbeat_duration_seconds"][key]
+            observations = metrics._histograms["vibe_heartbeat_duration_seconds"][key]
         assert len(observations) == 1
         assert observations[0] >= 0  # Non-negative duration
 
@@ -201,7 +201,7 @@ class TestHeartbeatDuration:
 
         with metrics._lock:
             key = metrics._labels_key({"status": "idle"})
-            observations = metrics._histograms["genesia_heartbeat_duration_seconds"][key]
+            observations = metrics._histograms["vibe_heartbeat_duration_seconds"][key]
         assert len(observations) == 1
 
 
@@ -222,8 +222,8 @@ class TestHeartbeatTokens:
 
         run_heartbeat(config)
 
-        assert metrics.get_counter("genesia_heartbeat_tokens_total", {"direction": "input"}) == 1500
-        assert metrics.get_counter("genesia_heartbeat_tokens_total", {"direction": "output"}) == 300
+        assert metrics.get_counter("vibe_heartbeat_tokens_total", {"direction": "input"}) == 1500
+        assert metrics.get_counter("vibe_heartbeat_tokens_total", {"direction": "output"}) == 300
 
     @patch("agents.heartbeat._run_workflow")
     @patch("agents.heartbeat.PaperclipClient")
@@ -234,8 +234,8 @@ class TestHeartbeatTokens:
         run_heartbeat(config)
 
         # Zero tokens should not be recorded (guard in _finish)
-        assert metrics.get_counter("genesia_heartbeat_tokens_total", {"direction": "input"}) == 0
-        assert metrics.get_counter("genesia_heartbeat_tokens_total", {"direction": "output"}) == 0
+        assert metrics.get_counter("vibe_heartbeat_tokens_total", {"direction": "input"}) == 0
+        assert metrics.get_counter("vibe_heartbeat_tokens_total", {"direction": "output"}) == 0
 
     @patch("agents.heartbeat._run_workflow")
     @patch("agents.heartbeat.PaperclipClient")
@@ -251,8 +251,8 @@ class TestHeartbeatTokens:
         run_heartbeat(config)
         run_heartbeat(config)
 
-        assert metrics.get_counter("genesia_heartbeat_tokens_total", {"direction": "input"}) == 2000
-        assert metrics.get_counter("genesia_heartbeat_tokens_total", {"direction": "output"}) == 400
+        assert metrics.get_counter("vibe_heartbeat_tokens_total", {"direction": "input"}) == 2000
+        assert metrics.get_counter("vibe_heartbeat_tokens_total", {"direction": "output"}) == 400
 
 
 # ── Workflow Duration Tests ──
@@ -269,7 +269,7 @@ class TestWorkflowDuration:
 
         with metrics._lock:
             key = metrics._labels_key({"task_type": "auto"})
-            observations = metrics._histograms["genesia_heartbeat_workflow_duration_seconds"][key]
+            observations = metrics._histograms["vibe_heartbeat_workflow_duration_seconds"][key]
         assert len(observations) == 1
         assert observations[0] >= 0
 
@@ -284,7 +284,7 @@ class TestWorkflowDuration:
 
         with metrics._lock:
             key = metrics._labels_key({"task_type": "security_audit"})
-            observations = metrics._histograms["genesia_heartbeat_workflow_duration_seconds"][key]
+            observations = metrics._histograms["vibe_heartbeat_workflow_duration_seconds"][key]
         assert len(observations) == 1
 
     @patch("agents.heartbeat._run_workflow")
@@ -298,7 +298,7 @@ class TestWorkflowDuration:
 
         with metrics._lock:
             # No observations should exist for workflow duration
-            assert len(metrics._histograms["genesia_heartbeat_workflow_duration_seconds"]) == 0
+            assert len(metrics._histograms["vibe_heartbeat_workflow_duration_seconds"]) == 0
 
 
 # ── Paperclip API Metrics Tests ──
@@ -313,10 +313,10 @@ class TestPaperclipAPIMetrics:
 
         run_heartbeat(config)
 
-        assert metrics.get_counter("genesia_paperclip_api_calls_total", {"endpoint": "get_issue"}) == 1
-        assert metrics.get_counter("genesia_paperclip_api_calls_total", {"endpoint": "get_comments"}) == 1
-        assert metrics.get_counter("genesia_paperclip_api_calls_total", {"endpoint": "update_issue"}) == 1
-        assert metrics.get_counter("genesia_paperclip_api_calls_total", {"endpoint": "report_cost"}) == 1
+        assert metrics.get_counter("vibe_paperclip_api_calls_total", {"endpoint": "get_issue"}) == 1
+        assert metrics.get_counter("vibe_paperclip_api_calls_total", {"endpoint": "get_comments"}) == 1
+        assert metrics.get_counter("vibe_paperclip_api_calls_total", {"endpoint": "update_issue"}) == 1
+        assert metrics.get_counter("vibe_paperclip_api_calls_total", {"endpoint": "report_cost"}) == 1
 
     @patch("agents.heartbeat._run_workflow")
     @patch("agents.heartbeat.PaperclipClient")
@@ -329,10 +329,10 @@ class TestPaperclipAPIMetrics:
         with metrics._lock:
             # Context fetch duration
             ctx_key = metrics._labels_key({"endpoint": "context"})
-            assert len(metrics._histograms["genesia_paperclip_api_duration_seconds"][ctx_key]) == 1
+            assert len(metrics._histograms["vibe_paperclip_api_duration_seconds"][ctx_key]) == 1
             # update_issue duration
             update_key = metrics._labels_key({"endpoint": "update_issue"})
-            assert len(metrics._histograms["genesia_paperclip_api_duration_seconds"][update_key]) == 1
+            assert len(metrics._histograms["vibe_paperclip_api_duration_seconds"][update_key]) == 1
 
     @patch("agents.heartbeat.PaperclipClient")
     def test_identity_error_records_api_error(self, MockClient, config):
@@ -341,7 +341,7 @@ class TestPaperclipAPIMetrics:
 
         run_heartbeat(config)
 
-        assert metrics.get_counter("genesia_paperclip_api_errors_total", {"endpoint": "identity"}) == 1
+        assert metrics.get_counter("vibe_paperclip_api_errors_total", {"endpoint": "identity"}) == 1
 
     @patch("agents.heartbeat.PaperclipClient")
     def test_assignments_error_records_api_error(self, MockClient, config):
@@ -353,7 +353,7 @@ class TestPaperclipAPIMetrics:
 
         run_heartbeat(config)
 
-        assert metrics.get_counter("genesia_paperclip_api_errors_total", {"endpoint": "assignments"}) == 1
+        assert metrics.get_counter("vibe_paperclip_api_errors_total", {"endpoint": "assignments"}) == 1
 
     @patch("agents.heartbeat.PaperclipClient")
     def test_checkout_error_records_api_error(self, MockClient, config):
@@ -369,7 +369,7 @@ class TestPaperclipAPIMetrics:
 
         run_heartbeat(config)
 
-        assert metrics.get_counter("genesia_paperclip_api_errors_total", {"endpoint": "checkout"}) == 1
+        assert metrics.get_counter("vibe_paperclip_api_errors_total", {"endpoint": "checkout"}) == 1
 
     @patch("agents.heartbeat._run_workflow")
     @patch("agents.heartbeat.PaperclipClient")
@@ -380,7 +380,7 @@ class TestPaperclipAPIMetrics:
 
         run_heartbeat(config)
 
-        assert metrics.get_counter("genesia_paperclip_api_errors_total", {"endpoint": "context"}) == 1
+        assert metrics.get_counter("vibe_paperclip_api_errors_total", {"endpoint": "context"}) == 1
 
     @patch("agents.heartbeat._run_workflow")
     @patch("agents.heartbeat.PaperclipClient")
@@ -392,7 +392,7 @@ class TestPaperclipAPIMetrics:
 
         run_heartbeat(config)
 
-        assert metrics.get_counter("genesia_paperclip_api_errors_total", {"endpoint": "update_issue"}) == 1
+        assert metrics.get_counter("vibe_paperclip_api_errors_total", {"endpoint": "update_issue"}) == 1
 
     @patch("agents.heartbeat._run_workflow")
     @patch("agents.heartbeat.PaperclipClient")
@@ -404,7 +404,7 @@ class TestPaperclipAPIMetrics:
 
         run_heartbeat(config)
 
-        assert metrics.get_counter("genesia_paperclip_api_errors_total", {"endpoint": "report_cost"}) == 1
+        assert metrics.get_counter("vibe_paperclip_api_errors_total", {"endpoint": "report_cost"}) == 1
 
     @patch("agents.heartbeat._run_workflow")
     @patch("agents.heartbeat.PaperclipClient")
@@ -414,7 +414,7 @@ class TestPaperclipAPIMetrics:
 
         run_heartbeat(config)
 
-        assert metrics.get_counter("genesia_heartbeat_total", {"status": "workflow_error"}) == 1
+        assert metrics.get_counter("vibe_heartbeat_total", {"status": "workflow_error"}) == 1
 
     @patch("agents.heartbeat._run_workflow")
     @patch("agents.heartbeat.PaperclipClient")
@@ -429,7 +429,7 @@ class TestPaperclipAPIMetrics:
 
         run_heartbeat(config)
 
-        assert metrics.get_counter("genesia_paperclip_api_errors_total", {"endpoint": "update_issue"}) == 1
+        assert metrics.get_counter("vibe_paperclip_api_errors_total", {"endpoint": "update_issue"}) == 1
 
 
 # ── Metric Registration Tests ──
@@ -439,32 +439,32 @@ class TestMetricRegistrations:
     """Verify all heartbeat metrics are properly registered with descriptions."""
 
     def test_heartbeat_total_registered(self):
-        assert "genesia_heartbeat_total" in metrics._help
-        assert metrics._types["genesia_heartbeat_total"] == "counter"
+        assert "vibe_heartbeat_total" in metrics._help
+        assert metrics._types["vibe_heartbeat_total"] == "counter"
 
     def test_heartbeat_duration_registered(self):
-        assert "genesia_heartbeat_duration_seconds" in metrics._help
-        assert metrics._types["genesia_heartbeat_duration_seconds"] == "histogram"
+        assert "vibe_heartbeat_duration_seconds" in metrics._help
+        assert metrics._types["vibe_heartbeat_duration_seconds"] == "histogram"
 
     def test_heartbeat_tokens_registered(self):
-        assert "genesia_heartbeat_tokens_total" in metrics._help
-        assert metrics._types["genesia_heartbeat_tokens_total"] == "counter"
+        assert "vibe_heartbeat_tokens_total" in metrics._help
+        assert metrics._types["vibe_heartbeat_tokens_total"] == "counter"
 
     def test_workflow_duration_registered(self):
-        assert "genesia_heartbeat_workflow_duration_seconds" in metrics._help
-        assert metrics._types["genesia_heartbeat_workflow_duration_seconds"] == "histogram"
+        assert "vibe_heartbeat_workflow_duration_seconds" in metrics._help
+        assert metrics._types["vibe_heartbeat_workflow_duration_seconds"] == "histogram"
 
     def test_paperclip_api_calls_registered(self):
-        assert "genesia_paperclip_api_calls_total" in metrics._help
-        assert metrics._types["genesia_paperclip_api_calls_total"] == "counter"
+        assert "vibe_paperclip_api_calls_total" in metrics._help
+        assert metrics._types["vibe_paperclip_api_calls_total"] == "counter"
 
     def test_paperclip_api_errors_registered(self):
-        assert "genesia_paperclip_api_errors_total" in metrics._help
-        assert metrics._types["genesia_paperclip_api_errors_total"] == "counter"
+        assert "vibe_paperclip_api_errors_total" in metrics._help
+        assert metrics._types["vibe_paperclip_api_errors_total"] == "counter"
 
     def test_paperclip_api_duration_registered(self):
-        assert "genesia_paperclip_api_duration_seconds" in metrics._help
-        assert metrics._types["genesia_paperclip_api_duration_seconds"] == "histogram"
+        assert "vibe_paperclip_api_duration_seconds" in metrics._help
+        assert metrics._types["vibe_paperclip_api_duration_seconds"] == "histogram"
 
 
 # ── Prometheus Export Tests ──
@@ -485,10 +485,10 @@ class TestPrometheusExport:
         run_heartbeat(config)
 
         output = metrics.format_prometheus()
-        assert "genesia_heartbeat_total" in output
-        assert "genesia_heartbeat_duration_seconds" in output
-        assert "genesia_heartbeat_tokens_total" in output
-        assert "genesia_paperclip_api_calls_total" in output
+        assert "vibe_heartbeat_total" in output
+        assert "vibe_heartbeat_duration_seconds" in output
+        assert "vibe_heartbeat_tokens_total" in output
+        assert "vibe_paperclip_api_calls_total" in output
 
     @patch("agents.heartbeat._run_workflow")
     @patch("agents.heartbeat.PaperclipClient")
@@ -505,5 +505,5 @@ class TestPrometheusExport:
 
         json_output = metrics.format_json()
         # Should contain heartbeat counters
-        found_heartbeat = any("genesia_heartbeat" in k for k in json_output)
+        found_heartbeat = any("vibe_heartbeat" in k for k in json_output)
         assert found_heartbeat

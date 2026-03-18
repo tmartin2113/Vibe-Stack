@@ -19,7 +19,7 @@ import urllib.error
 
 import pytest
 
-os.environ["GENESIA_DISABLE_REMOTE_SKILLS"] = "1"
+os.environ["VIBE_DISABLE_REMOTE_SKILLS"] = "1"
 
 from agents.metrics import MetricsRegistry, metrics, start_health_server
 from agents.main import (
@@ -289,10 +289,10 @@ class TestHealthServer:
 
     def test_metrics_endpoint(self):
         # Record a metric so there's something to export
-        metrics.increment("genesia_requests_total", labels={"status": "success", "intent": "code"})
+        metrics.increment("vibe_requests_total", labels={"status": "success", "intent": "code"})
         status, body = self._get("/metrics")
         assert status == 200
-        assert "genesia_requests_total" in body
+        assert "vibe_requests_total" in body
 
     def test_status_endpoint(self):
         status, body = self._get("/status")
@@ -400,14 +400,14 @@ class TestWorkflowNodeMetrics:
     """Test that CompiledWorkflow records per-node duration metrics."""
 
     def test_node_duration_recorded(self):
-        """Executing a node records genesia_node_duration_seconds."""
+        """Executing a node records vibe_node_duration_seconds."""
         from agents.graph import Workflow, END
 
         # Fresh registry to avoid cross-test pollution
         from agents.metrics import metrics as global_metrics
 
         # Record baseline
-        baseline = global_metrics.get_counter("genesia_node_duration_seconds")
+        baseline = global_metrics.get_counter("vibe_node_duration_seconds")
 
         wf = Workflow()
         wf.add_node("a", lambda state: state)
@@ -418,7 +418,7 @@ class TestWorkflowNodeMetrics:
 
         # Check that histogram observations were recorded
         prom = global_metrics.format_prometheus()
-        assert 'genesia_node_duration_seconds_count{node="a"}' in prom
+        assert 'vibe_node_duration_seconds_count{node="a"}' in prom
 
     def test_multiple_nodes_tracked(self):
         """Each node gets its own label in the histogram."""
@@ -435,8 +435,8 @@ class TestWorkflowNodeMetrics:
         app.invoke({"user_request": "test"})
 
         prom = global_metrics.format_prometheus()
-        assert 'genesia_node_duration_seconds_count{node="x"}' in prom
-        assert 'genesia_node_duration_seconds_count{node="y"}' in prom
+        assert 'vibe_node_duration_seconds_count{node="x"}' in prom
+        assert 'vibe_node_duration_seconds_count{node="y"}' in prom
 
 
 # ===== Global Metrics Pre-registration Tests =====
@@ -446,16 +446,16 @@ class TestGlobalMetricsSetup:
     """Test that the global metrics registry has expected descriptions."""
 
     def test_requests_total_described(self):
-        assert "genesia_requests_total" in metrics._help
+        assert "vibe_requests_total" in metrics._help
 
     def test_node_duration_described(self):
-        assert "genesia_node_duration_seconds" in metrics._help
+        assert "vibe_node_duration_seconds" in metrics._help
 
     def test_llm_calls_described(self):
-        assert "genesia_llm_calls_total" in metrics._help
+        assert "vibe_llm_calls_total" in metrics._help
 
     def test_queue_depth_described(self):
-        assert "genesia_queue_depth" in metrics._help
+        assert "vibe_queue_depth" in metrics._help
 
     def test_uptime_described(self):
-        assert "genesia_uptime_seconds" in metrics._help
+        assert "vibe_uptime_seconds" in metrics._help

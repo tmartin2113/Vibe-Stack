@@ -10,7 +10,7 @@ Implements a 3-phase state machine for multi-agent task orchestration:
 3. AGGREGATE: Collect completed child outputs → combine via AggregatorNode
    → post combined result on parent issue
 
-The orchestrator is a regular Genesia agent with GENESIA_TASK_TYPE=orchestrator.
+The orchestrator is a regular Vibe agent with VIBE_TASK_TYPE=orchestrator.
 Paperclip drives scheduling via heartbeats. All orchestration state is derived
 from Paperclip issue state (no external storage needed).
 
@@ -305,7 +305,7 @@ def _run_directly(
         if questions:
             clarification = ClarificationRequest(
                 questions=questions,
-                blocking_node=final_state.get("last_node", "genesia"),
+                blocking_node=final_state.get("last_node", "vibe"),
                 context_summary=final_state.get("specification", "")[:500],
             )
             comment_body = _format_clarification_comment(questions)
@@ -971,11 +971,11 @@ def _create_aggregation_registry(config: SystemConfig) -> Optional["AdapterRegis
     """
     Create a minimal adapter registry for LLM-driven aggregation.
 
-    Returns an AdapterRegistry with a 'genesia' adapter if the LLM backend
+    Returns an AdapterRegistry with a 'vibe' adapter if the LLM backend
     is available, or None to fall back to structured concatenation.
     """
     try:
-        from .adapters import AdapterRegistry, PromptAdapter, GENESIA_SYSTEM_PROMPT
+        from .adapters import AdapterRegistry, PromptAdapter, VIBE_SYSTEM_PROMPT
         from .llm_backend import create_backend_from_config
 
         backend = create_backend_from_config(config)
@@ -989,8 +989,8 @@ def _create_aggregation_registry(config: SystemConfig) -> Optional["AdapterRegis
 
         registry = AdapterRegistry()
         adapter = PromptAdapter(
-            "genesia", GENESIA_SYSTEM_PROMPT, backend,
-            config=config.generation.get_config("genesia") if hasattr(config, "generation") else {},
+            "vibe", VIBE_SYSTEM_PROMPT, backend,
+            config=config.generation.get_config("vibe") if hasattr(config, "generation") else {},
         )
         registry.register(adapter)
         return registry

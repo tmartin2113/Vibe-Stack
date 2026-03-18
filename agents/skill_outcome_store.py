@@ -9,8 +9,7 @@ after each workflow run, closing the reinforcement loop:
                 |______ Retrieve top-K examples ________|
 
 The outcome store is the CONSUMER of skill quality signals.
-Unlike training_collector (which writes JSONL nobody reads), this store
-is actively queried by skill_generator to produce better skills over time.
+It is actively queried by skill_generator to produce better skills over time.
 """
 
 import json
@@ -56,14 +55,14 @@ class SkillOutcomeStore:
 
         Args:
             store_path: Path to the JSONL file.  Defaults to
-                        genesia_skills/outcome_store.jsonl alongside the
+                        vibe_skills/outcome_store.jsonl alongside the
                         skill registry index.
             max_entries: Maximum entries to keep (FIFO eviction).
         """
         if store_path is None:
             store_path = str(
                 Path.home() / ".local" / "share"
-                / "genesia_skills" / "outcome_store.jsonl"
+                / "vibe_skills" / "outcome_store.jsonl"
             )
         self.store_path = Path(store_path)
         self.store_path.parent.mkdir(parents=True, exist_ok=True)

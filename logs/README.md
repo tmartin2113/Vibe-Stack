@@ -1,6 +1,6 @@
 # Logs Directory
 
-This directory contains application logs for the Genesia Prompt Enhancer with automatic rotation.
+This directory contains application logs for the Vibe Prompt Enhancer with automatic rotation.
 
 ## Log Files
 
@@ -102,11 +102,11 @@ sudo logrotate -f ../logrotate.conf
 **Manual installation (advanced)**
 ```bash
 # Manually substitute %INSTALL_DIR% in logrotate.conf, then:
-sudo cp /path/to/modified/logrotate.conf /etc/logrotate.d/genesia-prompt-enhancer
-sudo chmod 644 /etc/logrotate.d/genesia-prompt-enhancer
+sudo cp /path/to/modified/logrotate.conf /etc/logrotate.d/vibe-prompt-enhancer
+sudo chmod 644 /etc/logrotate.d/vibe-prompt-enhancer
 
 # Verify configuration
-sudo logrotate -d /etc/logrotate.d/genesia-prompt-enhancer
+sudo logrotate -d /etc/logrotate.d/vibe-prompt-enhancer
 ```
 
 **How it works:**
@@ -168,11 +168,11 @@ rm -f logs/*.log* ../llama-server.log*
 3. Lower size limits: Edit `maxBytes` in `local_prompt_enhancer.py`
 
 ### Logrotate not working
-1. Verify installation: `sudo ls -la /etc/logrotate.d/genesia*`
-2. Test configuration syntax: `sudo logrotate -d /etc/logrotate.d/genesia-prompt-enhancer`
-3. Test manually (dry-run): `sudo logrotate -d /etc/logrotate.d/genesia-prompt-enhancer`
-4. Force rotation (actual): `sudo logrotate -f /etc/logrotate.d/genesia-prompt-enhancer`
-5. Check logrotate status: `sudo cat /var/lib/logrotate/status | grep genesia`
+1. Verify installation: `sudo ls -la /etc/logrotate.d/vibe*`
+2. Test configuration syntax: `sudo logrotate -d /etc/logrotate.d/vibe-prompt-enhancer`
+3. Test manually (dry-run): `sudo logrotate -d /etc/logrotate.d/vibe-prompt-enhancer`
+4. Force rotation (actual): `sudo logrotate -f /etc/logrotate.d/vibe-prompt-enhancer`
+5. Check logrotate status: `sudo cat /var/lib/logrotate/status | grep vibe`
 6. Review logrotate errors: `sudo journalctl -u logrotate`
 
 **Verify rotation is working:**
@@ -184,11 +184,11 @@ ls -lht ../llama-server.log* logs/*.log*
 ls -1 ../llama-server.log-*
 
 # Check logrotate last run time
-sudo grep genesia /var/lib/logrotate/status
+sudo grep vibe /var/lib/logrotate/status
 
 # Monitor live (create test logs and force rotate)
 echo "Test log entry $(date)" >> ../llama-server.log
-sudo logrotate -f /etc/logrotate.d/genesia-prompt-enhancer
+sudo logrotate -f /etc/logrotate.d/vibe-prompt-enhancer
 ls -lh ../llama-server.log*
 ```
 

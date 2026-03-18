@@ -647,9 +647,9 @@ class TestDoctorCheckMemory:
 
     def test_existing_db(self, tmp_path):
         from agents.memory_store import MemoryStore
-        genesia_dir = tmp_path / ".genesia"
-        genesia_dir.mkdir()
-        db_path = genesia_dir / "memory.db"
+        vibe_dir = tmp_path / ".vibe"
+        vibe_dir.mkdir()
+        db_path = vibe_dir / "memory.db"
         store = MemoryStore(db_path=db_path)
         store.store("test memory")
 
@@ -661,9 +661,9 @@ class TestDoctorCheckMemory:
         assert "FTS5 active" in result.summary
 
     def test_corrupted_db(self, tmp_path):
-        genesia_dir = tmp_path / ".genesia"
-        genesia_dir.mkdir()
-        db_path = genesia_dir / "memory.db"
+        vibe_dir = tmp_path / ".vibe"
+        vibe_dir.mkdir()
+        db_path = vibe_dir / "memory.db"
         db_path.write_text("not a valid sqlite database")
 
         with patch("agents.doctor.Path.home", return_value=tmp_path):
@@ -1497,9 +1497,9 @@ class TestDoctorCheckEmbeddings:
         from agents.memory_store import MemoryStore
         import json
 
-        genesia_dir = tmp_path / ".genesia"
-        genesia_dir.mkdir()
-        db_path = genesia_dir / "memory.db"
+        vibe_dir = tmp_path / ".vibe"
+        vibe_dir.mkdir()
+        db_path = vibe_dir / "memory.db"
         store = MemoryStore(db_path=db_path)
         store._embedder_checked = True
         store._embedder = None

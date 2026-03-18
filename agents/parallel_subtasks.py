@@ -67,7 +67,6 @@ def _build_local_state(
 def run_single_subtask(
     sub_task_index: int,
     nodes: Any,
-    training_collector: Any,
     shared_context: Dict[str, Any],
     sub_task_dict: Dict[str, Any],
     quality_threshold: int = 85,
@@ -82,7 +81,6 @@ def run_single_subtask(
     Args:
         sub_task_index: Original index in the parent sub_tasks list (for logging).
         nodes: AgentNodes instance.
-        training_collector: TrainingDataCollector instance (thread-safe).
         shared_context: Read-only context from parent state.
         sub_task_dict: The sub-task dict to process.
         quality_threshold: Score needed to pass quality gates.
@@ -116,7 +114,6 @@ def run_single_subtask(
             break
 
         local_state = nodes.evaluate_sub_output(local_state)
-        training_collector.collect_sub_output_evaluation(local_state)
 
         decision = should_approve_sub_output(local_state)
 
@@ -139,7 +136,6 @@ def run_single_subtask(
 def execute_parallel_subtasks(
     state: AgentState,
     nodes: Any,
-    training_collector: Any,
     config: Any = None,
 ) -> AgentState:
     """
@@ -151,7 +147,6 @@ def execute_parallel_subtasks(
     Args:
         state: Current AgentState with sub_tasks populated by router.
         nodes: AgentNodes instance.
-        training_collector: TrainingDataCollector (thread-safe).
         config: SystemConfig for reading parallel settings.
 
     Returns:
@@ -202,7 +197,6 @@ def execute_parallel_subtasks(
                 run_single_subtask,
                 sub_task_index=idx,
                 nodes=nodes,
-                training_collector=training_collector,
                 shared_context=shared_context,
                 sub_task_dict=st,
                 quality_threshold=quality_threshold,

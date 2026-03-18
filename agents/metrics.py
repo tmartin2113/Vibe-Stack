@@ -1,5 +1,5 @@
 """
-Lightweight metrics collection and health endpoint for Genesia daemon.
+Lightweight metrics collection and health endpoint for Vibe daemon.
 
 Provides:
 - Thread-safe counters, gauges, and histograms
@@ -174,26 +174,26 @@ class MetricsRegistry:
 metrics = MetricsRegistry()
 
 # Pre-register metric descriptions
-metrics.describe("genesia_requests_total", "Total workflow requests processed", "counter")
-metrics.describe("genesia_requests_failed_total", "Total workflow requests that failed", "counter")
-metrics.describe("genesia_request_duration_seconds", "Workflow request duration in seconds", "histogram")
-metrics.describe("genesia_node_duration_seconds", "Per-node execution duration in seconds", "histogram")
-metrics.describe("genesia_queue_depth", "Current request queue depth", "gauge")
-metrics.describe("genesia_active_workers", "Number of active worker threads", "gauge")
-metrics.describe("genesia_uptime_seconds", "Daemon uptime in seconds", "gauge")
-metrics.describe("genesia_llm_calls_total", "Total LLM backend calls", "counter")
-metrics.describe("genesia_llm_retries_total", "Total LLM retry attempts", "counter")
-metrics.describe("genesia_llm_call_duration_seconds", "LLM call duration in seconds", "histogram")
-metrics.describe("genesia_requests_dropped_total", "Requests dropped due to full queue", "counter")
+metrics.describe("vibe_requests_total", "Total workflow requests processed", "counter")
+metrics.describe("vibe_requests_failed_total", "Total workflow requests that failed", "counter")
+metrics.describe("vibe_request_duration_seconds", "Workflow request duration in seconds", "histogram")
+metrics.describe("vibe_node_duration_seconds", "Per-node execution duration in seconds", "histogram")
+metrics.describe("vibe_queue_depth", "Current request queue depth", "gauge")
+metrics.describe("vibe_active_workers", "Number of active worker threads", "gauge")
+metrics.describe("vibe_uptime_seconds", "Daemon uptime in seconds", "gauge")
+metrics.describe("vibe_llm_calls_total", "Total LLM backend calls", "counter")
+metrics.describe("vibe_llm_retries_total", "Total LLM retry attempts", "counter")
+metrics.describe("vibe_llm_call_duration_seconds", "LLM call duration in seconds", "histogram")
+metrics.describe("vibe_requests_dropped_total", "Requests dropped due to full queue", "counter")
 
 # Heartbeat-specific metrics
-metrics.describe("genesia_heartbeat_total", "Total heartbeat executions", "counter")
-metrics.describe("genesia_heartbeat_duration_seconds", "Heartbeat execution duration in seconds", "histogram")
-metrics.describe("genesia_heartbeat_tokens_total", "Total tokens consumed by heartbeat runs", "counter")
-metrics.describe("genesia_heartbeat_workflow_duration_seconds", "Workflow-only duration within a heartbeat", "histogram")
-metrics.describe("genesia_paperclip_api_calls_total", "Total Paperclip API calls", "counter")
-metrics.describe("genesia_paperclip_api_errors_total", "Paperclip API call errors", "counter")
-metrics.describe("genesia_paperclip_api_duration_seconds", "Paperclip API call duration in seconds", "histogram")
+metrics.describe("vibe_heartbeat_total", "Total heartbeat executions", "counter")
+metrics.describe("vibe_heartbeat_duration_seconds", "Heartbeat execution duration in seconds", "histogram")
+metrics.describe("vibe_heartbeat_tokens_total", "Total tokens consumed by heartbeat runs", "counter")
+metrics.describe("vibe_heartbeat_workflow_duration_seconds", "Workflow-only duration within a heartbeat", "histogram")
+metrics.describe("vibe_paperclip_api_calls_total", "Total Paperclip API calls", "counter")
+metrics.describe("vibe_paperclip_api_errors_total", "Paperclip API call errors", "counter")
+metrics.describe("vibe_paperclip_api_duration_seconds", "Paperclip API call duration in seconds", "histogram")
 
 
 # ===== HEALTH SERVER =====
@@ -223,8 +223,8 @@ class _HealthHandler(BaseHTTPRequestHandler):
         healthy = True
 
         # Check 1: LLM backend reachable
-        llm_host = os.environ.get("GENESIA_BACKEND_HOST", "")
-        llm_port = os.environ.get("GENESIA_BACKEND_PORT", "8000")
+        llm_host = os.environ.get("VIBE_BACKEND_HOST", "")
+        llm_port = os.environ.get("VIBE_BACKEND_PORT", "8000")
         if llm_host:
             try:
                 import urllib.request
@@ -239,7 +239,7 @@ class _HealthHandler(BaseHTTPRequestHandler):
             checks["llm_backend"] = "not_configured"
 
         # Check 2: Data directory writable
-        data_dir = os.path.join(os.environ.get("HOME", "/tmp"), ".genesia")
+        data_dir = os.path.join(os.environ.get("HOME", "/tmp"), ".vibe")
         try:
             test_file = os.path.join(data_dir, ".healthcheck")
             with open(test_file, "w") as f:
@@ -313,14 +313,14 @@ def start_health_server(
     Start the health/metrics HTTP server in a background daemon thread.
 
     Args:
-        port: Port to listen on (default 8080, configurable via GENESIA_HEALTH_PORT)
+        port: Port to listen on (default 8080, configurable via VIBE_HEALTH_PORT)
         readiness_fn: Callable returning True when daemon is ready
         daemon_status_fn: Callable returning daemon status dict (for /status)
 
     Returns:
         The HTTPServer instance, or None if startup failed.
     """
-    port = int(os.environ.get("GENESIA_HEALTH_PORT", str(port)))
+    port = int(os.environ.get("VIBE_HEALTH_PORT", str(port)))
 
     _HealthHandler.readiness_fn = readiness_fn
     _HealthHandler.daemon_status_fn = daemon_status_fn

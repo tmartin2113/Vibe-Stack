@@ -13,7 +13,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-os.environ["GENESIA_DISABLE_REMOTE_SKILLS"] = "1"
+os.environ["VIBE_DISABLE_REMOTE_SKILLS"] = "1"
 
 from agents.skill_security import SkillSecurity
 from agents.adapters import AdapterRegistry, PromptAdapter
@@ -181,7 +181,7 @@ class TestGetOrCreate:
         model = MagicMock()
         model.generate.return_value = "test output"
         # Register a base adapter
-        reg.register(PromptAdapter("genesia", "Base prompt", model))
+        reg.register(PromptAdapter("vibe", "Base prompt", model))
         reg.register(PromptAdapter("test_generator", "Test prompt", model))
         return reg
 
@@ -209,9 +209,9 @@ class TestGetOrCreate:
         assert a2.system_prompt == "Prompt v2"
         assert a1 is not a2
 
-    def test_falls_back_to_genesia_for_unknown(self, registry):
+    def test_falls_back_to_vibe_for_unknown(self, registry):
         adapter = registry.get_or_create("totally_unknown")
-        assert adapter.name == "genesia"
+        assert adapter.name == "vibe"
 
     def test_skill_prompt_overrides_existing_adapter(self, registry):
         """Even if test_generator is registered, skill prompt takes priority."""
@@ -224,7 +224,7 @@ class TestGetOrCreate:
     def test_dynamic_adapter_uses_base_model(self, registry):
         """Dynamic adapters borrow the base_model from existing adapters."""
         adapter = registry.get_or_create("new_type", "New prompt")
-        assert adapter.base_model is registry.adapters["genesia"].base_model
+        assert adapter.base_model is registry.adapters["vibe"].base_model
 
 
 # ====================================================================
@@ -336,14 +336,14 @@ class TestRouterPreSetTaskType:
         assert result["routing_confidence"] == 1.0
         assert result["debug_info"]["router_decision"]["classification_mode"] == "pre_set"
 
-    def test_pre_set_unknown_type_defaults_to_genesia(self, router):
+    def test_pre_set_unknown_type_defaults_to_vibe(self, router):
         state = {
             "specification": "Do something custom",
             "routed_task_type": "custom_agent_type",
             "debug_info": {},
         }
         result = router.execute(state)
-        assert result["specialist_adapter"] == "genesia"
+        assert result["specialist_adapter"] == "vibe"
         assert result["routed_task_type"] == "custom_agent_type"
 
     def test_pre_set_known_type_uses_mapping(self, router):

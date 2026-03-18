@@ -1,9 +1,9 @@
 {
-  "name": "@paperclipai/adapter-genesia-local",
+  "name": "@paperclipai/adapter-vibe-local",
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "Paperclip process adapter for Genesia agents",
+  "description": "Paperclip process adapter for Vibe agents",
   "exports": {
     ".": "./src/index.ts",
     "./server": "./src/server/index.ts"

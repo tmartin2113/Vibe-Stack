@@ -5,7 +5,7 @@
  * integration, timeout handling, and error wrapping.
  *
  * Uses lightweight stubs for adapter-utils and subprocess since we can't
- * import the real Paperclip SDK in tests. Tests parseGenesiaOutput indirectly
+ * import the real Paperclip SDK in tests. Tests parseVibeOutput indirectly
  * through the full execute flow.
  *
  * Run with: node --import tsx --test src/server/execute.test.ts
@@ -13,7 +13,7 @@
 
 import { describe, it, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { parseGenesiaOutput } from "./parse.js";
+import { parseVibeOutput } from "./parse.js";
 
 // ── Tests for status mapping logic (extracted from execute.ts) ──
 // Since execute() depends on @paperclipai/adapter-utils which isn't
@@ -24,12 +24,12 @@ import { parseGenesiaOutput } from "./parse.js";
  * Replicate the status mapping from execute.ts to test it in isolation.
  * This is the critical "adapter contract" that Paperclip depends on.
  */
-function mapGenesiaStatus(
-  genesiaStatus: string,
+function mapVibeStatus(
+  vibeStatus: string,
   processExitCode: number,
   parsedSummary: string,
 ): { exitCode: number; errorMessage: string | null; adapterNote?: string } {
-  switch (genesiaStatus) {
+  switch (vibeStatus) {
     case "success":
       return { exitCode: 0, errorMessage: null };
     case "idle":
@@ -52,13 +52,13 @@ function mapGenesiaStatus(
     case "failed":
       return {
         exitCode: 1,
-        errorMessage: `Genesia failed: ${parsedSummary || "unknown error"}`,
+        errorMessage: `Vibe failed: ${parsedSummary || "unknown error"}`,
       };
     default:
       if (processExitCode !== 0) {
         return {
           exitCode: processExitCode,
-          errorMessage: `Genesia exited with code ${processExitCode}`,
+          errorMessage: `Vibe exited with code ${processExitCode}`,
         };
       }
       return { exitCode: 0, errorMessage: null };
@@ -69,20 +69,20 @@ function mapGenesiaStatus(
 
 describe("adapter status mapping", () => {
   it("maps success to exit 0 with no error", () => {
-    const result = mapGenesiaStatus("success", 0, "Done");
+    const result = mapVibeStatus("success", 0, "Done");
     assert.equal(result.exitCode, 0);
     assert.equal(result.errorMessage, null);
   });
 
   it("maps idle to exit 0 with adapter note", () => {
-    const result = mapGenesiaStatus("idle", 0, "No tasks");
+    const result = mapVibeStatus("idle", 0, "No tasks");
     assert.equal(result.exitCode, 0);
     assert.equal(result.errorMessage, null);
     assert.equal(result.adapterNote, "idle_no_work_available");
   });
 
   it("maps blocked to exit 1 with error message", () => {
-    const result = mapGenesiaStatus(
+    const result = mapVibeStatus(
       "blocked",
       0,
       "Quality below threshold",
@@ -92,44 +92,44 @@ describe("adapter status mapping", () => {
   });
 
   it("maps blocked with empty summary to default message", () => {
-    const result = mapGenesiaStatus("blocked", 0, "");
+    const result = mapVibeStatus("blocked", 0, "");
     assert.equal(result.exitCode, 1);
     assert.ok(result.errorMessage!.includes("quality below threshold"));
   });
 
   it("maps clarification_needed to exit 0 with adapter note", () => {
-    const result = mapGenesiaStatus("clarification_needed", 0, "");
+    const result = mapVibeStatus("clarification_needed", 0, "");
     assert.equal(result.exitCode, 0);
     assert.equal(result.errorMessage, null);
     assert.equal(result.adapterNote, "awaiting_human_clarification");
   });
 
   it("maps failed to exit 1 with error message", () => {
-    const result = mapGenesiaStatus("failed", 1, "LLM crashed");
+    const result = mapVibeStatus("failed", 1, "LLM crashed");
     assert.equal(result.exitCode, 1);
     assert.ok(result.errorMessage!.includes("LLM crashed"));
   });
 
   it("maps failed with empty summary to unknown error", () => {
-    const result = mapGenesiaStatus("failed", 1, "");
+    const result = mapVibeStatus("failed", 1, "");
     assert.ok(result.errorMessage!.includes("unknown error"));
   });
 
   it("falls back to process exit code for unknown status", () => {
-    const result = mapGenesiaStatus("", 42, "");
+    const result = mapVibeStatus("", 42, "");
     assert.equal(result.exitCode, 42);
     assert.ok(result.errorMessage!.includes("42"));
   });
 
   it("treats unknown status with exit 0 as success", () => {
-    const result = mapGenesiaStatus("", 0, "");
+    const result = mapVibeStatus("", 0, "");
     assert.equal(result.exitCode, 0);
     assert.equal(result.errorMessage, null);
   });
 });
 
 // ── Parse + Status Integration Tests ──
-// Verify that parseGenesiaOutput feeds correctly into status mapping.
+// Verify that parseVibeOutput feeds correctly into status mapping.
 
 describe("parse → status mapping integration", () => {
   it("success flow: parse extracts status, mapping returns exit 0", () => {
@@ -143,9 +143,9 @@ describe("parse → status mapping integration", () => {
       model: "codellama",
     });
 
-    const parsed = parseGenesiaOutput(stdout);
+    const parsed = parseVibeOutput(stdout);
     const status = String(parsed.resultJson?.status ?? "");
-    const mapped = mapGenesiaStatus(status, 0, parsed.summary);
+    const mapped = mapVibeStatus(status, 0, parsed.summary);
 
     assert.equal(mapped.exitCode, 0);
     assert.equal(mapped.errorMessage, null);
@@ -158,14 +158,14 @@ describe("parse → status mapping integration", () => {
       summary: "Need input",
       clarification: {
         questions: ["PostgreSQL or SQLite?"],
-        blocking_node: "genesia",
+        blocking_node: "vibe",
         context_summary: "DB choice",
       },
     });
 
-    const parsed = parseGenesiaOutput(stdout);
+    const parsed = parseVibeOutput(stdout);
     const status = String(parsed.resultJson?.status ?? "");
-    const mapped = mapGenesiaStatus(status, 0, parsed.summary);
+    const mapped = mapVibeStatus(status, 0, parsed.summary);
 
     assert.equal(mapped.exitCode, 0);
     assert.ok(parsed.clarification);
@@ -178,9 +178,9 @@ describe("parse → status mapping integration", () => {
       summary: "Score: 50/100 (threshold: 85)",
     });
 
-    const parsed = parseGenesiaOutput(stdout);
+    const parsed = parseVibeOutput(stdout);
     const status = String(parsed.resultJson?.status ?? "");
-    const mapped = mapGenesiaStatus(status, 0, parsed.summary);
+    const mapped = mapVibeStatus(status, 0, parsed.summary);
 
     assert.equal(mapped.exitCode, 1);
     assert.ok(mapped.errorMessage!.includes("50/100"));
@@ -197,18 +197,18 @@ describe("parse → status mapping integration", () => {
       }),
     ].join("\n");
 
-    const parsed = parseGenesiaOutput(stdout);
+    const parsed = parseVibeOutput(stdout);
     const status = String(parsed.resultJson?.status ?? "");
-    const mapped = mapGenesiaStatus(status, 1, parsed.summary);
+    const mapped = mapVibeStatus(status, 1, parsed.summary);
 
     assert.equal(mapped.exitCode, 1);
     assert.ok(mapped.errorMessage!.includes("vLLM connection refused"));
   });
 
   it("no JSON output: parse returns null, mapping uses process exit code", () => {
-    const parsed = parseGenesiaOutput("Traceback...\nSegfault");
+    const parsed = parseVibeOutput("Traceback...\nSegfault");
     const status = String(parsed.resultJson?.status ?? "");
-    const mapped = mapGenesiaStatus(status, 139, parsed.summary);
+    const mapped = mapVibeStatus(status, 139, parsed.summary);
 
     assert.equal(parsed.resultJson, null);
     assert.equal(mapped.exitCode, 139);
@@ -228,7 +228,7 @@ describe("environment variable injection contract", () => {
       "PAPERCLIP_WAKE_REASON",
       "PAPERCLIP_WAKE_COMMENT_ID",
       "PAPERCLIP_RUN_ID",
-      "GENESIA_TASK_TYPE",
+      "VIBE_TASK_TYPE",
     ];
 
     // Verify heartbeat.py reads these (import check)
@@ -290,12 +290,12 @@ describe("forwardReplyToPaperclip contract", () => {
 
 describe("slack bridge trigger conditions", () => {
   it("should trigger when clarification has questions and Slack is configured", () => {
-    const parsed = parseGenesiaOutput(
+    const parsed = parseVibeOutput(
       JSON.stringify({
         status: "clarification_needed",
         clarification: {
           questions: ["Which DB?"],
-          blocking_node: "genesia",
+          blocking_node: "vibe",
           context_summary: "",
         },
       }),
@@ -312,12 +312,12 @@ describe("slack bridge trigger conditions", () => {
   });
 
   it("should NOT trigger when clarification has empty questions", () => {
-    const parsed = parseGenesiaOutput(
+    const parsed = parseVibeOutput(
       JSON.stringify({
         status: "clarification_needed",
         clarification: {
           questions: [],
-          blocking_node: "genesia",
+          blocking_node: "vibe",
           context_summary: "",
         },
       }),
@@ -330,7 +330,7 @@ describe("slack bridge trigger conditions", () => {
   });
 
   it("should NOT trigger when no clarification field", () => {
-    const parsed = parseGenesiaOutput(
+    const parsed = parseVibeOutput(
       JSON.stringify({
         status: "success",
         summary: "Done",

@@ -1,5 +1,5 @@
 """
-Genesia Doctor — Self-service diagnostic command.
+Vibe Doctor — Self-service diagnostic command.
 
 Validates the health of every subsystem and reports clear, actionable
 status to help non-technical users self-diagnose problems.
@@ -66,7 +66,7 @@ class DoctorReport:
         }
         lines: List[str] = []
         lines.append("")
-        lines.append("  Genesia Doctor")
+        lines.append("  Vibe Doctor")
         lines.append("  " + "=" * 60)
 
         for check in self.checks:
@@ -93,9 +93,9 @@ class DoctorReport:
 
 def check_backend(config: Any) -> CheckResult:
     """Check vLLM backend connectivity and model availability."""
-    model = os.getenv("GENESIA_MODEL", config.model.model_name)
-    host = os.getenv("GENESIA_BACKEND_HOST", "localhost")
-    port_str = os.getenv("GENESIA_BACKEND_PORT")
+    model = os.getenv("VIBE_MODEL", config.model.model_name)
+    host = os.getenv("VIBE_BACKEND_HOST", "localhost")
+    port_str = os.getenv("VIBE_BACKEND_PORT")
 
     try:
         port = int(port_str) if port_str else None
@@ -219,12 +219,12 @@ def check_messenger(config: Any) -> CheckResult:
 
 
 def check_disk_usage() -> CheckResult:
-    """Report disk usage of Genesia data directories."""
+    """Report disk usage of Vibe data directories."""
     project_root = Path(__file__).parent.parent
 
     dirs_to_check = {
-        "skills": project_root / "genesia_skills",
-        "sessions": Path.home() / ".genesia",
+        "skills": project_root / "vibe_skills",
+        "sessions": Path.home() / ".vibe",
         "training": project_root / "training" / "data",
     }
 
@@ -420,7 +420,7 @@ def check_firecrawl() -> CheckResult:
         return CheckResult(
             "Firecrawl", "warn",
             "firecrawl-py package not installed",
-            detail="pip install 'genesia[firecrawl]'",
+            detail="pip install 'vibe[firecrawl]'",
         )
 
     try:
@@ -444,7 +444,7 @@ def check_firecrawl() -> CheckResult:
 def check_memory() -> CheckResult:
     """Check persistent memory store health."""
     try:
-        db_dir = Path.home() / ".genesia"
+        db_dir = Path.home() / ".vibe"
         db_path = db_dir / "memory.db"
 
         if not db_path.exists():

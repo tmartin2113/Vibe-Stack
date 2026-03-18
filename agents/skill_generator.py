@@ -61,7 +61,7 @@ class SkillGeneratorNode:
     """
 
     # Path to the canonical skill template (synced from anthropics/skills)
-    _TEMPLATE_PATH = Path(__file__).resolve().parent.parent / "genesia_skills" / "template" / "SKILL.md"
+    _TEMPLATE_PATH = Path(__file__).resolve().parent.parent / "vibe_skills" / "template" / "SKILL.md"
 
     def __init__(
         self,
@@ -264,7 +264,7 @@ name: {skill_name}
 description: {description}
 license: Apache-2.0
 metadata:
-  author: genesia
+  author: vibe
   version: "1.0"
   generated: true
 allowed-tools: {allowed_tools}

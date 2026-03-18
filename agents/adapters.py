@@ -174,12 +174,12 @@ class AdapterRegistry:
         if name in self.adapters:
             return self.switch_to(name)
 
-        # Unknown adapter name with no skill prompt — fall back to "genesia"
+        # Unknown adapter name with no skill prompt — fall back to "vibe"
         logger.warning(
             f"Adapter '{name}' not registered and no skill-provided prompt. "
-            f"Falling back to 'genesia'."
+            f"Falling back to 'vibe'."
         )
-        return self.switch_to("genesia")
+        return self.switch_to("vibe")
 
     def list_adapters(self) -> List[str]:
         """List all registered adapters"""
@@ -188,7 +188,7 @@ class AdapterRegistry:
 
 # ===== Predefined System Prompts for Prompt-Based Adapters =====
 
-GENESIA_SYSTEM_PROMPT = """You are a versatile AI assistant. Complete tasks thoroughly and accurately.
+VIBE_SYSTEM_PROMPT = """You are a versatile AI assistant. Complete tasks thoroughly and accurately.
 
 Focus on:
 - Understanding the task requirements

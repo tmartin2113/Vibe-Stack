@@ -75,7 +75,7 @@ class TestCpuOnlyStrategy:
         profile = _make_profile(cpu_threads=16, gpus=[])
         plan = _plan_cpu_only(profile)
         assert plan.vllm.cpu_cores >= 10  # 16 - 3 = 13
-        assert plan.genesia.cpu_cores == 1.0
+        assert plan.vibe.cpu_cores == 1.0
         assert plan.opensandbox_server.cpu_cores == 0.5
 
     def test_vllm_gets_most_ram(self):
@@ -100,7 +100,7 @@ class TestSingleGpuStrategy:
         plan = _plan_single_gpu(_make_profile(gpus=[RTX_4090]))
         assert plan.sandbox_pool.gpu_enabled is True
         assert plan.sandbox_pool.gpu_device_ids == [0]
-        assert "genesia/sandbox-gpu" in plan.sandbox_pool.sandbox_image
+        assert "vibe/sandbox-gpu" in plan.sandbox_pool.sandbox_image
 
     def test_10gb_disables_sandbox_gpu(self):
         plan = _plan_single_gpu(_make_profile(gpus=[RTX_3080]))
@@ -235,7 +235,7 @@ class TestResourcePlanSummary:
         summary = plan.summary()
         assert "single_gpu" in summary
         assert "vLLM" in summary
-        assert "Genesia" in summary
+        assert "Vibe" in summary
 
     def test_summary_contains_warnings(self):
         plan = compute_resource_plan(

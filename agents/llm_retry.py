@@ -167,8 +167,8 @@ def retry_llm_call(
         try:
             result = fn(*args, **kwargs)
             duration = time.monotonic() - call_start
-            app_metrics.increment("genesia_llm_calls_total", labels={"status": "success"})
-            app_metrics.observe("genesia_llm_call_duration_seconds", duration)
+            app_metrics.increment("vibe_llm_calls_total", labels={"status": "success"})
+            app_metrics.observe("vibe_llm_call_duration_seconds", duration)
             return result
         except Exception as e:
             last_error = e
@@ -176,13 +176,13 @@ def retry_llm_call(
             # Non-retryable error — raise immediately
             if not _is_retryable(e):
                 duration = time.monotonic() - call_start
-                app_metrics.increment("genesia_llm_calls_total", labels={"status": "error"})
-                app_metrics.observe("genesia_llm_call_duration_seconds", duration)
+                app_metrics.increment("vibe_llm_calls_total", labels={"status": "error"})
+                app_metrics.observe("vibe_llm_call_duration_seconds", duration)
                 raise
 
             # Record retry
             if attempt < max_retries:
-                app_metrics.increment("genesia_llm_retries_total", labels={"error": type(e).__name__})
+                app_metrics.increment("vibe_llm_retries_total", labels={"error": type(e).__name__})
 
             # Last attempt — don't sleep, just raise
             if attempt >= max_retries:
@@ -203,7 +203,7 @@ def retry_llm_call(
             time.sleep(delay)
 
     duration = time.monotonic() - call_start
-    app_metrics.increment("genesia_llm_calls_total", labels={"status": "exhausted"})
-    app_metrics.observe("genesia_llm_call_duration_seconds", duration)
+    app_metrics.increment("vibe_llm_calls_total", labels={"status": "exhausted"})
+    app_metrics.observe("vibe_llm_call_duration_seconds", duration)
     assert last_error is not None  # loop always sets last_error before break
     raise LLMRetryExhausted(attempts=max_retries + 1, last_error=last_error)

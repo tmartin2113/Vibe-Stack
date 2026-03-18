@@ -8,7 +8,7 @@ Key Components:
 - State: AgentState with full context tracking
 - Adapters: Prompt-based specialists with per-task generation configs
 - Skills: Dynamic task specialization via discoverable SKILL.md files
-- Nodes: Individual agent implementations (Genesia, Critic, Refinement, etc.)
+- Nodes: Individual agent implementations (Vibe, Critic, Refinement, etc.)
 - Graph: Workflow state machine with quality gate and iteration loop
 - Config: Centralized configuration management
 

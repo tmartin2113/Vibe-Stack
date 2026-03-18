@@ -1,4 +1,4 @@
-# Paperclip + Genesia Agent Stack (vLLM backend)
+# Paperclip + Vibe Agent Stack (vLLM backend)
 #
 # Replaces Ollama with vLLM for high-throughput concurrent inference.
 # vLLM supports continuous batching — multiple agents can hit it
@@ -14,20 +14,20 @@
 #   PAPERCLIP_API_KEY    — Bearer token for Paperclip API authentication
 #   PAPERCLIP_COMPANY_ID — Company UUID in Paperclip
 
-x-genesia-env: &genesia-env
-  GENESIA_BACKEND: vllm
-  GENESIA_BACKEND_HOST: vllm
-  GENESIA_BACKEND_PORT: "8000"
-  GENESIA_MODEL: ${VLLM_MODEL:-Qwen/Qwen2.5-Coder-7B-Instruct}
-  GENESIA_SANDBOX_URL: http://opensandbox:8080
+x-vibe-env: &vibe-env
+  VIBE_BACKEND: vllm
+  VIBE_BACKEND_HOST: vllm
+  VIBE_BACKEND_PORT: "8000"
+  VIBE_MODEL: ${VLLM_MODEL:-Qwen/Qwen2.5-Coder-7B-Instruct}
+  VIBE_SANDBOX_URL: http://opensandbox:8080
   PAPERCLIP_API_URL: http://paperclip:3100
   PAPERCLIP_API_KEY: ${PAPERCLIP_API_KEY:?Set PAPERCLIP_API_KEY in .env or environment}
   PAPERCLIP_COMPANY_ID: ${PAPERCLIP_COMPANY_ID:?Set PAPERCLIP_COMPANY_ID in .env or environment}
 
-x-genesia-agent: &genesia-agent-base
+x-vibe-agent: &vibe-agent-base
   build:
     context: ..
-    dockerfile: docker/Dockerfile.genesia-agent
+    dockerfile: docker/Dockerfile.vibe-agent
   depends_on:
     vllm:
       condition: service_healthy
@@ -99,7 +99,7 @@ services:
     volumes:
       - ../sandbox/sandbox.toml:/root/.sandbox.toml:ro
       - /var/run/docker.sock:/var/run/docker.sock
-      - ../:/home/user/Genesia:ro
+      - ../:/home/user/Vibe:ro
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/docs"]
       interval: 10s
@@ -114,57 +114,57 @@ services:
               count: all
               capabilities: [gpu]
 
-  # ── Genesia Agents ──
-  genesia-code:
-    <<: *genesia-agent-base
+  # ── Vibe Agents ──
+  vibe-code:
+    <<: *vibe-agent-base
     environment:
-      <<: *genesia-env
-      GENESIA_TASK_TYPE: code
+      <<: *vibe-env
+      VIBE_TASK_TYPE: code
       PAPERCLIP_AGENT_ID: ${PAPERCLIP_AGENT_ID_CODE:-}
     volumes:
-      - genesia-skills-code:/home/genesia/.genesia
+      - vibe-skills-code:/home/vibe/.vibe
 
-  genesia-test:
-    <<: *genesia-agent-base
+  vibe-test:
+    <<: *vibe-agent-base
     environment:
-      <<: *genesia-env
-      GENESIA_TASK_TYPE: test_generation
+      <<: *vibe-env
+      VIBE_TASK_TYPE: test_generation
       PAPERCLIP_AGENT_ID: ${PAPERCLIP_AGENT_ID_TEST:-}
     volumes:
-      - genesia-skills-test:/home/genesia/.genesia
+      - vibe-skills-test:/home/vibe/.vibe
 
-  genesia-security:
-    <<: *genesia-agent-base
+  vibe-security:
+    <<: *vibe-agent-base
     environment:
-      <<: *genesia-env
-      GENESIA_TASK_TYPE: security_audit
+      <<: *vibe-env
+      VIBE_TASK_TYPE: security_audit
       PAPERCLIP_AGENT_ID: ${PAPERCLIP_AGENT_ID_SECURITY:-}
     volumes:
-      - genesia-skills-security:/home/genesia/.genesia
+      - vibe-skills-security:/home/vibe/.vibe
 
-  genesia-research:
-    <<: *genesia-agent-base
+  vibe-research:
+    <<: *vibe-agent-base
     environment:
-      <<: *genesia-env
-      GENESIA_TASK_TYPE: research
+      <<: *vibe-env
+      VIBE_TASK_TYPE: research
       PAPERCLIP_AGENT_ID: ${PAPERCLIP_AGENT_ID_RESEARCH:-}
     volumes:
-      - genesia-skills-research:/home/genesia/.genesia
+      - vibe-skills-research:/home/vibe/.vibe
 
-  genesia-orchestrator:
-    <<: *genesia-agent-base
+  vibe-orchestrator:
+    <<: *vibe-agent-base
     environment:
-      <<: *genesia-env
-      GENESIA_TASK_TYPE: orchestrator
+      <<: *vibe-env
+      VIBE_TASK_TYPE: orchestrator
       PAPERCLIP_AGENT_ID: ${PAPERCLIP_AGENT_ID_ORCHESTRATOR:-}
     volumes:
-      - genesia-skills-orchestrator:/home/genesia/.genesia
+      - vibe-skills-orchestrator:/home/vibe/.vibe
 
 volumes:
   paperclip-data:
   vllm-cache:
-  genesia-skills-code:
-  genesia-skills-test:
-  genesia-skills-security:
-  genesia-skills-research:
-  genesia-skills-orchestrator:
+  vibe-skills-code:
+  vibe-skills-test:
+  vibe-skills-security:
+  vibe-skills-research:
+  vibe-skills-orchestrator:

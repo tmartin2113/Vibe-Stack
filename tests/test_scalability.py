@@ -19,7 +19,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-os.environ["GENESIA_DISABLE_REMOTE_SKILLS"] = "1"
+os.environ["VIBE_DISABLE_REMOTE_SKILLS"] = "1"
 
 
 # ===== TTL-Based Dedup Cache Tests =====
@@ -95,7 +95,7 @@ class TestRequestExtraction:
 
     def test_strips_mattermost_mention(self):
         bridge = self._make_bridge()
-        msg = {"text": "@genesia-bot Fix the login bug"}
+        msg = {"text": "@vibe-bot Fix the login bug"}
         result = bridge._extract_request_from_message(msg)
         assert result == "Fix the login bug"
 

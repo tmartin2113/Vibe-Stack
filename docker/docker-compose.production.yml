@@ -9,10 +9,10 @@
 #   - Adds resource limits and restart policies
 #   - Configures JSON log driver for log aggregation
 #   - Adds health checks to agent containers
-#   - Pins image tags (override GENESIA_IMAGE_TAG in .env)
+#   - Pins image tags (override VIBE_IMAGE_TAG in .env)
 
-x-genesia-production: &genesia-production
-  image: ghcr.io/tmartin2113/genesia:${GENESIA_IMAGE_TAG:-latest}
+x-vibe-production: &vibe-production
+  image: ghcr.io/tmartin2113/vibe:${VIBE_IMAGE_TAG:-latest}
   build: !reset null
   restart: unless-stopped
   deploy:
@@ -52,17 +52,17 @@ services:
         max-size: "100m"
         max-file: "5"
 
-  genesia-code:
-    <<: *genesia-production
+  vibe-code:
+    <<: *vibe-production
 
-  genesia-test:
-    <<: *genesia-production
+  vibe-test:
+    <<: *vibe-production
 
-  genesia-security:
-    <<: *genesia-production
+  vibe-security:
+    <<: *vibe-production
 
-  genesia-research:
-    <<: *genesia-production
+  vibe-research:
+    <<: *vibe-production
 
-  genesia-orchestrator:
-    <<: *genesia-production
+  vibe-orchestrator:
+    <<: *vibe-production

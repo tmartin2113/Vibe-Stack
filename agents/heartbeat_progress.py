@@ -19,7 +19,7 @@ PROGRESS_NODES: Dict[str, str] = {
     "specialist": "Running specialist",
     "heuristic_critic": "Evaluating output (heuristic)",
     "critic_output": "Evaluating output (LLM critic)",
-    "genesia": "Building specification",
+    "vibe": "Building specification",
     "router": "Routing task",
 }
 

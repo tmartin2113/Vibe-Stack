@@ -1,5 +1,5 @@
 """
-Tests for Genesia Doctor — self-service diagnostic command.
+Tests for Vibe Doctor — self-service diagnostic command.
 
 Covers:
 - CheckResult / DoctorReport data model
@@ -20,7 +20,7 @@ from unittest.mock import MagicMock, patch, PropertyMock
 import pytest
 
 # Disable remote lookups in tests
-os.environ["GENESIA_DISABLE_REMOTE_SKILLS"] = "1"
+os.environ["VIBE_DISABLE_REMOTE_SKILLS"] = "1"
 
 from agents.doctor import (
     CheckResult,
@@ -123,7 +123,7 @@ class TestDoctorReport:
         report = DoctorReport()
         report.add(CheckResult("X", "ok", "fine"))
         output = report.format()
-        assert "Genesia Doctor" in output
+        assert "Vibe Doctor" in output
 
     def test_format_empty_report_shows_no_checks_ran(self):
         """Bug 5 fix: empty report should not produce blank summary line."""
@@ -144,7 +144,7 @@ class TestCheckBackend:
         with patch("agents.doctor.LLMBackend", return_value=mock_backend):
             with patch.dict(os.environ, {}, clear=False):
                 env = {k: v for k, v in os.environ.items()
-                       if k not in ("GENESIA_BACKEND", "GENESIA_BACKEND_PORT")}
+                       if k not in ("VIBE_BACKEND", "VIBE_BACKEND_PORT")}
                 with patch.dict(os.environ, env, clear=True):
                     result = check_backend(config)
 
@@ -159,7 +159,7 @@ class TestCheckBackend:
         with patch("agents.doctor.LLMBackend", return_value=mock_backend):
             with patch.dict(os.environ, {}, clear=False):
                 env = {k: v for k, v in os.environ.items()
-                       if k not in ("GENESIA_BACKEND", "GENESIA_BACKEND_PORT")}
+                       if k not in ("VIBE_BACKEND", "VIBE_BACKEND_PORT")}
                 with patch.dict(os.environ, env, clear=True):
                     result = check_backend(config)
 
@@ -171,7 +171,7 @@ class TestCheckBackend:
         with patch("agents.doctor.LLMBackend", side_effect=ConnectionError("refused")):
             with patch.dict(os.environ, {}, clear=False):
                 env = {k: v for k, v in os.environ.items()
-                       if k not in ("GENESIA_BACKEND", "GENESIA_BACKEND_PORT")}
+                       if k not in ("VIBE_BACKEND", "VIBE_BACKEND_PORT")}
                 with patch.dict(os.environ, env, clear=True):
                     result = check_backend(config)
 
@@ -185,9 +185,9 @@ class TestCheckBackend:
         mock_backend.backend.port = 9999
 
         with patch("agents.doctor.LLMBackend", return_value=mock_backend):
-            with patch.dict(os.environ, {"GENESIA_BACKEND_PORT": "9999"}, clear=False):
+            with patch.dict(os.environ, {"VIBE_BACKEND_PORT": "9999"}, clear=False):
                 env = {k: v for k, v in os.environ.items()}
-                env["GENESIA_BACKEND_PORT"] = "9999"
+                env["VIBE_BACKEND_PORT"] = "9999"
                 with patch.dict(os.environ, env, clear=True):
                     result = check_backend(config)
 
@@ -320,12 +320,12 @@ class TestCheckMessenger:
     def test_mattermost_connected(self):
         config = _make_config()
         mock_client = MagicMock()
-        mock_client.get_bot_username.return_value = "genesia-bot"
+        mock_client.get_bot_username.return_value = "vibe-bot"
         with patch.dict(os.environ, {"MATTERMOST_BOT_TOKEN": "tok", "MATTERMOST_URL": "http://mm.local"}):
             with patch("agents.doctor.MattermostClient", return_value=mock_client):
                 result = check_messenger(config)
         assert result.status == "ok"
-        assert "@genesia-bot" in result.summary
+        assert "@vibe-bot" in result.summary
 
     def test_mattermost_connection_failed(self):
         config = _make_config()
@@ -375,7 +375,7 @@ class TestCheckMessenger:
 
 class TestCheckDiskUsage:
     def test_reports_existing_dirs(self, tmp_path):
-        skills_dir = tmp_path / "genesia_skills"
+        skills_dir = tmp_path / "vibe_skills"
         skills_dir.mkdir()
         (skills_dir / "skill.md").write_text("x" * 1024)
 

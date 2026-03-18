@@ -1,7 +1,7 @@
 /**
- * Parse Genesia heartbeat JSON output from stdout.
+ * Parse Vibe heartbeat JSON output from stdout.
  *
- * Genesia may emit log lines before the JSON result. This parser
+ * Vibe may emit log lines before the JSON result. This parser
  * finds the last valid JSON object in stdout.
  */
 
@@ -11,7 +11,7 @@ export interface ClarificationRequest {
   contextSummary: string;
 }
 
-export interface GenesiaResult {
+export interface VibeResult {
   resultJson: Record<string, unknown> | null;
   usage: { inputTokens: number; outputTokens: number } | null;
   summary: string;
@@ -21,8 +21,8 @@ export interface GenesiaResult {
   clarification: ClarificationRequest | null;
 }
 
-export function parseGenesiaOutput(stdout: string): GenesiaResult {
-  const fallback: GenesiaResult = {
+export function parseVibeOutput(stdout: string): VibeResult {
+  const fallback: VibeResult = {
     resultJson: null,
     usage: null,
     summary: "",
@@ -34,7 +34,7 @@ export function parseGenesiaOutput(stdout: string): GenesiaResult {
 
   if (!stdout.trim()) return fallback;
 
-  // Find the last JSON object in stdout (Genesia prints logs before the result)
+  // Find the last JSON object in stdout (Vibe prints logs before the result)
   const lines = stdout.split("\n");
   let jsonStr = "";
 

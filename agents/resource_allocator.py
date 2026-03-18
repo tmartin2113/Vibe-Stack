@@ -1,5 +1,5 @@
 """
-Resource allocator for Genesia.
+Resource allocator for Vibe.
 
 Consumes a SystemProfile from resource_discovery and produces a
 ResourcePlan with concrete CPU/memory/GPU budgets for every service.
@@ -44,10 +44,10 @@ class SandboxPoolPlan:
 
 @dataclass
 class ResourcePlan:
-    """Complete resource allocation for all Genesia services."""
+    """Complete resource allocation for all Vibe services."""
 
     vllm: ServiceBudget
-    genesia: ServiceBudget
+    vibe: ServiceBudget
     opensandbox_server: ServiceBudget
     sandbox_pool: SandboxPoolPlan
 
@@ -63,8 +63,8 @@ class ResourcePlan:
             f"  vLLM:      {self.vllm.cpu_cores} cores, "
             f"{self.vllm.memory_mb}MB RAM"
             + (f", GPU {self.vllm.gpu_device_ids}" if self.vllm.gpu_device_ids else ", CPU-only"),
-            f"  Genesia:     {self.genesia.cpu_cores} cores, "
-            f"{self.genesia.memory_mb}MB RAM",
+            f"  Vibe:     {self.vibe.cpu_cores} cores, "
+            f"{self.vibe.memory_mb}MB RAM",
             f"  OpenSandbox: {self.opensandbox_server.cpu_cores} cores, "
             f"{self.opensandbox_server.memory_mb}MB RAM",
             f"  Sandbox pool: {self.sandbox_pool.pool_size} warm, "
@@ -95,7 +95,7 @@ def _plan_cpu_only(profile: SystemProfile) -> ResourcePlan:
 
     return ResourcePlan(
         vllm=ServiceBudget(cpu_cores=vllm_cores, memory_mb=vllm_ram),
-        genesia=ServiceBudget(cpu_cores=1.0, memory_mb=512),
+        vibe=ServiceBudget(cpu_cores=1.0, memory_mb=512),
         opensandbox_server=ServiceBudget(cpu_cores=0.5, memory_mb=256),
         sandbox_pool=SandboxPoolPlan(
             pool_size=pool_size,
@@ -134,11 +134,11 @@ def _plan_single_gpu(profile: SystemProfile) -> ResourcePlan:
     elif not sandbox_gpu:
         warnings.append(
             f"Moderate VRAM ({gpu.vram_mb}MB): sandbox GPU disabled. "
-            f"Set GENESIA_SANDBOX_GPU=true to override"
+            f"Set VIBE_SANDBOX_GPU=true to override"
         )
 
     sandbox_image = (
-        "genesia/sandbox-gpu:latest"
+        "vibe/sandbox-gpu:latest"
         if sandbox_gpu
         else "opensandbox/code-interpreter:v1.0.1"
     )
@@ -152,7 +152,7 @@ def _plan_single_gpu(profile: SystemProfile) -> ResourcePlan:
             gpu_device_ids=[gpu.index],
             gpu_memory_fraction=1.0 if not sandbox_gpu else 0.8,
         ),
-        genesia=ServiceBudget(cpu_cores=1.0, memory_mb=512),
+        vibe=ServiceBudget(cpu_cores=1.0, memory_mb=512),
         opensandbox_server=ServiceBudget(cpu_cores=0.5, memory_mb=256),
         sandbox_pool=SandboxPoolPlan(
             pool_size=pool_size,
@@ -202,7 +202,7 @@ def _plan_multi_gpu(profile: SystemProfile) -> ResourcePlan:
         )
 
     sandbox_image = (
-        "genesia/sandbox-gpu:latest"
+        "vibe/sandbox-gpu:latest"
         if sandbox_gpu
         else "opensandbox/code-interpreter:v1.0.1"
     )
@@ -218,7 +218,7 @@ def _plan_multi_gpu(profile: SystemProfile) -> ResourcePlan:
             gpu_device_ids=vllm_gpu_ids,
             gpu_memory_fraction=0.9,
         ),
-        genesia=ServiceBudget(cpu_cores=2.0, memory_mb=1024),
+        vibe=ServiceBudget(cpu_cores=2.0, memory_mb=1024),
         opensandbox_server=ServiceBudget(cpu_cores=1.0, memory_mb=512),
         sandbox_pool=SandboxPoolPlan(
             pool_size=pool_size,

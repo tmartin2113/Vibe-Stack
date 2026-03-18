@@ -1,5 +1,5 @@
 """
-Shared test fixtures for the Genesia test suite.
+Shared test fixtures for the Vibe test suite.
 
 Provides:
 - Environment setup (disable remote skills)
@@ -11,7 +11,7 @@ Provides:
 import os
 
 # Disable remote skill lookups in all tests (must be set before any agents import)
-os.environ["GENESIA_DISABLE_REMOTE_SKILLS"] = "1"
+os.environ["VIBE_DISABLE_REMOTE_SKILLS"] = "1"
 
 import pytest
 from unittest.mock import MagicMock
@@ -43,12 +43,12 @@ def mock_adapter_registry(mock_base_model):
     """
     AdapterRegistry pre-loaded with mock adapters for all workflow roles.
 
-    Adapters registered: genesia, critic, refinement, code_expert,
+    Adapters registered: vibe, critic, refinement, code_expert,
     creative_writer, research_analyst, general.
     """
     registry = AdapterRegistry()
     adapter_names = [
-        "genesia", "critic", "refinement",
+        "vibe", "critic", "refinement",
         "code_expert", "creative_writer", "research_analyst", "general",
     ]
     for name in adapter_names:

@@ -157,9 +157,9 @@ class SpecialistNodesMixin:
             "api_generator": {"temperature": 0.3, "max_tokens": 1500},
             "database_specialist": {"temperature": 0.2, "max_tokens": 1200},
             "code_reviewer": {"temperature": 0.3, "max_tokens": 1800},
-            "genesia": {"temperature": 0.5, "max_tokens": 1500}
+            "vibe": {"temperature": 0.5, "max_tokens": 1500}
         }
-        return defaults.get(specialist_name, defaults["genesia"])
+        return defaults.get(specialist_name, defaults["vibe"])
 
     def execute_with_specialist(self, state: AgentState) -> AgentState:
         """
@@ -170,7 +170,7 @@ class SpecialistNodesMixin:
         Passes multi-turn history for refinement loops so the model can see
         its prior attempts alongside critic feedback.
         """
-        specialist_name = state.get("specialist_adapter", "genesia")
+        specialist_name = state.get("specialist_adapter", "vibe")
         specialist_iteration = state.get("specialist_iteration_count", 0)
 
         # Gather workflow context for the specialist
@@ -251,7 +251,7 @@ Otherwise, focus on the specific issues identified in the feedback. Provide an i
         tool_enabled_specialists = {
             "test_generator", "security_auditor", "data_specialist",
             "database_specialist", "code_reviewer",
-            "genesia", "code", "api_generator", "performance_optimizer",
+            "vibe", "code", "api_generator", "performance_optimizer",
             "debugging_assistant", "doc_generator", "general",
         }
         skill_tools_enabled = self._resolve_skill_tools_enabled(loaded_skills)
@@ -604,7 +604,7 @@ Otherwise, focus on the specific issues identified. Provide an improved solution
         tool_enabled_specialists = {
             "test_generator", "security_auditor", "data_specialist",
             "database_specialist", "code_reviewer",
-            "genesia", "code", "api_generator", "performance_optimizer",
+            "vibe", "code", "api_generator", "performance_optimizer",
             "debugging_assistant", "doc_generator", "general",
         }
         skill_tools_enabled = self._resolve_skill_tools_enabled(relevant_skills)

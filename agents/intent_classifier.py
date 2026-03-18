@@ -1,5 +1,5 @@
 """
-Intent Classifier for Genesia
+Intent Classifier for Vibe
 
 Determines user intent before routing to specialists. Distinguishes between:
 - conversational: Questions, explanations, comparisons (no code needed)

@@ -8,29 +8,29 @@ RUN apt-get update && \
     rm -rf /var/lib/apt/lists/*
 
 # Create non-root user (matches production Dockerfile and K8s securityContext)
-RUN groupadd -r genesia && useradd -r -g genesia -m -d /home/genesia -u 1000 genesia
+RUN groupadd -r vibe && useradd -r -g vibe -m -d /home/vibe -u 1000 vibe
 
 # Copy project files (including local_prompt_enhancer.py required by pyproject.toml)
-COPY --chown=genesia:genesia pyproject.toml ./
-COPY --chown=genesia:genesia agents/ ./agents/
-COPY --chown=genesia:genesia genesia/ ./genesia/
-COPY --chown=genesia:genesia local_prompt_enhancer.py ./
-COPY --chown=genesia:genesia scripts/ ./scripts/
+COPY --chown=vibe:vibe pyproject.toml ./
+COPY --chown=vibe:vibe agents/ ./agents/
+COPY --chown=vibe:vibe vibe/ ./vibe/
+COPY --chown=vibe:vibe local_prompt_enhancer.py ./
+COPY --chown=vibe:vibe scripts/ ./scripts/
 
 # Install with agents + sandbox extras (provides python-dotenv, rich, pydantic, opensandbox SDK, etc.)
 RUN pip install --no-cache-dir -e ".[agents,sandbox]"
 
-# Create data directory for genesia user
-RUN mkdir -p /home/genesia/.genesia && chown -R genesia:genesia /home/genesia/.genesia
+# Create data directory for vibe user
+RUN mkdir -p /home/vibe/.vibe && chown -R vibe:vibe /home/vibe/.vibe
 
 # Switch to non-root user
-USER genesia
+USER vibe
 
 # Default environment — vLLM backend (matches Paperclip stack)
-ENV GENESIA_TASK_TYPE=""
-ENV GENESIA_BACKEND_HOST="vllm"
-ENV GENESIA_BACKEND_PORT="8000"
-ENV HOME=/home/genesia
+ENV VIBE_TASK_TYPE=""
+ENV VIBE_BACKEND_HOST="vllm"
+ENV VIBE_BACKEND_PORT="8000"
+ENV HOME=/home/vibe
 
 # Heartbeat mode by default (use CMD so args can be overridden)
 ENTRYPOINT ["python", "-m", "agents.main"]

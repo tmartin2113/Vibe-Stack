@@ -31,30 +31,30 @@ export async function testEnvironment(
       hint: "Install Python 3.10+ or set the 'command' field in adapter config",
     });
     return {
-      adapterType: "genesia_local",
+      adapterType: "vibe_local",
       status: "fail",
       checks,
       testedAt: new Date().toISOString(),
     };
   }
 
-  // Check 2: Genesia agents package importable
+  // Check 2: Vibe agents package importable
   try {
     execSync(`${command} -c "import agents"`, {
       timeout: 10000,
       encoding: "utf-8",
     });
     checks.push({
-      code: "genesia_importable",
+      code: "vibe_importable",
       level: "info",
-      message: "Genesia agents package is importable",
+      message: "Vibe agents package is importable",
     });
   } catch {
     checks.push({
-      code: "genesia_not_importable",
+      code: "vibe_not_importable",
       level: "error",
       message: "Cannot import 'agents' Python package",
-      hint: "Ensure Genesia is installed: pip install -e . (from the Genesia project root)",
+      hint: "Ensure Vibe is installed: pip install -e . (from the Vibe project root)",
     });
   }
 
@@ -93,11 +93,11 @@ export async function testEnvironment(
   const cfg = ctx.config as Record<string, unknown>;
   const slackToken =
     asString(cfg.slackBotToken, "") ||
-    process.env.GENESIA_SLACK_BOT_TOKEN ||
+    process.env.VIBE_SLACK_BOT_TOKEN ||
     "";
   const slackUser =
     asString(cfg.slackNotifyUserId, "") ||
-    process.env.GENESIA_SLACK_NOTIFY_USER_ID ||
+    process.env.VIBE_SLACK_NOTIFY_USER_ID ||
     "";
   if (slackToken && slackUser) {
     checks.push({
@@ -118,7 +118,7 @@ export async function testEnvironment(
   const hasWarn = checks.some((c) => c.level === "warn");
 
   return {
-    adapterType: "genesia_local",
+    adapterType: "vibe_local",
     status: hasError ? "fail" : hasWarn ? "warn" : "pass",
     checks,
     testedAt: new Date().toISOString(),

@@ -1,15 +1,15 @@
 /**
- * Tests for parseGenesiaOutput — the stdout JSON parser.
+ * Tests for parseVibeOutput — the stdout JSON parser.
  *
  * Validates that the parser correctly extracts structured results from
- * Genesia heartbeat stdout, which may contain log lines before the JSON.
+ * Vibe heartbeat stdout, which may contain log lines before the JSON.
  *
  * Run with: node --import tsx --test src/server/parse.test.ts
  */
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { parseGenesiaOutput, type GenesiaResult } from "./parse.js";
+import { parseVibeOutput, type VibeResult } from "./parse.js";
 
 // ── Helper: build a HeartbeatResult JSON ──
 
@@ -31,9 +31,9 @@ function heartbeatJson(overrides: Record<string, unknown> = {}): string {
 
 // ── Basic Parsing ──
 
-describe("parseGenesiaOutput", () => {
+describe("parseVibeOutput", () => {
   it("parses clean JSON output", () => {
-    const result = parseGenesiaOutput(heartbeatJson());
+    const result = parseVibeOutput(heartbeatJson());
     assert.ok(result.resultJson);
     assert.equal(result.resultJson!.status, "success");
     assert.equal(result.resultJson!.issue_id, "GEN-42");
@@ -44,14 +44,14 @@ describe("parseGenesiaOutput", () => {
   });
 
   it("extracts usage tokens", () => {
-    const result = parseGenesiaOutput(heartbeatJson());
+    const result = parseVibeOutput(heartbeatJson());
     assert.ok(result.usage);
     assert.equal(result.usage!.inputTokens, 1000);
     assert.equal(result.usage!.outputTokens, 500);
   });
 
   it("returns fallback for empty stdout", () => {
-    const result = parseGenesiaOutput("");
+    const result = parseVibeOutput("");
     assert.equal(result.resultJson, null);
     assert.equal(result.usage, null);
     assert.equal(result.summary, "");
@@ -59,12 +59,12 @@ describe("parseGenesiaOutput", () => {
   });
 
   it("returns fallback for whitespace-only stdout", () => {
-    const result = parseGenesiaOutput("   \n\n  ");
+    const result = parseVibeOutput("   \n\n  ");
     assert.equal(result.resultJson, null);
   });
 
   it("returns fallback for non-JSON stdout", () => {
-    const result = parseGenesiaOutput("just some logs\nno JSON here");
+    const result = parseVibeOutput("just some logs\nno JSON here");
     assert.equal(result.resultJson, null);
   });
 
@@ -78,7 +78,7 @@ describe("parseGenesiaOutput", () => {
       heartbeatJson(),
     ].join("\n");
 
-    const result = parseGenesiaOutput(stdout);
+    const result = parseVibeOutput(stdout);
     assert.ok(result.resultJson);
     assert.equal(result.resultJson!.status, "success");
   });
@@ -90,7 +90,7 @@ describe("parseGenesiaOutput", () => {
       heartbeatJson({ status: "success", summary: "Final result" }),
     ].join("\n");
 
-    const result = parseGenesiaOutput(stdout);
+    const result = parseVibeOutput(stdout);
     assert.ok(result.resultJson);
     assert.equal(result.summary, "Final result");
   });
@@ -111,13 +111,13 @@ describe("parseGenesiaOutput", () => {
     );
     const stdout = `INFO: Starting\n${json}\n`;
 
-    const result = parseGenesiaOutput(stdout);
+    const result = parseVibeOutput(stdout);
     assert.ok(result.resultJson);
     assert.equal(result.resultJson!.status, "success");
   });
 
   it("handles JSON with escaped quotes in strings", () => {
-    const result = parseGenesiaOutput(
+    const result = parseVibeOutput(
       heartbeatJson({ summary: 'Used "PostgreSQL" for storage' }),
     );
     assert.ok(result.resultJson);
@@ -125,7 +125,7 @@ describe("parseGenesiaOutput", () => {
   });
 
   it("handles JSON with nested braces in strings", () => {
-    const result = parseGenesiaOutput(
+    const result = parseVibeOutput(
       heartbeatJson({ summary: "Output: {key: value}" }),
     );
     assert.ok(result.resultJson);
@@ -135,12 +135,12 @@ describe("parseGenesiaOutput", () => {
   // ── Clarification extraction ──
 
   it("extracts clarification request", () => {
-    const result = parseGenesiaOutput(
+    const result = parseVibeOutput(
       heartbeatJson({
         status: "clarification_needed",
         clarification: {
           questions: ["Which DB engine?", "REST or GraphQL?"],
-          blocking_node: "genesia",
+          blocking_node: "vibe",
           context_summary: "Building API backend",
         },
       }),
@@ -151,17 +151,17 @@ describe("parseGenesiaOutput", () => {
       "Which DB engine?",
       "REST or GraphQL?",
     ]);
-    assert.equal(result.clarification!.blockingNode, "genesia");
+    assert.equal(result.clarification!.blockingNode, "vibe");
     assert.equal(result.clarification!.contextSummary, "Building API backend");
   });
 
   it("returns null clarification when not present", () => {
-    const result = parseGenesiaOutput(heartbeatJson());
+    const result = parseVibeOutput(heartbeatJson());
     assert.equal(result.clarification, null);
   });
 
   it("handles clarification with empty questions array", () => {
-    const result = parseGenesiaOutput(
+    const result = parseVibeOutput(
       heartbeatJson({
         clarification: {
           questions: [],
@@ -176,7 +176,7 @@ describe("parseGenesiaOutput", () => {
   });
 
   it("handles clarification missing optional fields", () => {
-    const result = parseGenesiaOutput(
+    const result = parseVibeOutput(
       heartbeatJson({
         clarification: {
           questions: ["Q1?"],
@@ -196,32 +196,32 @@ describe("parseGenesiaOutput", () => {
       status: "idle",
       summary: "No tasks",
     });
-    const result = parseGenesiaOutput(json);
+    const result = parseVibeOutput(json);
     assert.equal(result.usage, null);
   });
 
   it("handles missing summary field", () => {
     const json = JSON.stringify({ status: "idle" });
-    const result = parseGenesiaOutput(json);
+    const result = parseVibeOutput(json);
     assert.equal(result.summary, "");
   });
 
   it("handles missing provider and model", () => {
     const json = JSON.stringify({ status: "idle" });
-    const result = parseGenesiaOutput(json);
+    const result = parseVibeOutput(json);
     assert.equal(result.provider, "");
     assert.equal(result.model, "");
   });
 
   it("handles malformed JSON gracefully", () => {
-    const result = parseGenesiaOutput('{"status": "success", broken}');
+    const result = parseVibeOutput('{"status": "success", broken}');
     // Should return fallback since JSON.parse fails
     assert.equal(result.resultJson, null);
   });
 
   it("handles stdout with trailing newlines after JSON", () => {
     const stdout = heartbeatJson() + "\n\n\n";
-    const result = parseGenesiaOutput(stdout);
+    const result = parseVibeOutput(stdout);
     assert.ok(result.resultJson);
     assert.equal(result.resultJson!.status, "success");
   });
@@ -229,7 +229,7 @@ describe("parseGenesiaOutput", () => {
   // ── Status variants ──
 
   it("parses idle status", () => {
-    const result = parseGenesiaOutput(
+    const result = parseVibeOutput(
       heartbeatJson({ status: "idle", summary: "No tasks assigned" }),
     );
     assert.equal(result.resultJson!.status, "idle");
@@ -237,7 +237,7 @@ describe("parseGenesiaOutput", () => {
   });
 
   it("parses blocked status", () => {
-    const result = parseGenesiaOutput(
+    const result = parseVibeOutput(
       heartbeatJson({
         status: "blocked",
         summary: "Quality below threshold",
@@ -248,7 +248,7 @@ describe("parseGenesiaOutput", () => {
   });
 
   it("parses failed status", () => {
-    const result = parseGenesiaOutput(
+    const result = parseVibeOutput(
       heartbeatJson({
         status: "failed",
         summary: "LLM backend crashed",
@@ -260,7 +260,7 @@ describe("parseGenesiaOutput", () => {
   });
 
   it("extracts cost_cents", () => {
-    const result = parseGenesiaOutput(heartbeatJson({ cost_cents: 42 }));
+    const result = parseVibeOutput(heartbeatJson({ cost_cents: 42 }));
     assert.equal(result.costCents, 42);
   });
 });

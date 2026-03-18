@@ -1,5 +1,5 @@
 """
-Integration tests for the Genesia workflow engine.
+Integration tests for the Vibe workflow engine.
 
 These tests exercise real node chains through the workflow engine with the
 LLM mocked at the adapter/backend level. Unlike unit tests, they verify that
@@ -17,7 +17,7 @@ Covers:
 import os
 import logging
 
-os.environ["GENESIA_DISABLE_REMOTE_SKILLS"] = "1"
+os.environ["VIBE_DISABLE_REMOTE_SKILLS"] = "1"
 
 import pytest
 from unittest.mock import MagicMock, patch
@@ -47,7 +47,7 @@ def _mock_sandbox_pool_start():
 
 # Canned LLM responses that match the format expected by node parsers.
 
-GENESIA_SPEC_RESPONSE = """\
+VIBE_SPEC_RESPONSE = """\
 NEEDS_CLARIFICATION: No
 QUESTIONS: None
 SPECIFICATION: Implement a Python function called `merge_sort` that takes a list \
@@ -135,7 +135,7 @@ def _make_adapter_registry(responses=None):
     registry = AdapterRegistry()
 
     adapter_names = [
-        "genesia", "critic", "refinement",
+        "vibe", "critic", "refinement",
         "code_expert", "creative_writer", "research_analyst", "general",
     ]
 
@@ -278,10 +278,10 @@ class TestConversationalPath:
     def test_conversational_e2e(self):
         """
         Conversational request flows through full pipeline.
-        genesia adapter is called once (as the specialist).
+        vibe adapter is called once (as the specialist).
         """
         registry = _make_adapter_registry({
-            "genesia": CONVERSATIONAL_RESPONSE,
+            "vibe": CONVERSATIONAL_RESPONSE,
             "critic": CRITIC_APPROVE_OUTPUT,
         })
         config = _make_config()
@@ -299,7 +299,7 @@ class TestConversationalPath:
     def test_explanation_request_handled(self):
         """Explanation request goes through full pipeline."""
         registry = _make_adapter_registry({
-            "genesia": "Dependency injection is a design pattern where objects receive their dependencies...",
+            "vibe": "Dependency injection is a design pattern where objects receive their dependencies...",
             "critic": CRITIC_APPROVE_OUTPUT,
         })
         config = _make_config()
@@ -333,10 +333,10 @@ class TestSingleSpecialistPath:
         Full code generation: router → skill_gen → skill_load → specialist →
         heuristic_critic → format → post → cleanup → END.
         """
-        # genesia adapter is called once (as the specialist).
+        # vibe adapter is called once (as the specialist).
         # There is no separate spec-building phase.
         registry = _make_adapter_registry({
-            "genesia": SPECIALIST_OUTPUT,
+            "vibe": SPECIALIST_OUTPUT,
             "critic": CRITIC_APPROVE_OUTPUT,
         })
         config = _make_config()
@@ -365,7 +365,7 @@ class TestSingleSpecialistPath:
     def test_state_tracks_adapters_used(self):
         """Verify the state tracks which adapters were used during the workflow."""
         registry = _make_adapter_registry({
-            "genesia": SPECIALIST_OUTPUT,
+            "vibe": SPECIALIST_OUTPUT,
             "critic": CRITIC_APPROVE_OUTPUT,
         })
         config = _make_config()
@@ -376,7 +376,7 @@ class TestSingleSpecialistPath:
         result = graph.invoke(state)
 
         adapters_used = result.get("adapters_used", [])
-        assert "genesia" in adapters_used, "genesia adapter should be tracked"
+        assert "vibe" in adapters_used, "vibe adapter should be tracked"
 
 
 # ===== QUALITY GATE: REFINEMENT LOOP =====
@@ -391,7 +391,7 @@ class TestRefinementLoop:
         The output still completes the pipeline.
         """
         registry = _make_adapter_registry({
-            "genesia": SPECIALIST_OUTPUT,
+            "vibe": SPECIALIST_OUTPUT,
             "critic": CRITIC_APPROVE_OUTPUT,
         })
         config = _make_config()
@@ -772,7 +772,7 @@ class TestClarificationE2E:
 </clarification_needed>"""
 
         registry = _make_adapter_registry({
-            "genesia": clarification_output,
+            "vibe": clarification_output,
         })
         config = _make_config()
         graph = create_agent_graph(registry, config=config)

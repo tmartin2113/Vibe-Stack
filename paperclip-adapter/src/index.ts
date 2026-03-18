@@ -1,22 +1,22 @@
-export const type = "genesia_local";
-export const label = "Genesia (Local)";
+export const type = "vibe_local";
+export const label = "Vibe (Local)";
 
 export const models: { id: string; label: string }[] = [];
 
-export const agentConfigurationDoc = `# genesia_local agent configuration
+export const agentConfigurationDoc = `# vibe_local agent configuration
 
-Adapter: genesia_local
+Adapter: vibe_local
 
-Runs a local Genesia multi-agent system in heartbeat mode. Each heartbeat,
-Genesia fetches its assigned task from Paperclip, runs the full workflow
+Runs a local Vibe multi-agent system in heartbeat mode. Each heartbeat,
+Vibe fetches its assigned task from Paperclip, runs the full workflow
 (router → skills → specialist → critic → quality gate), and posts results
 back.
 
 Core fields:
 - command (string, optional): Python command (default "python")
 - args (string[], optional): CLI arguments (default ["-m", "agents.main", "--heartbeat"])
-- cwd (string, optional): Genesia project directory
-- taskType (string, optional): Force a specific Genesia task type (e.g., "code", "test_generation", "security_audit"). If unset, Genesia's router auto-classifies from issue content.
+- cwd (string, optional): Vibe project directory
+- taskType (string, optional): Force a specific Vibe task type (e.g., "code", "test_generation", "security_audit"). If unset, Vibe's router auto-classifies from issue content.
 - env (object, optional): KEY=VALUE environment variables
 
 Operational fields:
@@ -33,10 +33,10 @@ issue. If slackBotToken + slackNotifyUserId are configured, the adapter also sen
 a Slack DM to the human with the questions and a link to the issue. The human
 replies on the Paperclip issue, which wakes the agent to continue.
 
-Genesia-specific env vars:
-- GENESIA_BACKEND_HOST: Ollama host (default "localhost")
-- GENESIA_BACKEND_PORT: Ollama port (default "11434")
-- GENESIA_TASK_TYPE: Same as taskType above (env var form)
-- GENESIA_SLACK_BOT_TOKEN: Same as slackBotToken (env var form)
-- GENESIA_SLACK_NOTIFY_USER_ID: Same as slackNotifyUserId (env var form)
+Vibe-specific env vars:
+- VIBE_BACKEND_HOST: Ollama host (default "localhost")
+- VIBE_BACKEND_PORT: Ollama port (default "11434")
+- VIBE_TASK_TYPE: Same as taskType above (env var form)
+- VIBE_SLACK_BOT_TOKEN: Same as slackBotToken (env var form)
+- VIBE_SLACK_NOTIFY_USER_ID: Same as slackNotifyUserId (env var form)
 `;

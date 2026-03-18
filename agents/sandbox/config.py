@@ -27,7 +27,7 @@ class SandboxConfig:
 
     # Sandbox images
     sandbox_image: str = "opensandbox/code-interpreter:v1.0.1"
-    gpu_sandbox_image: str = "genesia/sandbox-gpu:latest"
+    gpu_sandbox_image: str = "vibe/sandbox-gpu:latest"
 
     # Per-sandbox resource limits (K8s format)
     cpu_limit: str = "500m"
@@ -48,7 +48,7 @@ class SandboxConfig:
     firecrawl_api_key: str = ""
 
     # File access — colon-separated list of directories the agent may read/write.
-    # Empty string means use the built-in defaults (/home/user/Genesia, /tmp).
+    # Empty string means use the built-in defaults (/home/user/Vibe, /tmp).
     allowed_file_dirs: str = ""
 
     @classmethod
@@ -71,20 +71,20 @@ class SandboxConfig:
         Only overrides fields that have a corresponding env var set.
         """
         env_map = {
-            "GENESIA_SANDBOX_BACKEND": ("backend", str),
-            "GENESIA_SANDBOX_URL": ("server_url", str),
-            "GENESIA_SANDBOX_API_KEY": ("api_key", str),
-            "GENESIA_SANDBOX_IMAGE": ("sandbox_image", str),
-            "GENESIA_SANDBOX_GPU_IMAGE": ("gpu_sandbox_image", str),
-            "GENESIA_SANDBOX_CPU_LIMIT": ("cpu_limit", str),
-            "GENESIA_SANDBOX_MEMORY_LIMIT": ("memory_limit", str),
-            "GENESIA_SANDBOX_POOL_SIZE": ("pool_size", int),
-            "GENESIA_SANDBOX_TIMEOUT": ("sandbox_timeout", int),
-            "GENESIA_SANDBOX_GPU": ("gpu_enabled", _parse_bool),
-            "GENESIA_SANDBOX_GPU_IDS": ("gpu_device_ids", str),
-            "GENESIA_SANDBOX_EGRESS": ("network_egress", _parse_bool),
+            "VIBE_SANDBOX_BACKEND": ("backend", str),
+            "VIBE_SANDBOX_URL": ("server_url", str),
+            "VIBE_SANDBOX_API_KEY": ("api_key", str),
+            "VIBE_SANDBOX_IMAGE": ("sandbox_image", str),
+            "VIBE_SANDBOX_GPU_IMAGE": ("gpu_sandbox_image", str),
+            "VIBE_SANDBOX_CPU_LIMIT": ("cpu_limit", str),
+            "VIBE_SANDBOX_MEMORY_LIMIT": ("memory_limit", str),
+            "VIBE_SANDBOX_POOL_SIZE": ("pool_size", int),
+            "VIBE_SANDBOX_TIMEOUT": ("sandbox_timeout", int),
+            "VIBE_SANDBOX_GPU": ("gpu_enabled", _parse_bool),
+            "VIBE_SANDBOX_GPU_IDS": ("gpu_device_ids", str),
+            "VIBE_SANDBOX_EGRESS": ("network_egress", _parse_bool),
             "FIRECRAWL_API_KEY": ("firecrawl_api_key", str),
-            "GENESIA_ALLOWED_FILE_DIRS": ("allowed_file_dirs", str),
+            "VIBE_ALLOWED_FILE_DIRS": ("allowed_file_dirs", str),
         }
         for env_key, (attr, converter) in env_map.items():
             value = os.environ.get(env_key)

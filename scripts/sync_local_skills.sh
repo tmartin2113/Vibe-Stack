@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 #
 # sync_local_skills.sh — Pull upstream changes from skill source forks
-# and rsync skills into genesia_skills/official/, then re-index.
+# and rsync skills into vibe_skills/official/, then re-index.
 #
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 SOURCES_DIR="/home/prime/Repos/skill-sources"
-DEST_DIR="$PROJECT_ROOT/genesia_skills/official"
+DEST_DIR="$PROJECT_ROOT/vibe_skills/official"
 LOG_FILE="$PROJECT_ROOT/logs/skill-sync.log"
 
 mkdir -p "$DEST_DIR" "$(dirname "$LOG_FILE")"

@@ -28,7 +28,7 @@ class LLMClassifier:
     """
     LLM-based semantic classifier for task routing.
 
-    Uses the base Genesia model to classify tasks via structured prompting.
+    Uses the base Vibe model to classify tasks via structured prompting.
     Supports both single-label and multi-label classification.
     """
 
@@ -38,7 +38,7 @@ class LLMClassifier:
         Initialize LLM classifier.
 
         Args:
-            base_model: Base model adapter (Genesia) for generation
+            base_model: Base model adapter (Vibe) for generation
             cache_size: Maximum number of classifications to cache
             task_descriptions: Optional dict of {task_type: description}.
                 If provided, used instead of hardcoded defaults.
@@ -231,7 +231,7 @@ class RouterNode:
     """
     Routes specifications to appropriate specialist adapters.
 
-    The Router analyzes the approved specification from Genesia and
+    The Router analyzes the approved specification from Vibe and
     determines which specialist adapter should handle execution.
     """
 
@@ -243,7 +243,7 @@ class RouterNode:
 
         Args:
             skill_registry: Shared skill registry instance
-            base_model: Base model adapter (Genesia) for LLM classification
+            base_model: Base model adapter (Vibe) for LLM classification
             classification_mode: Classification strategy:
                 - "regex": Fast keyword-based (original, ~1ms)
                 - "llm": Semantic LLM-based (~100-500ms)
@@ -258,7 +258,7 @@ class RouterNode:
         # Use provided skill registry or create new one
         # IMPORTANT: Always pass a shared registry to avoid Bug #1
         if skill_registry is None:
-            self.skill_registry = SkillRegistry("genesia_skills")
+            self.skill_registry = SkillRegistry("vibe_skills")
         else:
             self.skill_registry = skill_registry
 
@@ -406,16 +406,16 @@ class RouterNode:
             specification = state.get("user_request", "")
 
         # Respect pre-set task type from orchestrator (e.g. Paperclip's
-        # GENESIA_TASK_TYPE).  This allows arbitrary agent types — the
+        # VIBE_TASK_TYPE).  This allows arbitrary agent types — the
         # orchestrator defines the type, skills provide the adapter prompt.
         pre_set_task_type = state.get("routed_task_type", "")
 
         if pre_set_task_type:
             # Orchestrator has already decided the task type.
-            # Use the adapter mapping if known, otherwise default to "genesia"
+            # Use the adapter mapping if known, otherwise default to "vibe"
             # (the skill's adapter_prompt will override at specialist execution).
             task_type = pre_set_task_type
-            specialist = self.adapter_mapping.get(task_type, "genesia")
+            specialist = self.adapter_mapping.get(task_type, "vibe")
             confidence = 1.0  # Orchestrator decision = full confidence
 
             state["routed_task_type"] = task_type
@@ -457,7 +457,7 @@ class RouterNode:
                 state["requires_decomposition"] = True
             else:
                 # Single-specialist workflow
-                specialist = self.adapter_mapping.get(task_type, "genesia")
+                specialist = self.adapter_mapping.get(task_type, "vibe")
 
                 state["routed_task_type"] = task_type
                 state["specialist_adapter"] = specialist
@@ -780,7 +780,7 @@ class RouterNode:
         limited_task_types = task_types[:5]  # Limit to 5 sub-tasks max
 
         for i, task_type in enumerate(limited_task_types):
-            specialist = self.adapter_mapping.get(task_type, "genesia")
+            specialist = self.adapter_mapping.get(task_type, "vibe")
             sibling_types = [t for t in limited_task_types if t != task_type]
 
             # Build seed specification scoped to this sub-task's concern
@@ -838,7 +838,7 @@ class RouterNode:
         """
         Generate a focused seed specification for a sub-task.
 
-        Provides the downstream spec-builder (Genesia) with a scoped starting
+        Provides the downstream spec-builder (Vibe) with a scoped starting
         point that includes the relevant concern, sibling awareness, and
         dependency context — instead of starting from a blank slate.
 

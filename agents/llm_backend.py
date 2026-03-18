@@ -13,10 +13,10 @@ import sys
 
 from .llm_retry import retry_llm_call, DEFAULT_MAX_RETRIES, DEFAULT_BASE_DELAY
 
-# Add parent directory to path to import genesia backends
+# Add parent directory to path to import vibe backends
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from genesia.backends.vllm import VLLMBackend
+from vibe.backends.vllm import VLLMBackend
 
 logger = logging.getLogger(__name__)
 
@@ -101,9 +101,9 @@ def create_backend_from_config(config: Any) -> LLMBackend:
     Returns:
         LLMBackend instance
     """
-    model = os.getenv("GENESIA_MODEL", config.model.model_name)
-    host = os.getenv("GENESIA_BACKEND_HOST", "localhost")
-    port_str = os.getenv("GENESIA_BACKEND_PORT")
+    model = os.getenv("VIBE_MODEL", config.model.model_name)
+    host = os.getenv("VIBE_BACKEND_HOST", "localhost")
+    port_str = os.getenv("VIBE_BACKEND_PORT")
     port = int(port_str) if port_str else None
 
     logger.info(f"Creating vLLM backend ({model})")

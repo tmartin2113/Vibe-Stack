@@ -25,7 +25,7 @@ from .adapters import (
     CRITIC_SYSTEM_PROMPT,
     DATABASE_SPECIALIST_PROMPT,
     DATA_SPECIALIST_PROMPT,
-    GENESIA_SYSTEM_PROMPT,
+    VIBE_SYSTEM_PROMPT,
     REFINEMENT_SYSTEM_PROMPT,
     RESEARCH_SYSTEM_PROMPT,
 )
@@ -39,7 +39,7 @@ logger = logging.getLogger(__name__)
 
 # All adapter definitions — order does not matter.
 _ADAPTER_DEFS = [
-    ("genesia", GENESIA_SYSTEM_PROMPT),
+    ("vibe", VIBE_SYSTEM_PROMPT),
     ("critic", CRITIC_SYSTEM_PROMPT),
     ("refinement", REFINEMENT_SYSTEM_PROMPT),
     ("code", CODE_SYSTEM_PROMPT),
@@ -111,7 +111,7 @@ class WorkflowFactory:
         partial_state: Optional[Dict[str, Any]] = None,
         clarification_reply: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Run the Genesia workflow graph on the given request.
+        """Run the Vibe workflow graph on the given request.
 
         Reuses the cached LLM backend and adapter registry across calls.
         The compiled graph is recreated each time because it carries

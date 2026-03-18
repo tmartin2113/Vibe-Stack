@@ -3,14 +3,14 @@ requires = ["setuptools>=68.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "genesia"
+name = "vibe"
 version = "1.0.0"
 description = "Multi-agent code generation system with iterative quality refinement"
 readme = "README.md"
 requires-python = ">=3.9"
 license = "MIT"
 authors = [
-    {name = "Genesia Contributors"}
+    {name = "Vibe Contributors"}
 ]
 keywords = ["llm", "agents", "ai", "code-generation", "multi-agent"]
 classifiers = [
@@ -58,14 +58,14 @@ dev = [
 ]
 
 [project.scripts]
-genesia = "genesia.cli:main"
-genesia-agents = "agents.main:main"
+vibe = "vibe.cli:main"
+vibe-agents = "agents.main:main"
 
 [tool.setuptools]
-packages = ["genesia", "genesia.backends", "agents", "agents.tools", "agents.sandbox"]
+packages = ["vibe", "vibe.backends", "agents", "agents.tools", "agents.sandbox"]
 
 [tool.setuptools.package-data]
-genesia = ["py.typed"]
+vibe = ["py.typed"]
 
 [tool.black]
 line-length = 100
@@ -191,7 +191,7 @@ python_classes = "Test*"
 python_functions = "test_*"
 addopts = [
     "--verbose",
-    "--cov=genesia",
+    "--cov=vibe",
     "--cov=agents",
     "--cov-report=html",
     "--cov-report=term-missing",
@@ -205,7 +205,7 @@ markers = [
 ]
 
 [tool.coverage.run]
-source = ["genesia", "agents"]
+source = ["vibe", "agents"]
 omit = [
     "*/tests/*",
     "*/test_*.py",

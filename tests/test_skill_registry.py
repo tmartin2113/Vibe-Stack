@@ -19,7 +19,7 @@ from unittest.mock import patch, MagicMock
 import pytest
 
 # Set env to disable remote lookups by default in tests
-os.environ["GENESIA_DISABLE_REMOTE_SKILLS"] = "1"
+os.environ["VIBE_DISABLE_REMOTE_SKILLS"] = "1"
 
 from agents.skill_registry import SkillRegistry
 from agents.skill_security import SkillSecurity
@@ -29,7 +29,7 @@ from agents.config import SkillSourceConfig
 @pytest.fixture
 def skills_dir(tmp_path):
     """Create a temporary skills directory with official/local/temp subdirs."""
-    base = tmp_path / "genesia_skills"
+    base = tmp_path / "vibe_skills"
     (base / "official").mkdir(parents=True)
     (base / "local").mkdir(parents=True)
     (base / "temp").mkdir(parents=True)
@@ -293,7 +293,7 @@ class TestRemoteDiscovery:
     """Test GitHub remote skill catalog and download."""
 
     def test_remote_disabled_by_env(self, registry):
-        """When GENESIA_DISABLE_REMOTE_SKILLS is set, remote is off."""
+        """When VIBE_DISABLE_REMOTE_SKILLS is set, remote is off."""
         assert registry._enable_remote is False
 
     def test_remote_catalog_returns_empty_on_failure(self, skills_dir):

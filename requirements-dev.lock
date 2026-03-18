@@ -5,7 +5,7 @@
 annotated-types==0.7.0
     # via pydantic
 black==25.12.0
-    # via genesia (pyproject.toml)
+    # via vibe (pyproject.toml)
 certifi==2026.2.25
     # via requests
 cfgv==3.5.0
@@ -31,13 +31,13 @@ iniconfig==2.3.0
 librt==0.8.1
     # via mypy
 loguru==0.7.3
-    # via genesia (pyproject.toml)
+    # via vibe (pyproject.toml)
 markdown-it-py==4.0.0
     # via rich
 mdurl==0.1.2
     # via markdown-it-py
 mypy==1.19.1
-    # via genesia (pyproject.toml)
+    # via vibe (pyproject.toml)
 mypy-extensions==1.1.0
     # via
     #   black
@@ -62,9 +62,9 @@ pluggy==1.6.0
     #   pytest
     #   pytest-cov
 pre-commit==4.5.1
-    # via genesia (pyproject.toml)
+    # via vibe (pyproject.toml)
 pydantic==2.12.5
-    # via genesia (pyproject.toml)
+    # via vibe (pyproject.toml)
 pydantic-core==2.41.5
     # via pydantic
 pygments==2.19.2
@@ -77,23 +77,23 @@ pytest==8.4.2
     #   pytest-cov
     #   pytest-timeout
 pytest-cov==6.3.0
-    # via genesia (pyproject.toml)
+    # via vibe (pyproject.toml)
 pytest-timeout==2.4.0
-    # via genesia (pyproject.toml)
+    # via vibe (pyproject.toml)
 python-discovery==1.1.0
     # via virtualenv
 python-dotenv==1.2.2
-    # via genesia (pyproject.toml)
+    # via vibe (pyproject.toml)
 pytokens==0.4.1
     # via black
 pyyaml==6.0.3
     # via pre-commit
 requests==2.32.5
-    # via genesia (pyproject.toml)
+    # via vibe (pyproject.toml)
 rich==13.9.4
-    # via genesia (pyproject.toml)
+    # via vibe (pyproject.toml)
 ruff==0.15.4
-    # via genesia (pyproject.toml)
+    # via vibe (pyproject.toml)
 typing-extensions==4.15.0
     # via
     #   genesia (pyproject.toml)

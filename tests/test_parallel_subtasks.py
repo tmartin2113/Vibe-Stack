@@ -104,13 +104,6 @@ def mock_nodes():
     return nodes
 
 
-@pytest.fixture
-def mock_training_collector():
-    """Mock TrainingDataCollector."""
-    tc = MagicMock()
-    tc.collect_sub_output_evaluation = MagicMock()
-    return tc
-
 
 @pytest.fixture
 def config():
@@ -208,13 +201,12 @@ class TestRunSingleSubtask:
     """Tests for run_single_subtask()."""
 
     def test_success_path(
-        self, sample_subtask, shared_context, mock_nodes, mock_training_collector
+        self, sample_subtask, shared_context, mock_nodes
     ):
         """Full success: output approved."""
         result = run_single_subtask(
             sub_task_index=0,
             nodes=mock_nodes,
-            training_collector=mock_training_collector,
             shared_context=shared_context,
             sub_task_dict=sample_subtask,
         )
@@ -222,25 +214,19 @@ class TestRunSingleSubtask:
         assert result.get("output_score", 0) >= 85
 
     def test_calls_execute_sub_task(
-        self, sample_subtask, shared_context, mock_nodes, mock_training_collector
+        self, sample_subtask, shared_context, mock_nodes
     ):
-        run_single_subtask(0, mock_nodes, mock_training_collector, shared_context, sample_subtask)
+        run_single_subtask(0, mock_nodes, shared_context, sample_subtask)
         mock_nodes.execute_sub_task.assert_called()
 
     def test_calls_evaluate_sub_output(
-        self, sample_subtask, shared_context, mock_nodes, mock_training_collector
+        self, sample_subtask, shared_context, mock_nodes
     ):
-        run_single_subtask(0, mock_nodes, mock_training_collector, shared_context, sample_subtask)
+        run_single_subtask(0, mock_nodes, shared_context, sample_subtask)
         mock_nodes.evaluate_sub_output.assert_called()
 
-    def test_collects_output_training_data(
-        self, sample_subtask, shared_context, mock_nodes, mock_training_collector
-    ):
-        run_single_subtask(0, mock_nodes, mock_training_collector, shared_context, sample_subtask)
-        mock_training_collector.collect_sub_output_evaluation.assert_called()
-
     def test_output_refinement_loop(
-        self, sample_subtask, shared_context, mock_training_collector
+        self, sample_subtask, shared_context
     ):
         """Output loop refines when score is in refinable range."""
         nodes = MagicMock()
@@ -260,13 +246,13 @@ class TestRunSingleSubtask:
         nodes.evaluate_sub_output.side_effect = lambda s: s
 
         result = run_single_subtask(
-            0, nodes, mock_training_collector, shared_context, sample_subtask
+            0, nodes, shared_context, sample_subtask
         )
         assert nodes.execute_sub_task.call_count == 2
         assert result.get("status") == "completed"
 
     def test_output_failure_low_score(
-        self, sample_subtask, shared_context, mock_training_collector
+        self, sample_subtask, shared_context
     ):
         """Output fails when score is too low."""
         nodes = MagicMock()
@@ -283,20 +269,20 @@ class TestRunSingleSubtask:
         nodes.evaluate_sub_output.side_effect = lambda s: s
 
         result = run_single_subtask(
-            0, nodes, mock_training_collector, shared_context, sample_subtask
+            0, nodes, shared_context, sample_subtask
         )
         assert result["status"] == "failed"
 
     def test_preserves_task_type(
-        self, sample_subtask, shared_context, mock_nodes, mock_training_collector
+        self, sample_subtask, shared_context, mock_nodes
     ):
         result = run_single_subtask(
-            0, mock_nodes, mock_training_collector, shared_context, sample_subtask
+            0, mock_nodes, shared_context, sample_subtask
         )
         assert result["task_type"] == "code_generation"
 
     def test_uses_subtask_max_iterations(
-        self, shared_context, mock_training_collector
+        self, shared_context
     ):
         """Uses sub-task's own max_iterations, not global."""
         subtask = {
@@ -323,14 +309,14 @@ class TestRunSingleSubtask:
         nodes.evaluate_sub_output.side_effect = lambda s: s
 
         run_single_subtask(
-            0, nodes, mock_training_collector, shared_context, subtask,
+            0, nodes, shared_context, subtask,
             max_iterations=5,  # Global is 5 but subtask says 1
         )
         # Should respect subtask's max_iterations=1
         assert nodes.execute_sub_task.call_count == 1
 
     def test_state_isolation_between_calls(
-        self, shared_context, mock_nodes, mock_training_collector
+        self, shared_context, mock_nodes
     ):
         """Two calls don't leak state between each other."""
         st1 = {"task_type": "code", "specialist_adapter": "code",
@@ -342,14 +328,14 @@ class TestRunSingleSubtask:
                "spec_score": 0, "output_score": 0,
                "iteration_count": 0, "max_iterations": 3}
 
-        r1 = run_single_subtask(0, mock_nodes, mock_training_collector, shared_context, st1)
-        r2 = run_single_subtask(1, mock_nodes, mock_training_collector, shared_context, st2)
+        r1 = run_single_subtask(0, mock_nodes, shared_context, st1)
+        r2 = run_single_subtask(1, mock_nodes, shared_context, st2)
 
         assert r1["task_type"] == "code"
         assert r2["task_type"] == "research"
 
     def test_iteration_count_starts_at_zero(
-        self, sample_subtask, shared_context, mock_nodes, mock_training_collector
+        self, sample_subtask, shared_context, mock_nodes
     ):
         """iteration_count starts at 0 for the output phase."""
         original_execute = mock_nodes.execute_sub_task.side_effect
@@ -363,7 +349,7 @@ class TestRunSingleSubtask:
         mock_nodes.execute_sub_task.side_effect = check_iteration_start
 
         run_single_subtask(
-            0, mock_nodes, mock_training_collector, shared_context, sample_subtask
+            0, mock_nodes, shared_context, sample_subtask
         )
 
 
@@ -384,25 +370,25 @@ class TestExecuteParallelSubtasks:
         state["memory_context"] = "context"
         return state
 
-    def test_empty_subtasks(self, mock_nodes, mock_training_collector, config):
+    def test_empty_subtasks(self, mock_nodes, config):
         """No sub-tasks → returns state unchanged."""
         state = create_initial_state("test")
         state["sub_tasks"] = []
-        result = execute_parallel_subtasks(state, mock_nodes, mock_training_collector, config)
+        result = execute_parallel_subtasks(state, mock_nodes, config)
         assert result["sub_tasks"] == []
 
     def test_single_subtask_success(
-        self, sample_subtask, mock_nodes, mock_training_collector, config
+        self, sample_subtask, mock_nodes, config
     ):
         state = self._make_state_with_subtasks([sample_subtask])
-        result = execute_parallel_subtasks(state, mock_nodes, mock_training_collector, config)
+        result = execute_parallel_subtasks(state, mock_nodes, config)
 
         assert result["completed_sub_tasks"] == 1
         assert result["sub_tasks"][0].get("status") == "completed"
         assert result["current_sub_task_index"] == 1
 
     def test_multiple_subtasks_success(
-        self, mock_nodes, mock_training_collector, config
+        self, mock_nodes, config
     ):
         subtasks = [
             {"task_type": "code", "specialist_adapter": "code",
@@ -412,7 +398,7 @@ class TestExecuteParallelSubtasks:
             for i in range(3)
         ]
         state = self._make_state_with_subtasks(subtasks)
-        result = execute_parallel_subtasks(state, mock_nodes, mock_training_collector, config)
+        result = execute_parallel_subtasks(state, mock_nodes, config)
 
         assert result["completed_sub_tasks"] == 3
         assert len(result["sub_tasks"]) == 3
@@ -420,7 +406,7 @@ class TestExecuteParallelSubtasks:
         for st in result["sub_tasks"]:
             assert st.get("status") == "completed"
 
-    def test_partial_failure(self, mock_training_collector, config):
+    def test_partial_failure(self, config):
         """Some sub-tasks succeed, some fail."""
         nodes = MagicMock()
         call_idx = [0]
@@ -447,14 +433,14 @@ class TestExecuteParallelSubtasks:
             for i in range(3)
         ]
         state = self._make_state_with_subtasks(subtasks)
-        result = execute_parallel_subtasks(state, nodes, mock_training_collector, config)
+        result = execute_parallel_subtasks(state, nodes, config)
 
         # At least one should have failed
         statuses = [st.get("status") for st in result["sub_tasks"]]
         assert "failed" in statuses
         assert result["completed_sub_tasks"] < 3
 
-    def test_all_fail(self, mock_training_collector, config):
+    def test_all_fail(self, config):
         """All sub-tasks fail → completed_sub_tasks=0."""
         nodes = MagicMock()
 
@@ -477,12 +463,12 @@ class TestExecuteParallelSubtasks:
             for i in range(2)
         ]
         state = self._make_state_with_subtasks(subtasks)
-        result = execute_parallel_subtasks(state, nodes, mock_training_collector, config)
+        result = execute_parallel_subtasks(state, nodes, config)
 
         assert result["completed_sub_tasks"] == 0
 
     def test_preserves_original_indices(
-        self, mock_nodes, mock_training_collector, config
+        self, mock_nodes, config
     ):
         """Results are written back at correct original indices."""
         subtasks = [
@@ -493,7 +479,7 @@ class TestExecuteParallelSubtasks:
             for t in ["code", "test", "docs"]
         ]
         state = self._make_state_with_subtasks(subtasks)
-        result = execute_parallel_subtasks(state, mock_nodes, mock_training_collector, config)
+        result = execute_parallel_subtasks(state, mock_nodes, config)
 
         # Task types should be preserved at original positions
         assert result["sub_tasks"][0]["task_type"] == "code"
@@ -501,15 +487,15 @@ class TestExecuteParallelSubtasks:
         assert result["sub_tasks"][2]["task_type"] == "docs"
 
     def test_updates_current_sub_task_index(
-        self, sample_subtask, mock_nodes, mock_training_collector, config
+        self, sample_subtask, mock_nodes, config
     ):
         subtasks = [copy.deepcopy(sample_subtask) for _ in range(4)]
         state = self._make_state_with_subtasks(subtasks)
-        result = execute_parallel_subtasks(state, mock_nodes, mock_training_collector, config)
+        result = execute_parallel_subtasks(state, mock_nodes, config)
         assert result["current_sub_task_index"] == 4
 
     def test_error_recording_on_exception(
-        self, mock_training_collector, config
+        self, config
     ):
         """Exceptions in sub-tasks are recorded in parallel_execution_errors."""
         nodes = MagicMock()
@@ -526,13 +512,13 @@ class TestExecuteParallelSubtasks:
              "iteration_count": 0, "max_iterations": 3}
         ]
         state = self._make_state_with_subtasks(subtasks)
-        result = execute_parallel_subtasks(state, nodes, mock_training_collector, config)
+        result = execute_parallel_subtasks(state, nodes, config)
 
         assert len(result["parallel_execution_errors"]) == 1
         assert result["parallel_execution_errors"][0]["error_type"] == "RuntimeError"
         assert result["sub_tasks"][0]["status"] == "failed"
 
-    def test_timeout_handling(self, mock_training_collector):
+    def test_timeout_handling(self):
         """Sub-tasks that exceed timeout are marked as failed."""
         nodes = MagicMock()
 
@@ -557,11 +543,11 @@ class TestExecuteParallelSubtasks:
         state["loaded_skills"] = []
         state["memory_context"] = ""
 
-        result = execute_parallel_subtasks(state, nodes, mock_training_collector, cfg)
+        result = execute_parallel_subtasks(state, nodes, cfg)
         assert result["sub_tasks"][0]["status"] == "failed"
 
     def test_config_none_uses_defaults(
-        self, sample_subtask, mock_nodes, mock_training_collector
+        self, sample_subtask, mock_nodes
     ):
         """config=None uses default max_workers=4 and timeout=300."""
         state = create_initial_state("test")
@@ -572,11 +558,11 @@ class TestExecuteParallelSubtasks:
 
         # Should not raise
         result = execute_parallel_subtasks(
-            state, mock_nodes, mock_training_collector, config=None
+            state, mock_nodes, config=None
         )
         assert result["completed_sub_tasks"] >= 0
 
-    def test_reads_config_workers(self, mock_nodes, mock_training_collector):
+    def test_reads_config_workers(self, mock_nodes):
         """max_workers is read from config."""
         cfg = SystemConfig()
         cfg.workflow.parallel_max_workers = 2
@@ -595,11 +581,11 @@ class TestExecuteParallelSubtasks:
         state["memory_context"] = ""
 
         # Should complete without error (just with 2 workers)
-        result = execute_parallel_subtasks(state, mock_nodes, mock_training_collector, cfg)
+        result = execute_parallel_subtasks(state, mock_nodes, cfg)
         assert result["completed_sub_tasks"] == 4
 
     def test_does_not_mutate_original_subtask_dicts(
-        self, mock_nodes, mock_training_collector, config
+        self, mock_nodes, config
     ):
         """Original sub-task dicts are deep-copied, not mutated in-place by threads."""
         original = {"task_type": "code", "specialist_adapter": "code",
@@ -614,7 +600,7 @@ class TestExecuteParallelSubtasks:
         state["loaded_skills"] = []
         state["memory_context"] = ""
 
-        execute_parallel_subtasks(state, mock_nodes, mock_training_collector, config)
+        execute_parallel_subtasks(state, mock_nodes, config)
 
         # The state's sub_tasks[0] is now the result (replaced by merge),
         # but the _build_local_state deep-copies, so the thread doesn't
@@ -623,7 +609,7 @@ class TestExecuteParallelSubtasks:
         # as sub_task_dict, which is deep-copied inside _build_local_state)
 
     def test_shared_context_includes_all_fields(
-        self, sample_subtask, mock_training_collector, config
+        self, sample_subtask, config
     ):
         """The shared_context dict built in execute_parallel_subtasks has all expected fields."""
         nodes = MagicMock()
@@ -646,7 +632,7 @@ class TestExecuteParallelSubtasks:
             state["loaded_skills"] = [{"name": "sk1"}]
             state["memory_context"] = "mem"
 
-            execute_parallel_subtasks(state, nodes, mock_training_collector, config)
+            execute_parallel_subtasks(state, nodes, config)
 
             assert "user_request" in captured_context
             assert "specification" in captured_context
@@ -763,35 +749,6 @@ class TestGraphEdgeWiring:
 class TestThreadSafety:
     """Tests for thread-safe concurrent execution."""
 
-    def test_concurrent_training_collector_writes(self, config):
-        """Training collector is called from multiple threads without errors."""
-        tc = MagicMock()
-        tc.collect_sub_output_evaluation = MagicMock()
-
-        nodes = MagicMock()
-        nodes.execute_sub_task.side_effect = lambda s: _set_output_score(s, 90)
-        nodes.evaluate_sub_output.side_effect = lambda s: s
-
-        subtasks = [
-            {"task_type": "code", "specialist_adapter": "code",
-             "description": f"task{i}", "status": "pending",
-             "spec_score": 0, "output_score": 0,
-             "iteration_count": 0, "max_iterations": 3}
-            for i in range(5)
-        ]
-
-        state = create_initial_state("test")
-        state["sub_tasks"] = subtasks
-        state["specification"] = ""
-        state["loaded_skills"] = []
-        state["memory_context"] = ""
-
-        result = execute_parallel_subtasks(state, nodes, tc, config)
-
-        # Each sub-task should have triggered output training calls
-        assert tc.collect_sub_output_evaluation.call_count == 5
-        assert result["completed_sub_tasks"] == 5
-
     def test_no_state_leakage_between_threads(self, config):
         """Each thread operates on an isolated state copy."""
         thread_states = []
@@ -807,8 +764,6 @@ class TestThreadSafety:
         nodes.execute_sub_task.side_effect = capture_and_execute
         nodes.evaluate_sub_output.side_effect = lambda s: s
 
-        tc = MagicMock()
-
         subtasks = [
             {"task_type": "code", "specialist_adapter": "code",
              "description": f"task{i}", "status": "pending",
@@ -823,7 +778,7 @@ class TestThreadSafety:
         state["loaded_skills"] = []
         state["memory_context"] = ""
 
-        execute_parallel_subtasks(state, nodes, tc, config)
+        execute_parallel_subtasks(state, nodes, config)
 
         # All state objects should have unique IDs (different copies)
         assert len(set(thread_states)) == 3
@@ -846,8 +801,6 @@ class TestThreadSafety:
         nodes.execute_sub_task.side_effect = slow_execute
         nodes.evaluate_sub_output.side_effect = lambda s: s
 
-        tc = MagicMock()
-
         subtasks = [
             {"task_type": "code", "specialist_adapter": "code",
              "description": f"task{i}", "status": "pending",
@@ -862,7 +815,7 @@ class TestThreadSafety:
         state["loaded_skills"] = []
         state["memory_context"] = ""
 
-        execute_parallel_subtasks(state, nodes, tc, config)
+        execute_parallel_subtasks(state, nodes, config)
 
         # If truly parallel, at least 2 calls should overlap in time
         assert len(call_times) == 3

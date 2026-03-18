@@ -1,5 +1,5 @@
 """
-Skill Security — Hardened security layer for Genesia's skill system.
+Skill Security — Hardened security layer for Vibe's skill system.
 
 Prevents:
 - Path traversal attacks via malicious skill names
@@ -86,10 +86,10 @@ SUSPICIOUS_PATTERNS: List[Tuple[str, str, str]] = [
     # Credential harvesting
     (r"(?:api[_-]?key|password|secret|token|credential)\s*[:=]\s*['\"]", "critical",
      "Credential harvesting: hardcoded secret pattern"),
-    (r"(?:env|environ|getenv)\s*\[\s*['\"](?!GENESIA_)", "high",
-     "Reading non-Genesia environment variables"),
-    (r"(?:environ|os\.environ)\.get\s*\(\s*['\"](?!GENESIA_)", "high",
-     "Reading non-Genesia environment variables via .get()"),
+    (r"(?:env|environ|getenv)\s*\[\s*['\"](?!VIBE_)", "high",
+     "Reading non-Vibe environment variables"),
+    (r"(?:environ|os\.environ)\.get\s*\(\s*['\"](?!VIBE_)", "high",
+     "Reading non-Vibe environment variables via .get()"),
 ]
 
 # Maximum allowed SKILL.md file size (512 KB)

@@ -30,7 +30,7 @@ from .config import SystemConfig, get_dev_config, get_production_config
 from .adapters import (
     AdapterRegistry,
     PromptAdapter,
-    GENESIA_SYSTEM_PROMPT,
+    VIBE_SYSTEM_PROMPT,
     CRITIC_SYSTEM_PROMPT,
     REFINEMENT_SYSTEM_PROMPT,
     CODE_SYSTEM_PROMPT,
@@ -228,9 +228,9 @@ class MultiAgentSystem:
         Load the vLLM backend.
 
         Configure via environment variables:
-        - GENESIA_MODEL: model name
-        - GENESIA_BACKEND_HOST: server host (default: localhost)
-        - GENESIA_BACKEND_PORT: server port (default: 8000)
+        - VIBE_MODEL: model name
+        - VIBE_BACKEND_HOST: server host (default: localhost)
+        - VIBE_BACKEND_PORT: server port (default: 8000)
         """
         try:
             backend = create_backend_from_config(self.config)
@@ -255,7 +255,7 @@ class MultiAgentSystem:
         # All adapters: (name, system_prompt)
         adapter_defs = [
             # Core workflow adapters
-            ("genesia", GENESIA_SYSTEM_PROMPT),
+            ("vibe", VIBE_SYSTEM_PROMPT),
             ("critic", CRITIC_SYSTEM_PROMPT),
             ("refinement", REFINEMENT_SYSTEM_PROMPT),
             # Task execution adapters
@@ -473,7 +473,7 @@ def main():
     if args.daemon:
         from .daemon import run_daemon
         setup_logging(config)
-        console.print("\n[bold blue]🤖 Starting Genesia Daemon Mode[/bold blue]")
+        console.print("\n[bold blue]🤖 Starting Vibe Daemon Mode[/bold blue]")
         console.print("Monitoring Slack/Mattermost for @mentions...\n")
         run_daemon(config)
         return

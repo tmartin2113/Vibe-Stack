@@ -1,6 +1,6 @@
 # OpenSandbox — Code Execution Isolation
 #
-# Companion to the Genesia agent pipeline.
+# Companion to the Vibe agent pipeline.
 # Paperclip runs natively (systemd service, see paperclip.service).
 # vLLM runs separately (standalone container, restart: unless-stopped).
 #
@@ -22,7 +22,7 @@ services:
     volumes:
       - ../sandbox/sandbox.toml:/root/.sandbox.toml:ro
       - /var/run/docker.sock:/var/run/docker.sock
-      - ../:/home/user/Genesia:ro
+      - ../:/home/user/Vibe:ro
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/docs"]
       interval: 10s

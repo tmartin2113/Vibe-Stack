@@ -16,7 +16,7 @@ from unittest.mock import MagicMock, patch, call
 
 import pytest
 
-os.environ["GENESIA_DISABLE_REMOTE_SKILLS"] = "1"
+os.environ["VIBE_DISABLE_REMOTE_SKILLS"] = "1"
 
 
 # ===== classify_complexity pre-set guard =====

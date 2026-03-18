@@ -1,31 +1,31 @@
-# Genesia
+# Vibe
 
 Production-grade multi-agent system purpose-built for [Paperclip](https://paperclip.dev). Each agent handles one task — code, tests, security, research — and Paperclip handles the rest: scheduling, retries, multi-agent coordination, and human-in-the-loop.
 
 ```
 Paperclip (control plane)
      │
-     ├── heartbeat ──→ Genesia Agent (code)          ──→ generates code
-     ├── heartbeat ──→ Genesia Agent (test)          ──→ writes tests
-     ├── heartbeat ──→ Genesia Agent (security)      ──→ security audit
-     ├── heartbeat ──→ Genesia Agent (research)      ──→ research & analysis
-     └── heartbeat ──→ Genesia Agent (orchestrator)  ──→ decomposes complex tasks
+     ├── heartbeat ──→ Vibe Agent (code)          ──→ generates code
+     ├── heartbeat ──→ Vibe Agent (test)          ──→ writes tests
+     ├── heartbeat ──→ Vibe Agent (security)      ──→ security audit
+     ├── heartbeat ──→ Vibe Agent (research)      ──→ research & analysis
+     └── heartbeat ──→ Vibe Agent (orchestrator)  ──→ decomposes complex tasks
                               │                           across specialists,
                               ├── DECOMPOSE                aggregates results
                               ├── POLL
                               └── AGGREGATE
 ```
 
-### Why Genesia + Paperclip
+### Why Vibe + Paperclip
 
-Genesia is designed around Paperclip's primitives — issues, comments, statuses, and heartbeats. Instead of reinventing orchestration, it delegates entirely:
+Vibe is designed around Paperclip's primitives — issues, comments, statuses, and heartbeats. Instead of reinventing orchestration, it delegates entirely:
 
-- **Paperclip assigns work** — Genesia never polls for tasks. Each container invocation runs one heartbeat, processes one task, and exits.
+- **Paperclip assigns work** — Vibe never polls for tasks. Each container invocation runs one heartbeat, processes one task, and exits.
 - **Paperclip owns lifecycle** — no PID files, no supervisor, no restart logic. Paperclip spawns containers on demand and kills them when done.
 - **Issues are the API** — results, clarification questions, progress updates, and partial outputs on SIGTERM all flow through Paperclip issue comments.
 - **Stateless by design** — all agent state lives in the Paperclip issue tree. A killed container can be retried with zero data loss because the issue still holds the context.
 
-This means Genesia stays small (workflow engine + LLM glue) while Paperclip handles the hard parts of production orchestration.
+This means Vibe stays small (workflow engine + LLM glue) while Paperclip handles the hard parts of production orchestration.
 
 ## What's Inside
 
@@ -65,7 +65,7 @@ All orchestration state is derived from Paperclip issue state — no external st
 
 ## Deployment
 
-Genesia agents run as Paperclip process adapters. Paperclip handles scheduling, task assignment, and multi-agent coordination. Each agent specializes in a task type and runs in heartbeat mode.
+Vibe agents run as Paperclip process adapters. Paperclip handles scheduling, task assignment, and multi-agent coordination. Each agent specializes in a task type and runs in heartbeat mode.
 
 ### Docker Compose (Recommended)
 
@@ -73,14 +73,14 @@ Genesia agents run as Paperclip process adapters. Paperclip handles scheduling, 
 docker compose -f docker/docker-compose.paperclip.yml up
 ```
 
-Starts: Paperclip server + Ollama (shared LLM) + Genesia agents. GPU passthrough via NVIDIA Container Toolkit.
+Starts: Paperclip server + Ollama (shared LLM) + Vibe agents. GPU passthrough via NVIDIA Container Toolkit.
 
 ### Single Agent (Manual)
 
 ```bash
 export PAPERCLIP_API_URL="http://localhost:3100"
 export PAPERCLIP_API_KEY="your-key"
-export GENESIA_TASK_TYPE="code"
+export VIBE_TASK_TYPE="code"
 
 python -m agents.main --heartbeat
 ```
@@ -193,12 +193,12 @@ export PAPERCLIP_API_URL="http://localhost:3100"
 export PAPERCLIP_API_KEY="your-key"
 
 # Agent identity
-export GENESIA_TASK_TYPE="code"            # code, test_generation, security_audit, research, orchestrator
+export VIBE_TASK_TYPE="code"            # code, test_generation, security_audit, research, orchestrator
 
 # LLM backend (inside containers)
-export GENESIA_BACKEND=ollama              # ollama, llamacpp, vllm, openai, anthropic, google
-export GENESIA_BACKEND_PORT=11434
-export GENESIA_MODEL=qwen3.5:7b
+export VIBE_BACKEND=ollama              # ollama, llamacpp, vllm, openai, anthropic, google
+export VIBE_BACKEND_PORT=11434
+export VIBE_MODEL=qwen3.5:7b
 
 # Cloud API keys (optional, for cloud backends)
 export OPENAI_API_KEY="sk-..."
@@ -206,11 +206,11 @@ export ANTHROPIC_API_KEY="sk-ant-..."
 export GOOGLE_API_KEY="AI..."
 
 # Sandbox
-export GENESIA_SANDBOX_URL=http://opensandbox:8080
+export VIBE_SANDBOX_URL=http://opensandbox:8080
 
 # Quality control
-export GENESIA_QUALITY_THRESHOLD=85        # Score needed to pass (default: 85)
-export GENESIA_MAX_ITERATIONS=3            # Max refinement loops (default: 3)
+export VIBE_QUALITY_THRESHOLD=85        # Score needed to pass (default: 85)
+export VIBE_MAX_ITERATIONS=3            # Max refinement loops (default: 3)
 
 # Logging
 export LOG_LEVEL=INFO
@@ -230,7 +230,7 @@ export LOG_TO_FILE=true
 ## Project Structure
 
 ```
-Genesia/
+Vibe/
 |
 +-- Paperclip Adapter (TypeScript)
 |   +-- paperclip-adapter/
@@ -272,13 +272,13 @@ Genesia/
 |   |   +-- skill_security.py          # Security (regex + AST + TOFU)
 |   |   +-- skill_cleanup.py           # Usage tracking, auto-promotion
 |   |   +-- skill_outcome_store.py     # JSONL-backed reinforcement memory
-|   +-- genesia/
+|   +-- vibe/
 |       +-- backends/                   # LLM backend implementations (vLLM, base)
 |
 +-- Infrastructure
 |   +-- docker/
 |   |   +-- docker-compose.paperclip.yml  # Full Paperclip stack
-|   |   +-- Dockerfile.genesia-agent      # Agent container image
+|   |   +-- Dockerfile.vibe-agent      # Agent container image
 |   +-- docker-compose.yml                # Standalone stack
 |   +-- sandbox/                          # OpenSandbox config + GPU Dockerfile
 |
@@ -343,7 +343,7 @@ python -m agents.doctor  # Checks hardware, backends, sandbox, GPU
 **Heartbeat not picking up tasks:**
 - Verify `PAPERCLIP_API_URL` and `PAPERCLIP_API_KEY` are set
 - Check agent is registered and active in Paperclip dashboard
-- Check `GENESIA_TASK_TYPE` matches the agent's role
+- Check `VIBE_TASK_TYPE` matches the agent's role
 
 ## Tech Stack
 

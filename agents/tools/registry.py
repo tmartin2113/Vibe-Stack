@@ -478,7 +478,7 @@ class BanditScanner(Tool):
 
 # Built-in default directories (used when no config override is provided).
 _DEFAULT_ALLOWED_FILE_DIRS = [
-    Path("/home/user/Genesia").resolve(),
+    Path("/home/user/Vibe").resolve(),
     Path("/tmp").resolve(),
 ]
 
@@ -494,12 +494,12 @@ def _build_allowed_file_dirs(configured_dirs: Optional[List[str]] = None) -> Lis
 
     Priority:
     1. ``configured_dirs`` (from SandboxConfig.allowed_file_dir_list)
-    2. ``GENESIA_ALLOWED_FILE_DIRS`` env var (colon-separated)
-    3. Built-in defaults (/home/user/Genesia, /tmp)
+    2. ``VIBE_ALLOWED_FILE_DIRS`` env var (colon-separated)
+    3. Built-in defaults (/home/user/Vibe, /tmp)
     """
     if configured_dirs:
         return [Path(d).resolve() for d in configured_dirs]
-    env_dirs = os.environ.get("GENESIA_ALLOWED_FILE_DIRS")
+    env_dirs = os.environ.get("VIBE_ALLOWED_FILE_DIRS")
     if env_dirs:
         return [Path(d).resolve() for d in env_dirs.split(":") if d.strip()]
     return list(_DEFAULT_ALLOWED_FILE_DIRS)
@@ -911,7 +911,7 @@ class WebFetchTool(Tool):
         # Run in subprocess to enforce timeout and isolation
         script = (
             "import urllib.request, sys; "
-            f"req = urllib.request.Request(sys.argv[1], headers={{'User-Agent': 'Genesia/1.0'}}); "
+            f"req = urllib.request.Request(sys.argv[1], headers={{'User-Agent': 'Vibe/1.0'}}); "
             "r = urllib.request.urlopen(req, timeout=int(sys.argv[2])); "
             "sys.stdout.buffer.write(r.read())"
         )
@@ -1637,8 +1637,8 @@ def create_default_tool_registry(
         network_egress: If True, register WebFetchTool for HTTP access.
             Defaults to False (no outbound network tools).
         allowed_file_dirs: List of directory paths the agent may read/write.
-            Falls back to GENESIA_ALLOWED_FILE_DIRS env var, then built-in
-            defaults (/home/user/Genesia, /tmp).
+            Falls back to VIBE_ALLOWED_FILE_DIRS env var, then built-in
+            defaults (/home/user/Vibe, /tmp).
 
     Returns:
         ToolRegistry with all tools registered

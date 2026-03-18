@@ -14,8 +14,8 @@ import json
 logger = logging.getLogger(__name__)
 
 # Configurable via environment variables
-DEFAULT_PROMPT_TIMEOUT_MINUTES = int(os.getenv("GENESIA_PROMPT_TIMEOUT", "5"))
-DEFAULT_POLL_INTERVAL_SECONDS = int(os.getenv("GENESIA_POLL_INTERVAL", "2"))
+DEFAULT_PROMPT_TIMEOUT_MINUTES = int(os.getenv("VIBE_PROMPT_TIMEOUT", "5"))
+DEFAULT_POLL_INTERVAL_SECONDS = int(os.getenv("VIBE_POLL_INTERVAL", "2"))
 
 
 class APIKeyManager:
@@ -40,7 +40,7 @@ class APIKeyManager:
         self.cache: Dict[str, str] = {}
 
         # Path for secure local storage
-        self.storage_path = Path.home() / ".genesia" / "api_keys.json"
+        self.storage_path = Path.home() / ".vibe" / "api_keys.json"
         self._load_stored_keys()
 
     def _load_stored_keys(self):
@@ -265,7 +265,7 @@ The system needs your {key_name.replace('_', ' ').title()} to continue.
 2. The key will be securely stored and this message will be deleted
 
 **Security Notes:**
-- Your key will be stored in ~/.genesia/api_keys.json with restricted permissions
+- Your key will be stored in ~/.vibe/api_keys.json with restricted permissions
 - The message containing your key will be automatically deleted
 - You have 5 minutes to respond before this request times out
 
@@ -330,7 +330,7 @@ Please send your {key_name} now:"""
                             self._save_key(key_name, api_key)
 
                             # Confirm to user
-                            confirmation_msg = f"✅ {key_name} received and stored securely!\n\nYour key has been saved to ~/.genesia/api_keys.json"
+                            confirmation_msg = f"✅ {key_name} received and stored securely!\n\nYour key has been saved to ~/.vibe/api_keys.json"
                             if not deletion_success:
                                 confirmation_msg += "\n\n⚠️ **Remember to manually delete your message with the key!**"
 
@@ -412,7 +412,7 @@ The system needs your {key_name.replace('_', ' ').title()} to continue.
 2. The key will be securely stored and this message will be deleted
 
 *Security Notes:*
-• Your key will be stored in ~/.genesia/api_keys.json with restricted permissions
+• Your key will be stored in ~/.vibe/api_keys.json with restricted permissions
 • The message containing your key will be automatically deleted
 • You have 5 minutes to respond before this request times out
 
@@ -482,7 +482,7 @@ Please send your {key_name} now:"""
                             self._save_key(key_name, api_key)
 
                             # Confirm to user
-                            confirmation_msg = f"✅ {key_name} received and stored securely!\n\nYour key has been saved to ~/.genesia/api_keys.json"
+                            confirmation_msg = f"✅ {key_name} received and stored securely!\n\nYour key has been saved to ~/.vibe/api_keys.json"
                             if not deletion_success:
                                 confirmation_msg += "\n\n⚠️ **Remember to manually delete your message with the key!**"
 
@@ -534,7 +534,7 @@ Please send your {key_name} now:"""
         msg = f"API key '{key_name}' is not configured.\n\n"
         msg += "To configure it, you can:\n\n"
         msg += f"1. Set environment variable:\n   export {key_name}=your-api-key-here\n\n"
-        msg += f"2. Add to ~/.genesia/api_keys.json:\n"
+        msg += f"2. Add to ~/.vibe/api_keys.json:\n"
         msg += f'   {{\n     "{key_name}": "your-api-key-here"\n   }}\n\n'
 
         if self.config and self.config.mattermost.enabled:

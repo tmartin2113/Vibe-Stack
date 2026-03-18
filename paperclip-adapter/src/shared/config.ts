@@ -1,16 +1,16 @@
 /**
- * Adapter configuration shape for genesia_local agents.
+ * Adapter configuration shape for vibe_local agents.
  *
  * Stored in `agents.adapter_config` in Paperclip's database.
  */
-export interface GenesiaAdapterConfig {
+export interface VibeAdapterConfig {
   /** Python command to execute (default: "python") */
   command?: string;
   /** CLI arguments (default: ["-m", "agents.main", "--heartbeat"]) */
   args?: string[];
-  /** Working directory for the Genesia project */
+  /** Working directory for the Vibe project */
   cwd?: string;
-  /** Force a specific Genesia task type */
+  /** Force a specific Vibe task type */
   taskType?: string;
   /** Environment variable overrides */
   env?: Record<string, string>;

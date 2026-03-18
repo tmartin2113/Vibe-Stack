@@ -1,7 +1,7 @@
 /**
  * Slack notification client for human-in-the-loop clarification.
  *
- * When a Genesia agent needs clarification, this module sends a Slack DM
+ * When a Vibe agent needs clarification, this module sends a Slack DM
  * to the relevant human with the questions. The human can reply directly
  * in the Slack DM thread — the adapter polls for their reply and forwards
  * it to Paperclip as an issue comment, triggering the normal resume flow.

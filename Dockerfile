@@ -20,40 +20,39 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Create non-root user for running the application
-RUN groupadd -r genesia && useradd -r -g genesia -m -d /home/genesia genesia
+RUN groupadd -r vibe && useradd -r -g vibe -m -d /home/vibe vibe
 
 # Copy installed Python packages from deps stage
 COPY --from=deps /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
 COPY --from=deps /usr/local/bin /usr/local/bin
 
-# Copy application code (owned by genesia user)
-COPY --chown=genesia:genesia genesia/ genesia/
-COPY --chown=genesia:genesia agents/ agents/
-COPY --chown=genesia:genesia local_prompt_enhancer.py .
-COPY --chown=genesia:genesia pyproject.toml .
-COPY --chown=genesia:genesia scripts/ scripts/
+# Copy application code (owned by vibe user)
+COPY --chown=vibe:vibe vibe/ vibe/
+COPY --chown=vibe:vibe agents/ agents/
+COPY --chown=vibe:vibe pyproject.toml .
+COPY --chown=vibe:vibe scripts/ scripts/
 
-# Install the genesia package itself
+# Install the vibe package itself
 RUN pip install --no-cache-dir -e .
 
-# Create data directory for genesia user
-RUN mkdir -p /home/genesia/.genesia && chown -R genesia:genesia /home/genesia/.genesia
+# Create data directory for vibe user
+RUN mkdir -p /home/vibe/.vibe && chown -R vibe:vibe /home/vibe/.vibe
 
 # Switch to non-root user
-USER genesia
+USER vibe
 
 # Expose health/metrics port
 EXPOSE 8080
 
 # Default environment
 ENV LOG_LEVEL=INFO
-ENV GENESIA_BACKEND_HOST=vllm
-ENV GENESIA_BACKEND_PORT=8000
-ENV GENESIA_HEALTH_PORT=8080
-ENV HOME=/home/genesia
+ENV VIBE_BACKEND_HOST=vllm
+ENV VIBE_BACKEND_PORT=8000
+ENV VIBE_HEALTH_PORT=8080
+ENV HOME=/home/vibe
 
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
-    CMD curl -f http://localhost:${GENESIA_HEALTH_PORT:-8080}/healthz || exit 1
+    CMD curl -f http://localhost:${VIBE_HEALTH_PORT:-8080}/healthz || exit 1
 
 ENTRYPOINT ["python", "-m", "agents.main"]
 CMD ["--heartbeat"]

@@ -1,4 +1,4 @@
-# Genesia
+# Vibe
 
 Multi-agent code generation system with iterative quality refinement. Deployed via Paperclip.
 
@@ -22,14 +22,14 @@ Deterministic state machine: **Router → Skill Loader → Spec Builder → Spec
 
 | System | Files | Purpose |
 |--------|-------|---------|
-| **LLM Backend** | `agents/llm_backend.py`, `genesia/backends/` | Ollama (default), vLLM, llama.cpp, OpenAI, Anthropic, Google |
+| **LLM Backend** | `agents/llm_backend.py`, `vibe/backends/` | Ollama (default), vLLM, llama.cpp, OpenAI, Anthropic, Google |
 | **Tool System** | `agents/tools/` | 5 default tools + extended dev/SEO tools. OpenSandbox or subprocess execution. |
 | **Skill Security** | `agents/skill_security.py` | Name/path/content validation, AST+regex scanning, runtime tool permission enforcement, SHA-256 integrity |
 | **Skill Reinforcement** | `agents/skill_generator.py`, `agents/skill_outcome_store.py`, `agents/skill_cleanup.py` | Closed-loop: outcomes recorded → RAG retrieval → generation → self-refinement for low scores |
 | **Session Store** | `agents/session_store.py` | SQLite + WAL. Daemon-mode only. TTL-based cleanup. |
 | **Messenger Client** | `agents/messenger_client.py` | MattermostClient + SlackClient. Used by daemon and API key prompting. |
 | **Resource Discovery** | `agents/resource_discovery.py`, `agents/resource_allocator.py` | CPU/RAM/GPU introspection → resource plans for sandbox pool sizing |
-| **Sandbox** | `agents/sandbox/` | OpenSandbox Docker containers with GPU passthrough. Toggle: `GENESIA_SANDBOX_BACKEND=opensandbox\|subprocess` |
+| **Sandbox** | `agents/sandbox/` | OpenSandbox Docker containers with GPU passthrough. Toggle: `VIBE_SANDBOX_BACKEND=opensandbox\|subprocess` |
 | **LLM Retry** | `agents/llm_retry.py` | Exponential backoff with jitter, Retry-After header support, per-node and workflow timeouts |
 | **Task Type Registry** | `agents/task_type_registry.py` | Unified registry of builtin + skill-defined types. Router, orchestrator, and LLM classifier all read from it |
 | **Workflow Factory** | `agents/workflow_factory.py` | Cached LLM backend + 16 adapters across heartbeat runs. Lazy init on first `run_workflow()` |
@@ -53,7 +53,7 @@ TypeScript process adapter. Paperclip calls `execute()` which spawns the Python 
 - `src/server/slack-notifier.ts` — sends clarification DMs to humans. Returns `{channelId, messageTs}` for reply polling.
 - `src/server/slack-reply-poller.ts` — polls Slack thread for human replies. Forwards to Paperclip as issue comment.
 - `src/server/parse.ts` — extracts JSON result from heartbeat stdout.
-- `src/shared/config.ts` — adapter config shape (`GenesiaAdapterConfig`).
+- `src/shared/config.ts` — adapter config shape (`VibeAdapterConfig`).
 
 ### Clarification Flow (Two-Way Slack Bridge)
 
@@ -93,7 +93,7 @@ Supporting modules:
 
 ### Docker Compose (`docker/docker-compose.paperclip.yml`)
 
-Infrastructure only: Paperclip + vLLM + OpenSandbox. The agent is NOT a long-running service — Paperclip spawns agent containers on-demand via the process adapter when tasks arrive. Each invocation runs one heartbeat and exits. Task type is passed per-invocation via `GENESIA_TASK_TYPE`.
+Infrastructure only: Paperclip + vLLM + OpenSandbox. The agent is NOT a long-running service — Paperclip spawns agent containers on-demand via the process adapter when tasks arrive. Each invocation runs one heartbeat and exits. Task type is passed per-invocation via `VIBE_TASK_TYPE`.
 
 ## Development
 
@@ -123,11 +123,11 @@ See `.env.example` for all configurable values. Key ones:
 
 | Variable | Purpose | Default |
 |----------|---------|---------|
-| `GENESIA_SANDBOX_BACKEND` | `opensandbox` or `subprocess` | `subprocess` |
+| `VIBE_SANDBOX_BACKEND` | `opensandbox` or `subprocess` | `subprocess` |
 | `PAPERCLIP_API_URL` | Paperclip control plane URL | — |
 | `PAPERCLIP_AGENT_ID` | Agent identity for self-comment filtering | — |
-| `GENESIA_SLACK_BOT_TOKEN` | Two-way Slack bridge bot token | — |
-| `GENESIA_SLACK_REPLY_TIMEOUT` | Seconds to poll for Slack reply (0 = notify only) | `300` |
+| `VIBE_SLACK_BOT_TOKEN` | Two-way Slack bridge bot token | — |
+| `VIBE_SLACK_REPLY_TIMEOUT` | Seconds to poll for Slack reply (0 = notify only) | `300` |
 
 ### Project Structure
 
@@ -155,7 +155,7 @@ agents/                    # Main agent pipeline
   paperclip_client.py      # Paperclip REST client
   resource_discovery.py    # Hardware introspection
   resource_allocator.py    # Resource planning
-genesia/                   # Library layer (backends, core utilities)
+vibe/                   # Library layer (backends, core utilities)
   backends/                # Ollama, vLLM, llama.cpp, OpenAI, Anthropic, Google
 paperclip-adapter/         # TypeScript Paperclip adapter
   src/server/              # execute, parse, slack-notifier, slack-reply-poller

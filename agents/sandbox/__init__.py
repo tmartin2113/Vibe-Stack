@@ -1,4 +1,4 @@
-"""OpenSandbox integration for Genesia tool execution."""
+"""OpenSandbox integration for Vibe tool execution."""
 
 from .client import SandboxPoolManager
 from .config import SandboxConfig

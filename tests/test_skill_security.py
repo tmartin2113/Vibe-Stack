@@ -22,7 +22,7 @@ import pytest
 from pathlib import Path
 
 # Disable remote lookups in tests
-os.environ["GENESIA_DISABLE_REMOTE_SKILLS"] = "1"
+os.environ["VIBE_DISABLE_REMOTE_SKILLS"] = "1"
 
 from agents.skill_security import (
     SkillSecurity,
@@ -51,7 +51,7 @@ def security_no_gate():
 @pytest.fixture
 def skills_dir(tmp_path):
     """Temporary skills directory with tier subdirs."""
-    base = tmp_path / "genesia_skills"
+    base = tmp_path / "vibe_skills"
     (base / "official").mkdir(parents=True)
     (base / "local").mkdir(parents=True)
     (base / "temp").mkdir(parents=True)
@@ -707,7 +707,7 @@ class TestBackfillHashes:
 
     def test_backfill_computes_hashes_for_existing_skills(self, tmp_path):
         """Bug #5: Skills in .index.json without hashes get them on init."""
-        base = tmp_path / "genesia_skills"
+        base = tmp_path / "vibe_skills"
         (base / "official").mkdir(parents=True)
         (base / "local").mkdir(parents=True)
         (base / "temp").mkdir(parents=True)
@@ -914,9 +914,9 @@ class TestNewSuspiciousPatterns:
         warnings = security.validate_skill_content(content, "env-skill")
         assert any(".get()" in w["description"] for w in warnings)
 
-    def test_environ_get_genesia_prefix_allowed(self, security):
-        """os.environ.get('GENESIA_*') is NOT flagged."""
-        content = _make_skill_md() + "\nval = os.environ.get('GENESIA_CONFIG')\n"
+    def test_environ_get_vibe_prefix_allowed(self, security):
+        """os.environ.get('VIBE_*') is NOT flagged."""
+        content = _make_skill_md() + "\nval = os.environ.get('VIBE_CONFIG')\n"
         warnings = security.validate_skill_content(content, "env-skill")
         env_warnings = [w for w in warnings if ".get()" in w["description"]]
         assert len(env_warnings) == 0

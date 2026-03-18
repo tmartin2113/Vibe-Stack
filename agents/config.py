@@ -66,7 +66,7 @@ class GenerationConfig:
             "repetition_penalty": 1.1
         },
         # Adapter-specific overrides
-        "genesia": {
+        "vibe": {
             "temperature": 0.4,
             "top_p": 0.9,
             "max_tokens": 600
@@ -120,7 +120,7 @@ class MattermostConfig:
         default_factory=lambda: os.getenv("MATTERMOST_WEBHOOK_URL")
     )
     default_channel: str = "ai-outputs"
-    username: str = "Genesia Multi-Agent System"
+    username: str = "Vibe Multi-Agent System"
 
     # Bot mode (full interactive bot)
     bot_enabled: bool = False
@@ -182,7 +182,7 @@ class CacheConfig:
     max_entries: int = 1000
     default_ttl_seconds: int = 3600  # 1 hour
     min_score_to_cache: int = 70  # Only cache results scoring >= this
-    db_path: Optional[str] = None  # None = ~/.genesia/artifact_cache.db
+    db_path: Optional[str] = None  # None = ~/.vibe/artifact_cache.db
 
 
 @dataclass
@@ -211,7 +211,7 @@ class SpendingConfig:
     cooldown_seconds: int = 300  # 5 minutes
     max_cooldown_seconds: int = 7200  # 2 hours
 
-    # SQLite database path (None = ~/.genesia/spending_ledger.db)
+    # SQLite database path (None = ~/.vibe/spending_ledger.db)
     db_path: Optional[str] = None
 
     # Retention for old cost events
@@ -222,7 +222,7 @@ class SpendingConfig:
 class PaperclipConfig:
     """Paperclip control plane integration configuration.
 
-    When enabled, Genesia runs in heartbeat mode — receiving tasks from
+    When enabled, Vibe runs in heartbeat mode — receiving tasks from
     Paperclip and reporting results back via REST API.  Connection details
     are read from PAPERCLIP_* env vars injected by the Paperclip adapter,
     but can be overridden here.
@@ -230,11 +230,11 @@ class PaperclipConfig:
     enabled: bool = False
     api_url: str = ""           # Override PAPERCLIP_API_URL
     api_key: str = ""           # Override PAPERCLIP_API_KEY
-    task_type: str = ""         # Override GENESIA_TASK_TYPE
+    task_type: str = ""         # Override VIBE_TASK_TYPE
     cost_reporting: bool = True # Report token usage back to Paperclip
     output_format: str = "json" # "json" (for adapter parsing) or "text"
 
-    # Orchestrator settings (for GENESIA_TASK_TYPE=orchestrator)
+    # Orchestrator settings (for VIBE_TASK_TYPE=orchestrator)
     orchestrator_max_children: int = 5    # Max subtasks to fan-out
     orchestrator_retry_failed: bool = True  # Auto-retry blocked children
     orchestrator_max_retries: int = 1     # Max retries per child
@@ -279,21 +279,21 @@ class SystemConfig:
             config.log_level = "DEBUG"
 
         # Spending tracker env overrides
-        if os.getenv("GENESIA_SPEND_ENABLED", "").lower() == "false":
+        if os.getenv("VIBE_SPEND_ENABLED", "").lower() == "false":
             config.spending.enabled = False
         for attr, env_key in [
-            ("window_seconds", "GENESIA_SPEND_WINDOW_SECONDS"),
-            ("max_cents_per_window", "GENESIA_SPEND_MAX_CENTS"),
-            ("max_heartbeats_per_window", "GENESIA_SPEND_MAX_HEARTBEATS"),
-            ("max_consecutive_non_idle", "GENESIA_SPEND_MAX_CONSECUTIVE"),
-            ("cooldown_seconds", "GENESIA_SPEND_COOLDOWN_SECONDS"),
-            ("max_cooldown_seconds", "GENESIA_SPEND_MAX_COOLDOWN_SECONDS"),
-            ("retention_days", "GENESIA_SPEND_RETENTION_DAYS"),
+            ("window_seconds", "VIBE_SPEND_WINDOW_SECONDS"),
+            ("max_cents_per_window", "VIBE_SPEND_MAX_CENTS"),
+            ("max_heartbeats_per_window", "VIBE_SPEND_MAX_HEARTBEATS"),
+            ("max_consecutive_non_idle", "VIBE_SPEND_MAX_CONSECUTIVE"),
+            ("cooldown_seconds", "VIBE_SPEND_COOLDOWN_SECONDS"),
+            ("max_cooldown_seconds", "VIBE_SPEND_MAX_COOLDOWN_SECONDS"),
+            ("retention_days", "VIBE_SPEND_RETENTION_DAYS"),
         ]:
             val = os.getenv(env_key)
             if val:
                 setattr(config.spending, attr, int(val))
-        db_path = os.getenv("GENESIA_SPEND_DB_PATH")
+        db_path = os.getenv("VIBE_SPEND_DB_PATH")
         if db_path:
             config.spending.db_path = db_path
 

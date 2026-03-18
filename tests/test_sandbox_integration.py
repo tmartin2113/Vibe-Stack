@@ -40,7 +40,7 @@ class TestSandboxConfig:
             per_sandbox_memory="1Gi",
             gpu_enabled=True,
             gpu_device_ids=[1, 2],
-            sandbox_image="genesia/sandbox-gpu:latest",
+            sandbox_image="vibe/sandbox-gpu:latest",
         )
         profile = SystemProfile(
             cpu_count=8, cpu_threads=16, cpu_model="test",
@@ -48,7 +48,7 @@ class TestSandboxConfig:
         )
         plan = ResourcePlan(
             vllm=ServiceBudget(cpu_cores=8.0, memory_mb=20000),
-            genesia=ServiceBudget(cpu_cores=2.0, memory_mb=1024),
+            vibe=ServiceBudget(cpu_cores=2.0, memory_mb=1024),
             opensandbox_server=ServiceBudget(cpu_cores=1.0, memory_mb=512),
             sandbox_pool=pool_plan,
             profile=profile,
@@ -61,14 +61,14 @@ class TestSandboxConfig:
         assert config.memory_limit == "1Gi"
         assert config.gpu_enabled is True
         assert config.gpu_device_ids == "1,2"
-        assert config.sandbox_image == "genesia/sandbox-gpu:latest"
+        assert config.sandbox_image == "vibe/sandbox-gpu:latest"
 
     def test_env_overrides(self):
         c = SandboxConfig()
         env = {
-            "GENESIA_SANDBOX_POOL_SIZE": "5",
-            "GENESIA_SANDBOX_GPU": "true",
-            "GENESIA_SANDBOX_GPU_IDS": "2,3",
+            "VIBE_SANDBOX_POOL_SIZE": "5",
+            "VIBE_SANDBOX_GPU": "true",
+            "VIBE_SANDBOX_GPU_IDS": "2,3",
         }
         with patch.dict(os.environ, env, clear=False):
             c.apply_env_overrides()
@@ -81,7 +81,7 @@ class TestSandboxConfig:
     def test_env_overrides_partial(self):
         """Only set env vars override; others keep defaults."""
         c = SandboxConfig()
-        with patch.dict(os.environ, {"GENESIA_SANDBOX_POOL_SIZE": "8"}, clear=False):
+        with patch.dict(os.environ, {"VIBE_SANDBOX_POOL_SIZE": "8"}, clear=False):
             c.apply_env_overrides()
         assert c.pool_size == 8
         assert c.backend == "opensandbox"  # Always opensandbox

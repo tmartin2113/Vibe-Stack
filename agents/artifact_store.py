@@ -75,13 +75,13 @@ class ArtifactStore:
 
         Args:
             db_path: Path to the SQLite database.  Defaults to
-                     ~/.genesia/artifact_cache.db
+                     ~/.vibe/artifact_cache.db
             max_entries: Maximum number of cached entries (LRU eviction).
             default_ttl_seconds: Default time-to-live for entries.
             min_score_to_cache: Minimum critic score required to cache a result.
         """
         if db_path is None:
-            db_path = str(Path.home() / ".genesia" / "artifact_cache.db")
+            db_path = str(Path.home() / ".vibe" / "artifact_cache.db")
 
         self.db_path = db_path
         self.max_entries = max_entries

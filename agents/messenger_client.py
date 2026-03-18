@@ -65,7 +65,7 @@ class MattermostClient:
         Get the bot's username.
 
         Returns:
-            Bot username (e.g., "genesia-bot")
+            Bot username (e.g., "vibe-bot")
 
         Raises:
             Exception if API call fails

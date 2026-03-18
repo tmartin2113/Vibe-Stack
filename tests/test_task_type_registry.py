@@ -7,7 +7,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-os.environ["GENESIA_DISABLE_REMOTE_SKILLS"] = "1"
+os.environ["VIBE_DISABLE_REMOTE_SKILLS"] = "1"
 
 from agents.task_type_registry import (
     BUILTIN_TYPES,
@@ -29,7 +29,7 @@ class TestTaskTypeRegistry:
     def test_register_and_get(self):
         reg = TaskTypeRegistry()
         entry = TaskTypeEntry(
-            name="my_type", description="desc", adapter="genesia",
+            name="my_type", description="desc", adapter="vibe",
             label="my type", source="builtin",
         )
         reg.register(entry)
@@ -45,7 +45,7 @@ class TestTaskTypeRegistry:
         reg = TaskTypeRegistry()
         builtin = TaskTypeEntry(
             name="code_generation", description="builtin desc",
-            adapter="genesia", label="code gen", source="builtin",
+            adapter="vibe", label="code gen", source="builtin",
         )
         skill = TaskTypeEntry(
             name="code_generation", description="skill desc",
@@ -53,14 +53,14 @@ class TestTaskTypeRegistry:
         )
         reg.register(builtin)
         reg.register(skill)
-        assert reg.get("code_generation").adapter == "genesia"
+        assert reg.get("code_generation").adapter == "vibe"
         assert reg.get("code_generation").description == "builtin desc"
 
     def test_skill_can_register_new_type(self):
         reg = TaskTypeRegistry()
         skill = TaskTypeEntry(
             name="ml_pipeline", description="ML workflows",
-            adapter="genesia", label="ML pipeline", source="skill",
+            adapter="vibe", label="ML pipeline", source="skill",
         )
         reg.register(skill)
         assert "ml_pipeline" in reg
@@ -73,11 +73,11 @@ class TestTaskTypeRegistry:
         )
         builtin = TaskTypeEntry(
             name="code_generation", description="builtin desc",
-            adapter="genesia", label="code gen", source="builtin",
+            adapter="vibe", label="code gen", source="builtin",
         )
         reg.register(skill)
         reg.register(builtin)  # builtin should overwrite skill
-        assert reg.get("code_generation").adapter == "genesia"
+        assert reg.get("code_generation").adapter == "vibe"
 
 
 class TestRegistryProjections:
@@ -90,8 +90,8 @@ class TestRegistryProjections:
     def test_adapter_mapping_returns_all(self, registry):
         mapping = registry.adapter_mapping()
         assert mapping["test_generation"] == "test_generator"
-        assert mapping["code_generation"] == "genesia"
-        assert mapping["general"] == "genesia"
+        assert mapping["code_generation"] == "vibe"
+        assert mapping["general"] == "vibe"
 
     def test_task_descriptions_returns_all(self, registry):
         descs = registry.task_descriptions()
@@ -154,7 +154,7 @@ class TestPopulateFromSkillRegistry:
         assert "ml_pipeline" in reg
         assert "infrastructure" in reg
         assert reg.get("ml_pipeline").source == "skill"
-        assert reg.get("ml_pipeline").adapter == "genesia"
+        assert reg.get("ml_pipeline").adapter == "vibe"
 
     def test_skips_existing_builtin_types(self):
         reg = create_default_registry()
@@ -191,7 +191,7 @@ class TestRouterUsesRegistry:
         reg = create_default_registry()
         reg.register(TaskTypeEntry(
             name="custom_type", description="Custom",
-            adapter="genesia", label="custom",
+            adapter="vibe", label="custom",
             patterns=[r"\bcustom"], pattern_weights={r"\bcustom": 2.0},
             source="skill",
         ))
@@ -208,7 +208,7 @@ class TestRouterUsesRegistry:
         reg = create_default_registry()
         reg.register(TaskTypeEntry(
             name="ml_pipeline", description="ML workflows",
-            adapter="genesia", label="ML pipeline",
+            adapter="vibe", label="ML pipeline",
             patterns=[r"\bml.*pipeline", r"\btrain.*model", r"\bfeature.*engineer"],
             pattern_weights={
                 r"\bml.*pipeline": 3.0,
@@ -233,7 +233,7 @@ class TestRouterUsesRegistry:
         reg = create_default_registry()
         reg.register(TaskTypeEntry(
             name="ml_pipeline", description="ML workflows",
-            adapter="genesia", label="ML pipeline",
+            adapter="vibe", label="ML pipeline",
             patterns=[r"\bml.*pipeline", r"\btrain.*model"],
             pattern_weights={r"\bml.*pipeline": 3.0, r"\btrain.*model": 2.5},
             source="skill",

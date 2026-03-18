@@ -2,21 +2,21 @@
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**Goal:** Remove the Genesia prompt enhancement node and intent classifier so the pipeline is purely skill-driven: Router → Skill Loader → Specialist → Critic.
+**Goal:** Remove the Vibe prompt enhancement node and intent classifier so the pipeline is purely skill-driven: Router → Skill Loader → Specialist → Critic.
 
-**Architecture:** Surgical removal of 3 nodes (intent_classifier, genesia, critic_spec) and their graph edges. The specialist receives user_request + skill content directly instead of an "enhanced specification." The skill generator creates ephemeral skills when no match is found, so every execution path always has a skill.
+**Architecture:** Surgical removal of 3 nodes (intent_classifier, vibe, critic_spec) and their graph edges. The specialist receives user_request + skill content directly instead of an "enhanced specification." The skill generator creates ephemeral skills when no match is found, so every execution path always has a skill.
 
 **Tech Stack:** Python, custom workflow state machine (agents/graph.py)
 
 ---
 
-### Task 1: Remove Genesia + Intent Classifier from Graph Wiring
+### Task 1: Remove Vibe + Intent Classifier from Graph Wiring
 
 **Files:**
 - Modify: `agents/graph.py:1-70` (imports)
 - Modify: `agents/graph.py:444-465` (node registrations)
 - Modify: `agents/graph.py:732-789` (edges)
-- Modify: `agents/graph.py:841-855` (sub_genesia edges)
+- Modify: `agents/graph.py:841-855` (sub_vibe edges)
 
 **Step 1: Update imports in graph.py**
 
@@ -63,14 +63,14 @@ from .tools import ToolRegistry, create_default_tool_registry
 from .heuristic_critic import heuristic_evaluate_output
 ```
 
-**Step 2: Remove intent_classifier, genesia, and critic_spec node registrations**
+**Step 2: Remove intent_classifier, vibe, and critic_spec node registrations**
 
 Remove these lines from the node registration section (~lines 446-465):
 
 ```python
 # DELETE these:
 workflow.add_node("intent_classifier", classify_intent)
-workflow.add_node("genesia", nodes.genesia_build_specification)
+workflow.add_node("vibe", nodes.vibe_build_specification)
 # And the critic_spec_wrapper function + its add_node call
 ```
 
@@ -92,35 +92,35 @@ workflow.add_edge("inject_memory", "cache_lookup")
 
 This removes:
 - `tier_route` conditional function
-- `genesia_next` conditional function
+- `vibe_next` conditional function
 - `should_approve_specification` conditional edges
 - The entire complexity_tier routing
 
-**Step 4: Replace sub_genesia with sub_specialist in decomposition path**
+**Step 4: Replace sub_vibe with sub_specialist in decomposition path**
 
-The sub-task decomposition currently goes: `sub_genesia → sub_critic_spec → sub_specialist`.
+The sub-task decomposition currently goes: `sub_vibe → sub_critic_spec → sub_specialist`.
 Replace with: direct to `sub_specialist` (skip sub-spec building).
 
 ```python
 # BEFORE (lines 807, 843-855):
-# "decompose": "sub_genesia"
-# workflow.add_edge("sub_genesia", "sub_critic_spec")
+# "decompose": "sub_vibe"
+# workflow.add_edge("sub_vibe", "sub_critic_spec")
 # workflow.add_conditional_edges("sub_critic_spec", should_approve_sub_specification, {...})
 
 # AFTER:
 # "decompose": "sub_specialist"
-# (delete sub_genesia edge, delete sub_critic_spec conditional edges)
+# (delete sub_vibe edge, delete sub_critic_spec conditional edges)
 ```
 
-In `cache_hit_or_miss`, change `"decompose"` target from `"sub_genesia"` to `"sub_specialist"`.
+In `cache_hit_or_miss`, change `"decompose"` target from `"sub_vibe"` to `"sub_specialist"`.
 
-Update `sub_output_and_more_check` to route `"next_subtask"` to `"sub_specialist"` instead of `"sub_genesia"`.
+Update `sub_output_and_more_check` to route `"next_subtask"` to `"sub_specialist"` instead of `"sub_vibe"`.
 
-**Step 5: Remove sub_genesia and sub_critic_spec node registrations**
+**Step 5: Remove sub_vibe and sub_critic_spec node registrations**
 
 ```python
 # DELETE:
-workflow.add_node("sub_genesia", nodes.genesia_build_sub_specification)
+workflow.add_node("sub_vibe", nodes.vibe_build_sub_specification)
 # DELETE the sub_critic_spec_wrapper function + its add_node call
 ```
 
@@ -155,7 +155,7 @@ Expected: Some test failures in test_integration.py and test_complexity_triage.p
 
 ```bash
 git add agents/graph.py
-git commit -m "refactor: remove genesia + intent classifier from workflow graph
+git commit -m "refactor: remove vibe + intent classifier from workflow graph
 
 Skill-only pipeline: START → Router → Skill Generator → Skill Loader → Specialist → Critic.
 The specialist receives user_request + skill content directly."
@@ -163,26 +163,26 @@ The specialist receives user_request + skill content directly."
 
 ---
 
-### Task 2: Remove Genesia Methods from AgentNodes
+### Task 2: Remove Vibe Methods from AgentNodes
 
 **Files:**
-- Modify: `agents/nodes.py:135-287` (classify_task, genesia_build_specification, etc.)
+- Modify: `agents/nodes.py:135-287` (classify_task, vibe_build_specification, etc.)
 
 **Step 1: Remove classify_task method**
 
 Delete the `classify_task` method (lines 137-180) from the `AgentNodes` class.
 
-**Step 2: Remove genesia_build_specification method**
+**Step 2: Remove vibe_build_specification method**
 
-Delete the `genesia_build_specification` method (lines 184-256).
+Delete the `vibe_build_specification` method (lines 184-256).
 
-**Step 3: Remove _parse_genesia_output method**
+**Step 3: Remove _parse_vibe_output method**
 
-Delete the `_parse_genesia_output` method (lines 258-286).
+Delete the `_parse_vibe_output` method (lines 258-286).
 
-**Step 4: Remove genesia_build_sub_specification method**
+**Step 4: Remove vibe_build_sub_specification method**
 
-Delete the `genesia_build_sub_specification` method (lines 325-410).
+Delete the `vibe_build_sub_specification` method (lines 325-410).
 
 **Step 5: Remove execute_task method (legacy)**
 
@@ -197,10 +197,10 @@ Expected: Tests that call removed methods will fail — these are fixed in Task 
 
 ```bash
 git add agents/nodes.py
-git commit -m "refactor: remove genesia node methods from AgentNodes
+git commit -m "refactor: remove vibe node methods from AgentNodes
 
-Removed: classify_task, genesia_build_specification,
-genesia_build_sub_specification, _parse_genesia_output, execute_task"
+Removed: classify_task, vibe_build_specification,
+vibe_build_sub_specification, _parse_vibe_output, execute_task"
 ```
 
 ---
@@ -277,13 +277,13 @@ Removed complexity_tier branching. Single prompt path for all tasks."
 ### Task 4: Clean Up Adapters and State
 
 **Files:**
-- Modify: `agents/adapters.py:191-204` (GENESIA_SYSTEM_PROMPT)
-- Modify: `agents/state.py:39-43, 289` (spec-critic state fields, genesia context)
+- Modify: `agents/adapters.py:191-204` (VIBE_SYSTEM_PROMPT)
+- Modify: `agents/state.py:39-43, 289` (spec-critic state fields, vibe context)
 - Modify: `agents/decision_functions.py:48-102, 359-372` (should_approve_specification, should_generate_code)
 
-**Step 1: Remove GENESIA_SYSTEM_PROMPT from adapters.py**
+**Step 1: Remove VIBE_SYSTEM_PROMPT from adapters.py**
 
-Delete lines 191-204 (the `GENESIA_SYSTEM_PROMPT` constant).
+Delete lines 191-204 (the `VIBE_SYSTEM_PROMPT` constant).
 
 **Step 2: Remove should_approve_specification and should_generate_code**
 
@@ -320,7 +320,7 @@ Update `__all__` to remove the deleted names.
 **Step 4: Clean up state.py**
 
 In `agents/state.py`:
-- Remove `get_context_for_node("genesia")` branch (lines 289-293)
+- Remove `get_context_for_node("vibe")` branch (lines 289-293)
 - The spec-critic fields (`spec_critic_score`, `spec_critic_feedback`, etc.) can stay in the TypedDict for now — they're optional (total=False) and won't cause issues. Removing them risks breaking serialization in heartbeat/session store.
 
 **Step 5: Run tests**
@@ -331,7 +331,7 @@ Run: `python -m pytest tests/ -x --tb=short 2>&1 | head -60`
 
 ```bash
 git add agents/adapters.py agents/decision_functions.py agents/nodes.py agents/state.py
-git commit -m "refactor: remove GENESIA_SYSTEM_PROMPT, spec approval functions, genesia context"
+git commit -m "refactor: remove VIBE_SYSTEM_PROMPT, spec approval functions, vibe context"
 ```
 
 ---
@@ -360,13 +360,13 @@ Remove tests for deleted functionality:
 - `test_classify_task_creative` (line ~632)
 - `test_classify_task_research` (line ~639)
 - `test_classify_task_general` (line ~646)
-- `test genesia_build_specification populates specification` (line ~654)
+- `test vibe_build_specification populates specification` (line ~654)
 
 Remove imports: `should_approve_specification`, `should_generate_code`, `classify_intent`.
 
 **Step 3: Fix test_parallel_subtasks.py**
 
-Line ~114 mocks `nodes.genesia_build_sub_specification`. Update the parallel test to skip sub_genesia (sub-tasks go directly to sub_specialist now).
+Line ~114 mocks `nodes.vibe_build_sub_specification`. Update the parallel test to skip sub_vibe (sub-tasks go directly to sub_specialist now).
 
 **Step 4: Handle test_complexity_triage.py**
 
@@ -383,8 +383,8 @@ Expected: All tests pass.
 git add tests/
 git commit -m "test: update tests for skill-only pipeline refactor
 
-Removed tests for deleted genesia/intent-classifier/spec-approval functions.
-Updated parallel subtask mocks to skip sub_genesia."
+Removed tests for deleted vibe/intent-classifier/spec-approval functions.
+Updated parallel subtask mocks to skip sub_vibe."
 ```
 
 ---
@@ -392,21 +392,21 @@ Updated parallel subtask mocks to skip sub_genesia."
 ### Task 6: Update Heartbeat + Workflow Factory References
 
 **Files:**
-- Modify: `agents/heartbeat.py` (if it references genesia/spec-building)
-- Modify: `agents/workflow_factory.py` (if it registers genesia adapter)
-- Modify: `agents/main.py` (if it references genesia)
+- Modify: `agents/heartbeat.py` (if it references vibe/spec-building)
+- Modify: `agents/workflow_factory.py` (if it registers vibe adapter)
+- Modify: `agents/main.py` (if it references vibe)
 
-**Step 1: Check heartbeat.py for genesia references**
+**Step 1: Check heartbeat.py for vibe references**
 
-Search for `genesia`, `specification`, `complexity_tier`, `intent` in heartbeat.py. Update any references to the removed flow.
+Search for `vibe`, `specification`, `complexity_tier`, `intent` in heartbeat.py. Update any references to the removed flow.
 
 **Step 2: Check workflow_factory.py**
 
-The factory creates adapter registrations. If it registers a "genesia" adapter, keep it — the adapter name is still used as a fallback in `AdapterRegistry.get_or_create`. But remove any genesia-specific system prompt usage.
+The factory creates adapter registrations. If it registers a "vibe" adapter, keep it — the adapter name is still used as a fallback in `AdapterRegistry.get_or_create`. But remove any vibe-specific system prompt usage.
 
 **Step 3: Check main.py**
 
-Line ~258 may reference genesia. Update interactive mode to use the new pipeline.
+Line ~258 may reference vibe. Update interactive mode to use the new pipeline.
 
 **Step 4: Run full test suite**
 
@@ -437,7 +437,7 @@ Expected: Health checks pass.
 **Step 3: Verify graph structure**
 
 Run: `python -c "from agents.graph import print_graph_structure; print_graph_structure()"`
-Expected: Shows new flow without genesia/intent_classifier.
+Expected: Shows new flow without vibe/intent_classifier.
 
 **Step 4: Final commit if any fixups needed**
 

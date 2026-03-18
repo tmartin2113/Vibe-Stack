@@ -14,7 +14,7 @@ import {
   ensureCommandResolvable,
   ensurePathInEnv,
 } from "@paperclipai/adapter-utils/server-utils";
-import { parseGenesiaOutput } from "./parse.js";
+import { parseVibeOutput } from "./parse.js";
 import {
   notifyClarificationViaSlack,
   type SlackNotifyResult,
@@ -73,7 +73,7 @@ async function _executeInner(
   if (wakeTaskId) env.PAPERCLIP_TASK_ID = wakeTaskId;
   if (wakeReason) env.PAPERCLIP_WAKE_REASON = wakeReason;
   if (wakeCommentId) env.PAPERCLIP_WAKE_COMMENT_ID = wakeCommentId;
-  if (taskType) env.GENESIA_TASK_TYPE = taskType;
+  if (taskType) env.VIBE_TASK_TYPE = taskType;
 
   // User-provided env overrides (last, so they win)
   for (const [key, value] of Object.entries(envConfig)) {
@@ -93,7 +93,7 @@ async function _executeInner(
 
   if (onMeta) {
     await onMeta({
-      adapterType: "genesia_local",
+      adapterType: "vibe_local",
       command,
       cwd,
       commandArgs: args,
@@ -114,18 +114,18 @@ async function _executeInner(
       exitCode: proc.exitCode,
       signal: proc.signal,
       timedOut: true,
-      errorMessage: `Genesia timed out after ${timeoutSec}s`,
+      errorMessage: `Vibe timed out after ${timeoutSec}s`,
     };
   }
 
-  const parsed = parseGenesiaOutput(proc.stdout);
+  const parsed = parseVibeOutput(proc.stdout);
 
   if ((proc.exitCode ?? 0) !== 0 && !parsed.resultJson) {
     return {
       exitCode: proc.exitCode,
       signal: proc.signal,
       timedOut: false,
-      errorMessage: `Genesia exited with code ${proc.exitCode ?? -1}`,
+      errorMessage: `Vibe exited with code ${proc.exitCode ?? -1}`,
       resultJson: { stdout: proc.stdout, stderr: proc.stderr },
     };
   }
@@ -140,15 +140,15 @@ async function _executeInner(
   if (parsed.clarification && parsed.clarification.questions.length > 0) {
     const slackToken =
       asString(config.slackBotToken, "") ||
-      process.env.GENESIA_SLACK_BOT_TOKEN ||
+      process.env.VIBE_SLACK_BOT_TOKEN ||
       "";
     const slackUserId =
       asString(config.slackNotifyUserId, "") ||
-      process.env.GENESIA_SLACK_NOTIFY_USER_ID ||
+      process.env.VIBE_SLACK_NOTIFY_USER_ID ||
       "";
     const slackBotUserId =
       asString(config.slackBotUserId, "") ||
-      process.env.GENESIA_SLACK_BOT_USER_ID ||
+      process.env.VIBE_SLACK_BOT_USER_ID ||
       "";
     const issueBaseUrl = asString(config.paperclipIssueBaseUrl, "");
     const issueId = asString(resultJson.issue_id, wakeTaskId);
@@ -206,13 +206,13 @@ async function _executeInner(
     }
   }
 
-  // Map Genesia heartbeat status to adapter-level exit code and error message
+  // Map Vibe heartbeat status to adapter-level exit code and error message
   // so Paperclip can distinguish idle/blocked/clarification from true success.
-  const genesiaStatus = String(resultJson.status ?? "");
+  const vibeStatus = String(resultJson.status ?? "");
   let effectiveExitCode = proc.exitCode ?? 0;
   let effectiveErrorMessage: string | null = null;
 
-  switch (genesiaStatus) {
+  switch (vibeStatus) {
     case "success":
       effectiveExitCode = 0;
       effectiveErrorMessage = null;
@@ -243,12 +243,12 @@ async function _executeInner(
       break;
     case "failed":
       effectiveExitCode = 1;
-      effectiveErrorMessage = `Genesia failed: ${parsed.summary || "unknown error"}`;
+      effectiveErrorMessage = `Vibe failed: ${parsed.summary || "unknown error"}`;
       break;
     default:
       // Unknown or missing status — fall back to process exit code
       if (effectiveExitCode !== 0) {
-        effectiveErrorMessage = `Genesia exited with code ${effectiveExitCode}`;
+        effectiveErrorMessage = `Vibe exited with code ${effectiveExitCode}`;
       }
       break;
   }

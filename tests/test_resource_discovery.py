@@ -184,9 +184,11 @@ Cached:         12345678 kB
         assert available == 20000000 // 1024  # ~19 GB
 
     def test_file_not_found_fallback(self):
+        # /proc/meminfo open fails → psutil fallback fails → hardcoded defaults
         with patch("builtins.open", side_effect=FileNotFoundError):
-            total, available = _discover_ram()
-        # Should return some default (either from psutil or hardcoded)
+            with patch.dict("sys.modules", {"psutil": None}):
+                total, available = _discover_ram()
+        # Should return hardcoded defaults (4096, 2048)
         assert total > 0
         assert available > 0
 

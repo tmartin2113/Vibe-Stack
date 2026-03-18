@@ -57,6 +57,10 @@ from agents.tools.dev_tools import (
 )
 from agents.tools.seo_tools import SEOChecklistTool, SEOIssue
 
+# Resolve project root from this file's location so tests work both
+# inside the Docker container (/home/user/Vibe) and on dev machines.
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
 
 # ============================================================
 # ToolResult
@@ -148,7 +152,10 @@ class TestToolBase:
 
 class TestValidateFilePath:
     def test_allowed_path_project(self):
-        ok, err = _validate_file_path("/home/user/Genesia/agents/nodes.py")
+        ok, err = _validate_file_path(
+            str(_PROJECT_ROOT / "agents" / "nodes.py"),
+            allowed_dirs=[_PROJECT_ROOT],
+        )
         assert ok is True
         assert err is None
 
@@ -167,8 +174,11 @@ class TestValidateFilePath:
         assert ok is False
 
     def test_relative_path_resolves(self):
-        """Relative paths resolve against cwd which is /home/user/Genesia — allowed."""
-        ok, err = _validate_file_path("agents/tools/registry.py")
+        """Relative paths resolve against cwd — allowed when cwd is in allowed_dirs."""
+        ok, err = _validate_file_path(
+            "agents/tools/registry.py",
+            allowed_dirs=[_PROJECT_ROOT],
+        )
         assert ok is True
 
 
@@ -184,7 +194,7 @@ class TestConfigurableFileDirs:
 
     def test_custom_dirs_block_old_defaults(self, tmp_path):
         custom = [Path(str(tmp_path)).resolve()]
-        ok, err = _validate_file_path("/home/user/Genesia/agents/nodes.py", allowed_dirs=custom)
+        ok, err = _validate_file_path(str(_PROJECT_ROOT / "agents" / "nodes.py"), allowed_dirs=custom)
         assert ok is False
         assert "outside allowed" in err.lower()
 
@@ -194,7 +204,7 @@ class TestConfigurableFileDirs:
         assert Path("/opt/data").resolve() in dirs
 
     def test_build_falls_back_to_env(self):
-        with patch.dict(os.environ, {"GENESIA_ALLOWED_FILE_DIRS": "/srv/data:/opt/models"}):
+        with patch.dict(os.environ, {"VIBE_ALLOWED_FILE_DIRS": "/srv/data:/opt/models"}):
             dirs = _build_allowed_file_dirs(None)
         assert Path("/srv/data").resolve() in dirs
         assert Path("/opt/models").resolve() in dirs
@@ -250,7 +260,7 @@ class TestConfigurableFileDirs:
     def test_sandbox_config_env_override(self):
         from agents.sandbox.config import SandboxConfig
         cfg = SandboxConfig()
-        with patch.dict(os.environ, {"GENESIA_ALLOWED_FILE_DIRS": "/opt/data:/srv/files"}):
+        with patch.dict(os.environ, {"VIBE_ALLOWED_FILE_DIRS": "/opt/data:/srv/files"}):
             cfg.apply_env_overrides()
         assert cfg.allowed_file_dirs == "/opt/data:/srv/files"
         dirs = cfg.allowed_file_dir_list
@@ -366,7 +376,7 @@ class TestBanditScanner:
 
     def test_severity_mapping(self):
         """Verify severity flag mapping works."""
-        scanner = BanditScanner()
+        scanner = BanditScanner(allowed_dirs=[_PROJECT_ROOT])
         # We test the internal mapping by checking the execute path
         # with a mocked subprocess
         with patch("agents.tools.registry.subprocess.run") as mock_run:
@@ -376,7 +386,7 @@ class TestBanditScanner:
                 stderr="",
             )
             result = scanner.execute(
-                target="/home/user/Genesia/agents/__init__.py",
+                target=str(_PROJECT_ROOT / "agents" / "__init__.py"),
                 severity_level="high",
             )
             # high severity means no flag appended (empty string)
@@ -392,9 +402,9 @@ class TestBanditScanner:
 
 class TestFileReader:
     def test_read_existing_file(self):
-        reader = FileReader()
+        reader = FileReader(allowed_dirs=[_PROJECT_ROOT])
         # Read a known file in the project
-        result = reader.execute(file_path="/home/user/Genesia/agents/tools/__init__.py")
+        result = reader.execute(file_path=str(_PROJECT_ROOT / "agents" / "tools" / "__init__.py"))
         assert result.success is True
         assert "ToolRegistry" in result.output
         assert result.metadata["lines"] > 0
@@ -412,19 +422,20 @@ class TestFileReader:
         assert "not found" in result.error.lower()
 
     def test_directory_not_file(self):
-        reader = FileReader()
-        result = reader.execute(file_path="/home/user/Genesia/agents")
+        reader = FileReader(allowed_dirs=[_PROJECT_ROOT])
+        result = reader.execute(file_path=str(_PROJECT_ROOT / "agents"))
         assert result.success is False
         assert "not a file" in result.error.lower()
 
     def test_file_too_large(self):
-        reader = FileReader()
+        reader = FileReader(allowed_dirs=[_PROJECT_ROOT])
         with patch("agents.tools.registry.Path.stat") as mock_stat:
             mock_stat.return_value = MagicMock(st_size=MAX_FILE_READ_SIZE + 1)
             with patch("agents.tools.registry.Path.exists", return_value=True):
                 with patch("agents.tools.registry.Path.is_file", return_value=True):
-                    with patch("agents.tools.registry.Path.resolve", return_value=Path("/home/user/Genesia/big.bin")):
-                        result = reader.execute(file_path="/home/user/Genesia/big.bin")
+                    big_path = str(_PROJECT_ROOT / "big.bin")
+                    with patch("agents.tools.registry.Path.resolve", return_value=Path(big_path)):
+                        result = reader.execute(file_path=big_path)
                         assert result.success is False
                         assert "too large" in result.error.lower()
 
@@ -671,7 +682,7 @@ class TestStaticCodeAnalyzer:
             return_value={"ruff": False, "pylint": False, "mypy": False, "pyflakes": False, "eslint": False},
         ):
             # Use a real existing path
-            result = analyzer.execute("/home/user/Genesia/agents/__init__.py")
+            result = analyzer.execute(str(_PROJECT_ROOT / "agents" / "__init__.py"))
             assert result["success"] is False
             assert "No analysis tools available" in result["error"]
 
@@ -682,10 +693,12 @@ class TestStaticCodeAnalyzer:
 
 
 class TestCodebaseSearchTool:
+    _tools_path = str(_PROJECT_ROOT / "agents" / "tools")
+
     def test_auto_detect_class(self):
         """CamelCase query should auto-detect as class search."""
         search = CodebaseSearchTool()
-        result = search.execute("ToolRegistry", path="/home/user/Genesia/agents/tools", max_results=5)
+        result = search.execute("ToolRegistry", path=self._tools_path, max_results=5)
         assert result["success"] is True
         assert result["search_type"] == "class"
         assert result["results_found"] >= 1
@@ -696,14 +709,14 @@ class TestCodebaseSearchTool:
     def test_auto_detect_function(self):
         """snake_case query should auto-detect as function search."""
         search = CodebaseSearchTool()
-        result = search.execute("create_default_tool_registry", path="/home/user/Genesia/agents/tools", max_results=5)
+        result = search.execute("create_default_tool_registry", path=self._tools_path, max_results=5)
         assert result["success"] is True
         assert result["search_type"] == "function"
         assert result["results_found"] >= 1
 
     def test_text_search(self):
         search = CodebaseSearchTool()
-        result = search.execute("ALLOWED_FILE_DIRS", path="/home/user/Genesia/agents/tools", search_type="text", max_results=5)
+        result = search.execute("ALLOWED_FILE_DIRS", path=self._tools_path, search_type="text", max_results=5)
         assert result["success"] is True
         assert result["results_found"] >= 1
 
@@ -714,13 +727,13 @@ class TestCodebaseSearchTool:
 
     def test_no_results(self):
         search = CodebaseSearchTool()
-        result = search.execute("zzz_nonexistent_symbol_xyz", path="/home/user/Genesia/agents/tools", max_results=5)
+        result = search.execute("zzz_nonexistent_symbol_xyz", path=self._tools_path, max_results=5)
         assert result["success"] is True
         assert result["results_found"] == 0
 
     def test_explicit_function_search(self):
         search = CodebaseSearchTool()
-        result = search.execute("execute", path="/home/user/Genesia/agents/tools", search_type="function", max_results=5)
+        result = search.execute("execute", path=self._tools_path, search_type="function", max_results=5)
         assert result["success"] is True
         assert result["search_type"] == "function"
         # "execute" is defined in many tool classes
@@ -733,23 +746,25 @@ class TestCodebaseSearchTool:
 
 
 class TestGitOperationsTool:
+    _root = str(_PROJECT_ROOT)
+
     def test_status(self):
         git_tool = GitOperationsTool()
-        result = git_tool.execute("status", path="/home/user/Genesia")
+        result = git_tool.execute("status", path=self._root)
         assert result["success"] is True
         assert "modified" in result
         assert "untracked" in result
 
     def test_branches(self):
         git_tool = GitOperationsTool()
-        result = git_tool.execute("branches", path="/home/user/Genesia")
+        result = git_tool.execute("branches", path=self._root)
         assert result["success"] is True
         assert result["current_branch"] is not None
         assert len(result["branches"]) >= 1
 
     def test_history(self):
         git_tool = GitOperationsTool()
-        result = git_tool.execute("history", path="/home/user/Genesia", max_commits=3)
+        result = git_tool.execute("history", path=self._root, max_commits=3)
         assert result["success"] is True
         assert len(result["commits"]) <= 3
         if result["commits"]:
@@ -765,7 +780,7 @@ class TestGitOperationsTool:
 
     def test_diff(self):
         git_tool = GitOperationsTool()
-        result = git_tool.execute("diff", path="/home/user/Genesia")
+        result = git_tool.execute("diff", path=self._root)
         assert result["success"] is True
         assert "has_changes" in result
 
@@ -1047,10 +1062,13 @@ class TestRegistryIntegration:
         assert "4" in result.output
 
     def test_execute_file_reader_via_registry(self):
-        reg = create_default_tool_registry(sandbox_pool=MagicMock())
+        reg = create_default_tool_registry(
+            sandbox_pool=MagicMock(),
+            allowed_file_dirs=[str(_PROJECT_ROOT)],
+        )
         result = reg.execute_tool(
             "file_reader",
-            file_path="/home/user/Genesia/agents/tools/__init__.py",
+            file_path=str(_PROJECT_ROOT / "agents" / "tools" / "__init__.py"),
         )
         assert result.success is True
         assert "ToolRegistry" in result.output
@@ -1314,7 +1332,7 @@ class TestSpecialistToolEnablement:
         expected = {
             "test_generator", "security_auditor", "data_specialist",
             "database_specialist", "code_reviewer",
-            "genesia", "code", "api_generator", "performance_optimizer",
+            "vibe", "code", "api_generator", "performance_optimizer",
             "debugging_assistant", "doc_generator", "general",
         }
         # Parse the full module file to find all tool_enabled_specialists sets

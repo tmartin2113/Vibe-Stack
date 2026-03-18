@@ -91,14 +91,14 @@ class SkillRegistry:
     TEMP_SKILL_TTL_DAYS = 7        # Ephemeral skills kept 7 days after last use
     OFFICIAL_SKILL_TTL_DAYS = 30   # Cached GitHub skills evicted after 30 days unused
 
-    def __init__(self, genesia_skills_dir: str = "genesia_skills",
+    def __init__(self, vibe_skills_dir: str = "vibe_skills",
                  security: Optional[SkillSecurity] = None,
                  skills_config: Optional[SkillsConfig] = None):
         """
         Initialize the skill registry.
 
         Args:
-            genesia_skills_dir: Root directory for skill tiers.
+            vibe_skills_dir: Root directory for skill tiers.
             security: Optional SkillSecurity instance.  When provided,
                 all skill registration, loading, downloading, and
                 promotion operations are gated through security checks.
@@ -107,7 +107,7 @@ class SkillRegistry:
                 Defaults to the locked-down 3-source configuration.
         """
         # Bug #5 fix: Resolve to absolute path to handle working directory changes
-        self.base_dir = Path(genesia_skills_dir).resolve()
+        self.base_dir = Path(vibe_skills_dir).resolve()
         self.official_dir = self.base_dir / "official"
         self.local_dir = self.base_dir / "local"
         self.temp_dir = self.base_dir / "temp"
@@ -146,7 +146,7 @@ class SkillRegistry:
         # Allow disabling remote lookups (e.g. in tests or offline mode)
         self._enable_remote = (
             self._skills_config.enable_remote
-            and os.environ.get("GENESIA_DISABLE_REMOTE_SKILLS", "").lower()
+            and os.environ.get("VIBE_DISABLE_REMOTE_SKILLS", "").lower()
                 not in ("1", "true", "yes")
         )
 
@@ -952,7 +952,7 @@ class SkillRegistry:
 
     def _github_headers(self) -> Dict[str, str]:
         """Build HTTP headers for GitHub API requests, including auth token."""
-        headers = {"User-Agent": "genesia-skill-registry/1.0"}
+        headers = {"User-Agent": "vibe-skill-registry/1.0"}
         token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
         if token:
             headers["Authorization"] = f"token {token}"

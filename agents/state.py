@@ -36,9 +36,9 @@ class AgentState(TypedDict, total=False):
     iteration_count: int  # Current iteration number (starts at 0)
     max_iterations: int  # Maximum allowed iterations (default: 3)
 
-    # ===== GENESIA NODE OUTPUT (Specification Builder) =====
+    # ===== VIBE NODE OUTPUT (Specification Builder) =====
     specification: str  # Detailed specification/prompt for specialist
-    clarification_needed: bool  # Does Genesia need more info from user?
+    clarification_needed: bool  # Does Vibe need more info from user?
     clarification_questions: List[str]  # Questions to ask user
 
     # ===== CRITIC STAGE 1 (Specification Validation) =====

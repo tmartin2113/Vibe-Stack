@@ -1,4 +1,4 @@
-# Core dependencies for the genesia library.
+# Core dependencies for the vibe library.
 # For reproducible installs, use the lock file instead:
 #   pip install -r requirements-production.lock
 #

@@ -13,8 +13,8 @@ import time
 import pytest
 from unittest.mock import patch, MagicMock, PropertyMock
 
-from genesia.backends.base import BackendBase
-from genesia.backends.vllm import VLLMBackend
+from vibe.backends.base import BackendBase
+from vibe.backends.vllm import VLLMBackend
 from agents.llm_backend import LLMBackend, create_backend_from_config
 
 
@@ -131,20 +131,20 @@ class TestVLLMBackendInit:
 
 class TestVLLMBackendHealthCheck:
 
-    @patch("genesia.backends.vllm.requests.get")
+    @patch("vibe.backends.vllm.requests.get")
     def test_health_check_success(self, mock_get):
         mock_get.return_value = _mock_response(200)
         backend = VLLMBackend(host="localhost", port=8000)
         assert backend.health_check() is True
 
-    @patch("genesia.backends.vllm.requests.get")
+    @patch("vibe.backends.vllm.requests.get")
     def test_health_check_failure_non_200(self, mock_get):
         mock_get.return_value = _mock_response(503)
         backend = VLLMBackend(host="localhost", port=8000)
         # Should fall back to /v1/models
         assert backend.health_check() is False
 
-    @patch("genesia.backends.vllm.requests.get")
+    @patch("vibe.backends.vllm.requests.get")
     def test_health_check_fallback_to_models_on_exception(self, mock_get):
         """When /health raises exception, should fall back to /v1/models."""
         mock_get.side_effect = [
@@ -154,7 +154,7 @@ class TestVLLMBackendHealthCheck:
         backend = VLLMBackend(host="localhost", port=8000)
         assert backend.health_check() is True
 
-    @patch("genesia.backends.vllm.requests.get")
+    @patch("vibe.backends.vllm.requests.get")
     def test_health_check_connection_error(self, mock_get):
         mock_get.side_effect = ConnectionError("Connection refused")
         backend = VLLMBackend(host="localhost", port=8000)
@@ -163,7 +163,7 @@ class TestVLLMBackendHealthCheck:
 
 class TestVLLMBackendGenerate:
 
-    @patch("genesia.backends.vllm.requests.post")
+    @patch("vibe.backends.vllm.requests.post")
     def test_generate_success(self, mock_post):
         mock_post.return_value = _mock_response(200, {
             "choices": [{"text": "Hello world", "finish_reason": "stop"}],
@@ -177,7 +177,7 @@ class TestVLLMBackendGenerate:
         assert result["finish_reason"] == "stop"
         assert "time_ms" in result
 
-    @patch("genesia.backends.vllm.requests.post")
+    @patch("vibe.backends.vllm.requests.post")
     def test_generate_sends_to_completions_endpoint(self, mock_post):
         mock_post.return_value = _mock_response(200, {
             "choices": [{"text": "response", "finish_reason": "stop"}],
@@ -190,7 +190,7 @@ class TestVLLMBackendGenerate:
         url = call_args[0][0] if call_args[0] else call_args[1].get("url", "")
         assert "/v1/completions" in str(url)
 
-    @patch("genesia.backends.vllm.requests.post")
+    @patch("vibe.backends.vllm.requests.post")
     def test_generate_includes_model_in_payload(self, mock_post):
         mock_post.return_value = _mock_response(200, {
             "choices": [{"text": "ok", "finish_reason": "stop"}],
@@ -202,7 +202,7 @@ class TestVLLMBackendGenerate:
         call_body = mock_post.call_args[1].get("json")
         assert call_body["model"] == "qwen2.5"
 
-    @patch("genesia.backends.vllm.requests.post")
+    @patch("vibe.backends.vllm.requests.post")
     def test_generate_no_repetition_penalty(self, mock_post):
         """generate() should not send repetition_penalty (only presence + frequency)."""
         mock_post.return_value = _mock_response(200, {
@@ -217,7 +217,7 @@ class TestVLLMBackendGenerate:
         assert "presence_penalty" in call_body
         assert "frequency_penalty" in call_body
 
-    @patch("genesia.backends.vllm.requests.post")
+    @patch("vibe.backends.vllm.requests.post")
     def test_generate_custom_params(self, mock_post):
         mock_post.return_value = _mock_response(200, {
             "choices": [{"text": "result", "finish_reason": "length"}],
@@ -231,14 +231,14 @@ class TestVLLMBackendGenerate:
         assert call_body["temperature"] == 0.2
         assert call_body["stop"] == ["END"]
 
-    @patch("genesia.backends.vllm.requests.post")
+    @patch("vibe.backends.vllm.requests.post")
     def test_generate_empty_response_raises(self, mock_post):
         mock_post.return_value = _mock_response(200, {"choices": []})
         backend = VLLMBackend(host="localhost", port=8000)
         with pytest.raises(RuntimeError, match="Empty response"):
             backend.generate("prompt")
 
-    @patch("genesia.backends.vllm.requests.post")
+    @patch("vibe.backends.vllm.requests.post")
     def test_generate_empty_text_raises(self, mock_post):
         mock_post.return_value = _mock_response(200, {
             "choices": [{"text": "", "finish_reason": "stop"}]
@@ -247,7 +247,7 @@ class TestVLLMBackendGenerate:
         with pytest.raises(RuntimeError, match="Empty text"):
             backend.generate("prompt")
 
-    @patch("genesia.backends.vllm.requests.post")
+    @patch("vibe.backends.vllm.requests.post")
     def test_generate_timeout_raises(self, mock_post):
         import requests
         mock_post.side_effect = requests.exceptions.Timeout("timed out")
@@ -255,7 +255,7 @@ class TestVLLMBackendGenerate:
         with pytest.raises(TimeoutError):
             backend.generate("prompt")
 
-    @patch("genesia.backends.vllm.requests.post")
+    @patch("vibe.backends.vllm.requests.post")
     def test_generate_api_error_raises_runtime(self, mock_post):
         mock_post.return_value = _mock_response(500)
         mock_post.return_value.raise_for_status.side_effect = Exception("500 Server Error")
@@ -266,7 +266,7 @@ class TestVLLMBackendGenerate:
 
 class TestVLLMBackendGenerateChat:
 
-    @patch("genesia.backends.vllm.requests.post")
+    @patch("vibe.backends.vllm.requests.post")
     def test_generate_chat_success(self, mock_post):
         mock_post.return_value = _mock_response(200, {
             "choices": [{"message": {"content": "Chat response"}, "finish_reason": "stop"}],
@@ -280,7 +280,7 @@ class TestVLLMBackendGenerateChat:
         assert result["finish_reason"] == "stop"
         assert "time_ms" in result
 
-    @patch("genesia.backends.vllm.requests.post")
+    @patch("vibe.backends.vllm.requests.post")
     def test_generate_chat_sends_to_chat_endpoint(self, mock_post):
         mock_post.return_value = _mock_response(200, {
             "choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}],
@@ -292,7 +292,7 @@ class TestVLLMBackendGenerateChat:
         url = mock_post.call_args[0][0] if mock_post.call_args[0] else ""
         assert "/v1/chat/completions" in str(url)
 
-    @patch("genesia.backends.vllm.requests.post")
+    @patch("vibe.backends.vllm.requests.post")
     def test_generate_chat_preserves_system_message(self, mock_post):
         """System messages should be passed through to vLLM for chat template application."""
         mock_post.return_value = _mock_response(200, {
@@ -311,7 +311,7 @@ class TestVLLMBackendGenerateChat:
         assert any(m["role"] == "system" for m in sent_messages)
         assert sent_messages[0]["content"] == "You are a code reviewer."
 
-    @patch("genesia.backends.vllm.requests.post")
+    @patch("vibe.backends.vllm.requests.post")
     def test_generate_chat_multi_turn(self, mock_post):
         mock_post.return_value = _mock_response(200, {
             "choices": [{"message": {"content": "Sure, here's the fix"}, "finish_reason": "stop"}],
@@ -330,7 +330,7 @@ class TestVLLMBackendGenerateChat:
         assert len(call_body["messages"]) == 4
         assert result["text"] == "Sure, here's the fix"
 
-    @patch("genesia.backends.vllm.requests.post")
+    @patch("vibe.backends.vllm.requests.post")
     def test_generate_chat_includes_model(self, mock_post):
         mock_post.return_value = _mock_response(200, {
             "choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}],
@@ -342,7 +342,7 @@ class TestVLLMBackendGenerateChat:
         call_body = mock_post.call_args[1].get("json")
         assert call_body["model"] == "my-model"
 
-    @patch("genesia.backends.vllm.requests.post")
+    @patch("vibe.backends.vllm.requests.post")
     def test_generate_chat_no_repetition_penalty(self, mock_post):
         """generate_chat() should not send repetition_penalty."""
         mock_post.return_value = _mock_response(200, {
@@ -355,7 +355,7 @@ class TestVLLMBackendGenerateChat:
         call_body = mock_post.call_args[1].get("json")
         assert "repetition_penalty" not in call_body
 
-    @patch("genesia.backends.vllm.requests.post")
+    @patch("vibe.backends.vllm.requests.post")
     def test_generate_chat_custom_params(self, mock_post):
         mock_post.return_value = _mock_response(200, {
             "choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}],
@@ -374,14 +374,14 @@ class TestVLLMBackendGenerateChat:
         assert call_body["temperature"] == 0.1
         assert call_body["stop"] == ["DONE"]
 
-    @patch("genesia.backends.vllm.requests.post")
+    @patch("vibe.backends.vllm.requests.post")
     def test_generate_chat_empty_choices_raises(self, mock_post):
         mock_post.return_value = _mock_response(200, {"choices": []})
         backend = VLLMBackend(host="localhost", port=8000)
         with pytest.raises(RuntimeError, match="Empty response"):
             backend.generate_chat([{"role": "user", "content": "test"}])
 
-    @patch("genesia.backends.vllm.requests.post")
+    @patch("vibe.backends.vllm.requests.post")
     def test_generate_chat_empty_content_raises(self, mock_post):
         mock_post.return_value = _mock_response(200, {
             "choices": [{"message": {"content": ""}, "finish_reason": "stop"}]
@@ -390,7 +390,7 @@ class TestVLLMBackendGenerateChat:
         with pytest.raises(RuntimeError, match="Empty content"):
             backend.generate_chat([{"role": "user", "content": "test"}])
 
-    @patch("genesia.backends.vllm.requests.post")
+    @patch("vibe.backends.vllm.requests.post")
     def test_generate_chat_timeout_raises(self, mock_post):
         import requests
         mock_post.side_effect = requests.exceptions.Timeout("timed out")
@@ -398,7 +398,7 @@ class TestVLLMBackendGenerateChat:
         with pytest.raises(TimeoutError):
             backend.generate_chat([{"role": "user", "content": "test"}])
 
-    @patch("genesia.backends.vllm.requests.post")
+    @patch("vibe.backends.vllm.requests.post")
     def test_generate_chat_api_error_raises(self, mock_post):
         import requests
         mock_post.side_effect = requests.exceptions.ConnectionError("refused")
@@ -431,7 +431,7 @@ class TestLLMBackendInit:
 
 class TestLLMBackendRouting:
 
-    @patch("genesia.backends.vllm.requests.post")
+    @patch("vibe.backends.vllm.requests.post")
     def test_routes_to_generate_chat(self, mock_post):
         """LLMBackend should use generate_chat() to preserve system prompts."""
         mock_post.return_value = _mock_response(200, {
@@ -453,7 +453,7 @@ class TestLLMBackendRouting:
         assert any(m["role"] == "system" for m in call_body["messages"])
         assert result == "vLLM chat response"
 
-    @patch("genesia.backends.vllm.requests.post")
+    @patch("vibe.backends.vllm.requests.post")
     def test_does_not_flatten_messages(self, mock_post):
         """LLMBackend should NOT use text flattening."""
         mock_post.return_value = _mock_response(200, {
@@ -491,7 +491,7 @@ class TestCreateBackendFromConfig:
         config.model.model_name = "default-model"
 
         with patch("agents.llm_backend.VLLMBackend") as MockVLLM, \
-             patch.dict("os.environ", {"GENESIA_MODEL": "override-model", "GENESIA_BACKEND_HOST": "gpu-host", "GENESIA_BACKEND_PORT": "9000"}):
+             patch.dict("os.environ", {"VIBE_MODEL": "override-model", "VIBE_BACKEND_HOST": "gpu-host", "VIBE_BACKEND_PORT": "9000"}):
             backend = create_backend_from_config(config)
 
         MockVLLM.assert_called_once_with(host="gpu-host", port=9000, model="override-model")
@@ -499,7 +499,7 @@ class TestCreateBackendFromConfig:
 
 class TestResponseTiming:
 
-    @patch("genesia.backends.vllm.requests.post")
+    @patch("vibe.backends.vllm.requests.post")
     def test_vllm_time_ms_is_non_negative(self, mock_post):
         mock_post.return_value = _mock_response(200, {
             "choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}],

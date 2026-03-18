@@ -1,5 +1,5 @@
 services:
-  genesia:
+  vibe:
     build: .
     env_file: .env
     restart: unless-stopped
@@ -11,16 +11,16 @@ services:
     ports:
       - "8080:8080"
     environment:
-      - GENESIA_BACKEND_HOST=vllm
-      - GENESIA_BACKEND_PORT=8000
-      - GENESIA_SANDBOX_URL=http://opensandbox:8080
-      - GENESIA_HEALTH_PORT=8080
+      - VIBE_BACKEND_HOST=vllm
+      - VIBE_BACKEND_PORT=8000
+      - VIBE_SANDBOX_URL=http://opensandbox:8080
+      - VIBE_HEALTH_PORT=8080
       - LOG_LEVEL=INFO
       - LOG_FORMAT=json
     volumes:
-      - genesia-data:/home/genesia/.genesia
+      - vibe-data:/home/vibe/.vibe
       - /var/run/docker.sock:/var/run/docker.sock
-      - ./:/home/user/Genesia:ro
+      - ./:/home/user/Vibe:ro
     deploy:
       resources:
         limits:
@@ -60,7 +60,7 @@ services:
     volumes:
       - ./sandbox/sandbox.toml:/root/.sandbox.toml:ro
       - /var/run/docker.sock:/var/run/docker.sock
-      - ./:/home/user/Genesia:ro
+      - ./:/home/user/Vibe:ro
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/docs"]
       interval: 10s
@@ -77,4 +77,4 @@ services:
 
 volumes:
   vllm-models:
-  genesia-data:
+  vibe-data:

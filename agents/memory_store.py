@@ -8,7 +8,7 @@ Provides cross-session knowledge retention:
 - Hybrid recall merges BM25 keyword + vector semantic results
 - Every memory entry carries a citation chain back to its source
 
-Database location: ~/.genesia/memory.db (auto-created)
+Database location: ~/.vibe/memory.db (auto-created)
 
 Architecture:
     Agent stores fact ─► MemoryStore.store() ─► SQLite (entries + FTS5 index + embeddings)
@@ -44,7 +44,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
-_DB_DIR = Path.home() / ".genesia"
+_DB_DIR = Path.home() / ".vibe"
 _DB_PATH = _DB_DIR / "memory.db"
 
 # Default embedding model — lightweight, fast, good for semantic similarity

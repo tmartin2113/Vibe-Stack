@@ -55,7 +55,6 @@ from .nodes import (
 from .adapters import AdapterRegistry
 from .router import route_to_specialist
 from .aggregator import aggregate_outputs
-from .training_collector import TrainingDataCollector
 from .tools import ToolRegistry, create_default_tool_registry
 from .heuristic_critic import heuristic_evaluate_output
 from .artifact_store import ArtifactStore
@@ -245,7 +244,7 @@ class CompiledWorkflow:
         finally:
             duration = time.monotonic() - node_start
             app_metrics.observe(
-                "genesia_node_duration_seconds", duration,
+                "vibe_node_duration_seconds", duration,
                 labels={"node": node_name},
             )
 
@@ -436,10 +435,6 @@ def create_agent_graph(adapter_registry: AdapterRegistry, tool_registry: Optiona
     # Heuristic critic (zero LLM calls — format/length checks)
     workflow.add_node("heuristic_critic", heuristic_evaluate_output)
 
-    # Training data collector: captures (prompt, response, score) tuples for
-    # future fine-tuning (high-scoring outputs) and preference learning (refinement deltas).
-    training_collector = TrainingDataCollector()
-
     # Stage 1: Routing & Decomposition
     # Create a shared SkillRegistry so skill state persists across invocations.
     # Passing None would create a fresh registry per call (Bug #1 in router.py).
@@ -447,7 +442,7 @@ def create_agent_graph(adapter_registry: AdapterRegistry, tool_registry: Optiona
     from .skill_registry import SkillRegistry
     skills_config = config.skills if hasattr(config, "skills") else None
     shared_skill_registry = SkillRegistry(
-        "genesia_skills", skills_config=skills_config
+        "vibe_skills", skills_config=skills_config
     )
 
     # Shared SkillOutcomeStore — closes the reinforcement loop:
@@ -460,7 +455,7 @@ def create_agent_graph(adapter_registry: AdapterRegistry, tool_registry: Optiona
 
         Also sets specification = user_request so downstream nodes that
         read the specification field continue to work in the skill-only
-        pipeline (no Genesia spec-building step).
+        pipeline (no Vibe spec-building step).
         """
         state["specification"] = state.get("user_request", "")
         return route_to_specialist(
@@ -617,10 +612,8 @@ def create_agent_graph(adapter_registry: AdapterRegistry, tool_registry: Optiona
     workflow.add_node("specialist", nodes.execute_with_specialist)
 
     def critic_output_wrapper(state: AgentState) -> AgentState:
-        """Evaluate specialist output, then collect training data."""
-        result = nodes.evaluate_output(state)
-        training_collector.collect_output_evaluation(result)
-        return result
+        """Evaluate specialist output."""
+        return nodes.evaluate_output(state)
 
     workflow.add_node("critic_output", critic_output_wrapper)
 
@@ -628,10 +621,8 @@ def create_agent_graph(adapter_registry: AdapterRegistry, tool_registry: Optiona
     workflow.add_node("sub_specialist", nodes.execute_sub_task)
 
     def sub_critic_output_wrapper(state: AgentState) -> AgentState:
-        """Evaluate sub-task output, then collect training data."""
-        result = nodes.evaluate_sub_output(state)
-        training_collector.collect_sub_output_evaluation(result)
-        return result
+        """Evaluate sub-task output."""
+        return nodes.evaluate_sub_output(state)
 
     workflow.add_node("sub_critic_output", sub_critic_output_wrapper)
 
@@ -639,7 +630,7 @@ def create_agent_graph(adapter_registry: AdapterRegistry, tool_registry: Optiona
     def parallel_subtasks_wrapper(state: AgentState) -> AgentState:
         """Execute all sub-tasks concurrently using thread pool."""
         return execute_parallel_subtasks(
-            state, nodes, training_collector, config
+            state, nodes, config
         )
 
     workflow.add_node("parallel_subtasks", parallel_subtasks_wrapper)
@@ -651,10 +642,8 @@ def create_agent_graph(adapter_registry: AdapterRegistry, tool_registry: Optiona
     workflow.add_node("aggregator", aggregator_wrapper)
 
     def final_critic_wrapper(state: AgentState) -> AgentState:
-        """Evaluate aggregated output, then collect training data."""
-        result = nodes.evaluate_aggregated_output(state)
-        training_collector.collect_final_evaluation(result)
-        return result
+        """Evaluate aggregated output."""
+        return nodes.evaluate_aggregated_output(state)
 
     workflow.add_node("final_critic", final_critic_wrapper)
 
@@ -910,7 +899,7 @@ def print_graph_structure(app=None):
     print("  * doc_generator         - Write documentation")
     print("  * performance_optimizer - Optimize code performance")
     print("  * debugging_assistant   - Debug and fix issues")
-    print("  * genesia              - General purpose (fallback)")
+    print("  * vibe              - General purpose (fallback)")
     print()
 
     print("DECOMPOSITION TRIGGERS:")

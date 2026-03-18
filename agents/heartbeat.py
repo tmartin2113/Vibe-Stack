@@ -1,14 +1,14 @@
 """
 Paperclip Heartbeat Execution Mode
 
-Implements the Paperclip heartbeat procedure for Genesia agents:
+Implements the Paperclip heartbeat procedure for Vibe agents:
 
 1. Read PAPERCLIP_* env vars (injected by the Paperclip adapter)
 2. Fetch assigned tasks from Paperclip API
 3. Checkout a task (atomic, conflict-safe)
 4. Build context from issue + ancestors + comments
 5. Detect if this is a clarification resume (human replied to agent question)
-6. Run Genesia workflow (router → skills → specialist → critic)
+6. Run Vibe workflow (router → skills → specialist → critic)
 7. Post results back to Paperclip (status update + comment + clarification)
 8. Report cost events
 9. Exit with structured JSON output for the adapter to parse
@@ -128,27 +128,27 @@ def run_heartbeat(config: SystemConfig) -> HeartbeatResult:
     """
     Execute one Paperclip heartbeat cycle.
 
-    Reads task assignments from Paperclip, runs the Genesia workflow
+    Reads task assignments from Paperclip, runs the Vibe workflow
     on the highest-priority task, and posts results back.
 
     Returns:
         HeartbeatResult with status and metadata for the adapter.
     """
     heartbeat_start = time.monotonic()
-    metrics.increment("genesia_heartbeat_total", labels={"status": "started"})
+    metrics.increment("vibe_heartbeat_total", labels={"status": "started"})
 
     def _finish(result: HeartbeatResult) -> HeartbeatResult:
         """Record final heartbeat metrics and return the result."""
         duration = time.monotonic() - heartbeat_start
-        metrics.increment("genesia_heartbeat_total", labels={"status": result.status})
-        metrics.observe("genesia_heartbeat_duration_seconds", duration, labels={"status": result.status})
+        metrics.increment("vibe_heartbeat_total", labels={"status": result.status})
+        metrics.observe("vibe_heartbeat_duration_seconds", duration, labels={"status": result.status})
         if result.usage:
             input_tokens = result.usage.get("input_tokens", 0)
             output_tokens = result.usage.get("output_tokens", 0)
             if input_tokens:
-                metrics.increment("genesia_heartbeat_tokens_total", value=float(input_tokens), labels={"direction": "input"})
+                metrics.increment("vibe_heartbeat_tokens_total", value=float(input_tokens), labels={"direction": "input"})
             if output_tokens:
-                metrics.increment("genesia_heartbeat_tokens_total", value=float(output_tokens), labels={"direction": "output"})
+                metrics.increment("vibe_heartbeat_tokens_total", value=float(output_tokens), labels={"direction": "output"})
         clear_request_context()
         return result
 
@@ -168,7 +168,7 @@ def run_heartbeat(config: SystemConfig) -> HeartbeatResult:
                 "Circuit breaker OPEN: %s (retry after %ds)",
                 breaker_status.reason, breaker_status.retry_after_seconds,
             )
-            metrics.increment("genesia_heartbeat_total", labels={"status": "circuit_breaker"})
+            metrics.increment("vibe_heartbeat_total", labels={"status": "circuit_breaker"})
             return _finish(HeartbeatResult(
                 status="circuit_breaker",
                 summary=f"Circuit breaker open: {breaker_status.reason}",
@@ -195,7 +195,7 @@ def run_heartbeat(config: SystemConfig) -> HeartbeatResult:
         )
     except PaperclipAPIError as e:
         logger.error("Identity check failed: %s", e)
-        metrics.increment("genesia_paperclip_api_errors_total", labels={"endpoint": "identity"})
+        metrics.increment("vibe_paperclip_api_errors_total", labels={"endpoint": "identity"})
         return _finish(HeartbeatResult(status="failed", summary=str(e), exit_code=1))
 
     # ── Step 2b: Best-effort WebSocket connection ──
@@ -206,7 +206,7 @@ def run_heartbeat(config: SystemConfig) -> HeartbeatResult:
         assignments = client.get_assignments()
     except PaperclipAPIError as e:
         logger.error("Failed to fetch assignments: %s", e)
-        metrics.increment("genesia_paperclip_api_errors_total", labels={"endpoint": "assignments"})
+        metrics.increment("vibe_paperclip_api_errors_total", labels={"endpoint": "assignments"})
         return _finish(HeartbeatResult(status="failed", summary=str(e), exit_code=1))
 
     if not assignments:
@@ -237,7 +237,7 @@ def run_heartbeat(config: SystemConfig) -> HeartbeatResult:
         checkout = client.checkout_issue(issue.id)
     except PaperclipAPIError as e:
         logger.error("Checkout failed: %s", e)
-        metrics.increment("genesia_paperclip_api_errors_total", labels={"endpoint": "checkout"})
+        metrics.increment("vibe_paperclip_api_errors_total", labels={"endpoint": "checkout"})
         return _finish(HeartbeatResult(status="failed", summary=str(e), exit_code=1))
 
     if not checkout.success:
@@ -281,12 +281,12 @@ def _execute_checked_out_task(
         ctx_start = time.monotonic()
         full_issue = client.get_issue(issue.id)
         comments = client.get_comments(issue.id)
-        metrics.observe("genesia_paperclip_api_duration_seconds", time.monotonic() - ctx_start, labels={"endpoint": "context"})
-        metrics.increment("genesia_paperclip_api_calls_total", labels={"endpoint": "get_issue"})
-        metrics.increment("genesia_paperclip_api_calls_total", labels={"endpoint": "get_comments"})
+        metrics.observe("vibe_paperclip_api_duration_seconds", time.monotonic() - ctx_start, labels={"endpoint": "context"})
+        metrics.increment("vibe_paperclip_api_calls_total", labels={"endpoint": "get_issue"})
+        metrics.increment("vibe_paperclip_api_calls_total", labels={"endpoint": "get_comments"})
     except PaperclipAPIError as e:
         logger.error("Failed to fetch issue context: %s", e)
-        metrics.increment("genesia_paperclip_api_errors_total", labels={"endpoint": "context"})
+        metrics.increment("vibe_paperclip_api_errors_total", labels={"endpoint": "context"})
         return HeartbeatResult(status="failed", issue_id=issue.id, summary=str(e), exit_code=1)
 
     task_type = _resolve_task_type(config)
@@ -344,7 +344,7 @@ def _execute_checked_out_task(
     except WorkflowCancelledError as e:
         logger.info("Workflow cancelled for %s: %s", issue.id, e.reason,
                      extra={"event": "workflow_cancelled", "issue_id": issue.id, "reason": e.reason})
-        metrics.increment("genesia_heartbeat_total", labels={"status": "cancelled"})
+        metrics.increment("vibe_heartbeat_total", labels={"status": "cancelled"})
         _post_cancelled(client, issue.id)
         return HeartbeatResult(
             status="cancelled",
@@ -355,7 +355,7 @@ def _execute_checked_out_task(
     except _SigtermReceived:
         logger.info("SIGTERM received during workflow for %s", issue.id,
                      extra={"event": "sigterm", "issue_id": issue.id})
-        metrics.increment("genesia_heartbeat_total", labels={"status": "sigterm"})
+        metrics.increment("vibe_heartbeat_total", labels={"status": "sigterm"})
         _post_sigterm_partial(client, issue.id, sigterm_state)
         return HeartbeatResult(
             status="blocked",
@@ -366,7 +366,7 @@ def _execute_checked_out_task(
     except Exception as e:
         logger.error("Workflow failed: %s", e, exc_info=True,
                       extra={"event": "workflow_error", "issue_id": issue.id, "error_type": type(e).__name__})
-        metrics.increment("genesia_heartbeat_total", labels={"status": "workflow_error"})
+        metrics.increment("vibe_heartbeat_total", labels={"status": "workflow_error"})
         _post_failure(client, issue.id, str(e))
         return HeartbeatResult(
             status="failed",
@@ -378,7 +378,7 @@ def _execute_checked_out_task(
         cancel_poller.stop()
         _restore_sigterm_handler()
     workflow_duration = time.monotonic() - workflow_start
-    metrics.observe("genesia_heartbeat_workflow_duration_seconds", workflow_duration, labels={"task_type": task_type or "auto"})
+    metrics.observe("vibe_heartbeat_workflow_duration_seconds", workflow_duration, labels={"task_type": task_type or "auto"})
     logger.info("Workflow completed in %.1fs", workflow_duration,
                  extra={"event": "workflow_complete", "issue_id": issue.id,
                         "duration_s": round(workflow_duration, 2), "task_type": task_type or "auto"})
@@ -398,11 +398,11 @@ def _execute_checked_out_task(
                 client.update_issue(
                     issue.id, status="blocked", comment=comment_body,
                 )
-                metrics.increment("genesia_paperclip_api_calls_total", labels={"endpoint": "update_issue"})
-                metrics.observe("genesia_paperclip_api_duration_seconds", time.monotonic() - api_start, labels={"endpoint": "update_issue"})
+                metrics.increment("vibe_paperclip_api_calls_total", labels={"endpoint": "update_issue"})
+                metrics.observe("vibe_paperclip_api_duration_seconds", time.monotonic() - api_start, labels={"endpoint": "update_issue"})
             except PaperclipAPIError as e:
                 logger.error("Failed to post clarification: %s", e)
-                metrics.increment("genesia_paperclip_api_errors_total", labels={"endpoint": "update_issue"})
+                metrics.increment("vibe_paperclip_api_errors_total", labels={"endpoint": "update_issue"})
 
             usage = _extract_usage(final_state)
             return HeartbeatResult(
@@ -439,11 +439,11 @@ def _execute_checked_out_task(
     try:
         api_start = time.monotonic()
         client.update_issue(issue.id, status=issue_status, comment=comment_body)
-        metrics.increment("genesia_paperclip_api_calls_total", labels={"endpoint": "update_issue"})
-        metrics.observe("genesia_paperclip_api_duration_seconds", time.monotonic() - api_start, labels={"endpoint": "update_issue"})
+        metrics.increment("vibe_paperclip_api_calls_total", labels={"endpoint": "update_issue"})
+        metrics.observe("vibe_paperclip_api_duration_seconds", time.monotonic() - api_start, labels={"endpoint": "update_issue"})
     except PaperclipAPIError as e:
         logger.error("Failed to post results: %s", e)
-        metrics.increment("genesia_paperclip_api_errors_total", labels={"endpoint": "update_issue"})
+        metrics.increment("vibe_paperclip_api_errors_total", labels={"endpoint": "update_issue"})
 
     # ── Step 10: Report costs ──
     usage = _extract_usage(final_state)
@@ -464,11 +464,11 @@ def _execute_checked_out_task(
                 cost_cents=cost_cents,
                 issue_id=issue.id,
             )
-            metrics.increment("genesia_paperclip_api_calls_total", labels={"endpoint": "report_cost"})
-            metrics.observe("genesia_paperclip_api_duration_seconds", time.monotonic() - api_start, labels={"endpoint": "report_cost"})
+            metrics.increment("vibe_paperclip_api_calls_total", labels={"endpoint": "report_cost"})
+            metrics.observe("vibe_paperclip_api_duration_seconds", time.monotonic() - api_start, labels={"endpoint": "report_cost"})
         except PaperclipAPIError as e:
             logger.warning("Cost reporting failed (non-fatal): %s", e)
-            metrics.increment("genesia_paperclip_api_errors_total", labels={"endpoint": "report_cost"})
+            metrics.increment("vibe_paperclip_api_errors_total", labels={"endpoint": "report_cost"})
 
     cost_cents = _estimate_cost_cents(
         config.model.backend,
@@ -633,7 +633,7 @@ def _resolve_task_type(config: SystemConfig) -> str:
     """Resolve the task type from config or env var."""
     if config.paperclip.task_type:
         return config.paperclip.task_type
-    return os.environ.get("GENESIA_TASK_TYPE", "")
+    return os.environ.get("VIBE_TASK_TYPE", "")
 
 
 def _build_user_request(
@@ -738,7 +738,7 @@ def _run_workflow(
     factory: Optional[WorkflowFactory] = None,
 ) -> Dict[str, Any]:
     """
-    Run the Genesia workflow graph on the given request.
+    Run the Vibe workflow graph on the given request.
 
     Delegates to ``WorkflowFactory`` for cached backend/adapter setup.
     Accepts an optional pre-built *factory* for reuse across invocations.

@@ -13,7 +13,7 @@ Circuit breaker states:
 Design follows the same patterns as artifact_store.py:
     - SQLite + WAL mode
     - Per-call connections (thread-safe, no shared cursors)
-    - Database at ~/.genesia/spending_ledger.db
+    - Database at ~/.vibe/spending_ledger.db
 """
 
 import logging
@@ -88,7 +88,7 @@ class SpendingTracker:
         retention_days: int = 30,
     ):
         if db_path is None:
-            db_path = str(Path.home() / ".genesia" / "spending_ledger.db")
+            db_path = str(Path.home() / ".vibe" / "spending_ledger.db")
 
         self.db_path = db_path
         self.window_seconds = window_seconds

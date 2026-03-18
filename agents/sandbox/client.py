@@ -1,5 +1,5 @@
 """
-Thread-safe OpenSandbox pool manager for Genesia.
+Thread-safe OpenSandbox pool manager for Vibe.
 
 Manages a pool of warm sandbox containers. Workers acquire a sandbox,
 execute code or commands, then release it back to the pool.
@@ -198,7 +198,7 @@ class SandboxPoolManager:
         handle = self._acquire()
         try:
             # Write code to temp file inside sandbox
-            script_path = f"/tmp/genesia_{uuid.uuid4().hex[:8]}.py"
+            script_path = f"/tmp/vibe_{uuid.uuid4().hex[:8]}.py"
             self._run_async(
                 handle.sandbox.files.write_file(script_path, code)
             )

@@ -56,7 +56,13 @@ models/
 node_modules/
 
 # Skills (runtime state)
-genesia_skills/
+vibe_skills/
+
+# Training data (generated at runtime)
+training/data/
+
+# Claude Code local settings
+.claude/
 
 # llama.cpp
 llama.cpp/

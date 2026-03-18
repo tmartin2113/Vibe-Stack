@@ -863,16 +863,16 @@ class TestAggregationRegistry:
 
     @patch("agents.llm_backend.create_backend_from_config")
     def test_creates_registry_with_adapter(self, mock_create_backend, config):
-        """When backend is available, returns a registry with genesia adapter."""
+        """When backend is available, returns a registry with vibe adapter."""
         mock_backend = MagicMock()
         mock_create_backend.return_value = mock_backend
 
         registry = _create_aggregation_registry(config)
 
         assert registry is not None
-        adapter = registry.get("genesia")
+        adapter = registry.get("vibe")
         assert adapter is not None
-        assert adapter.name == "genesia"
+        assert adapter.name == "vibe"
 
     @patch("agents.llm_backend.create_backend_from_config")
     def test_returns_none_on_backend_failure(self, mock_create_backend, config):
@@ -1284,7 +1284,7 @@ class TestAggregationRegistryHealthCheck:
         registry = _create_aggregation_registry(config)
 
         assert registry is not None
-        assert registry.get("genesia") is not None
+        assert registry.get("vibe") is not None
 
     @patch("agents.llm_backend.create_backend_from_config")
     def test_health_check_exception_returns_none(self, mock_create_backend, config):
@@ -1310,12 +1310,12 @@ class TestAggregatorLLMThreshold:
         from agents.adapters import AdapterRegistry
 
         mock_adapter = MagicMock()
-        mock_adapter.name = "genesia"
+        mock_adapter.name = "vibe"
         mock_adapter.generate.return_value = generate_return
 
         registry = MagicMock(spec=AdapterRegistry)
         registry.get.return_value = mock_adapter
-        registry.list_adapters.return_value = ["genesia"]
+        registry.list_adapters.return_value = ["vibe"]
 
         return AggregatorNode(adapter_registry=registry), mock_adapter
 
@@ -1405,7 +1405,7 @@ class TestRunDirectly:
         mock_run_workflow.return_value = {
             "clarification_needed": True,
             "clarification_questions": ["Which database?", "REST or GraphQL?"],
-            "last_node": "genesia",
+            "last_node": "vibe",
             "specification": "Build an API",
         }
         issue = Issue(id="p1", title="Build API", status="in_progress")

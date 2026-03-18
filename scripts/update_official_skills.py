@@ -3,7 +3,7 @@
 Sync official skills from vetted remote sources.
 
 Downloads SKILL.md files and supporting assets for each skill,
-caches them locally under genesia_skills/official/, and updates
+caches them locally under vibe_skills/official/, and updates
 the .index.json so the SkillRegistry can discover them.
 
 Supports 3 locked-down sources:
@@ -34,8 +34,8 @@ from typing import Dict, List, Optional, Tuple
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-SKILLS_DIR = PROJECT_ROOT / "genesia_skills" / "official"
-INDEX_PATH = PROJECT_ROOT / "genesia_skills" / ".index.json"
+SKILLS_DIR = PROJECT_ROOT / "vibe_skills" / "official"
+INDEX_PATH = PROJECT_ROOT / "vibe_skills" / ".index.json"
 
 # Rate-limit-safe retry settings
 MAX_RETRIES = 4
@@ -77,7 +77,7 @@ def _github_token() -> Optional[str]:
 def _make_request(url: str, accept: str = "application/json") -> bytes:
     """Make an HTTP request with retry and optional auth."""
     token = _github_token()
-    headers = {"Accept": accept, "User-Agent": "genesia-skill-sync/1.0"}
+    headers = {"Accept": accept, "User-Agent": "vibe-skill-sync/1.0"}
     if token:
         headers["Authorization"] = f"token {token}"
 
@@ -177,7 +177,7 @@ def _list_subdir_files(skill_name: str, subdir: str, source) -> List[Dict]:
 
 def download_skill(skill_name: str, source, dry_run: bool = False) -> bool:
     """
-    Download a skill's files from a remote source into genesia_skills/official/.
+    Download a skill's files from a remote source into vibe_skills/official/.
 
     Returns True if the skill was successfully downloaded.
     """
@@ -376,7 +376,7 @@ def update_index(synced_skills: List[str], source):
 
 
 SKILL_SOURCES_DIR = Path(os.environ.get(
-    "GENESIA_SKILL_SOURCES", "/home/prime/Repos/skill-sources"
+    "VIBE_SKILL_SOURCES", "/home/prime/Repos/skill-sources"
 ))
 
 # Mapping from clone directory names to source metadata
@@ -407,7 +407,7 @@ def reindex_from_disk():
     """
     Re-index official skills from disk without making any API calls.
 
-    Scans genesia_skills/official/ for skill directories with SKILL.md,
+    Scans vibe_skills/official/ for skill directories with SKILL.md,
     parses frontmatter, and updates .index.json. Preserves existing
     usage_count, scores, and avg_score for skills already in the index.
     """

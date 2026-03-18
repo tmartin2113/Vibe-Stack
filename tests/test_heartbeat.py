@@ -3,7 +3,7 @@ Tests for Paperclip Heartbeat Execution Mode
 
 Tests the full heartbeat procedure: task selection, workflow execution,
 result posting, cost reporting, and error handling.
-All external calls (Paperclip API, Genesia workflow) are mocked.
+All external calls (Paperclip API, Vibe workflow) are mocked.
 """
 
 import json
@@ -197,17 +197,17 @@ class TestResolveTaskType:
 
     def test_from_env(self, config, monkeypatch):
         config.paperclip.task_type = ""
-        monkeypatch.setenv("GENESIA_TASK_TYPE", "code")
+        monkeypatch.setenv("VIBE_TASK_TYPE", "code")
         assert _resolve_task_type(config) == "code"
 
     def test_empty_when_unset(self, config, monkeypatch):
         config.paperclip.task_type = ""
-        monkeypatch.delenv("GENESIA_TASK_TYPE", raising=False)
+        monkeypatch.delenv("VIBE_TASK_TYPE", raising=False)
         assert _resolve_task_type(config) == ""
 
     def test_config_overrides_env(self, config, monkeypatch):
         config.paperclip.task_type = "test_generation"
-        monkeypatch.setenv("GENESIA_TASK_TYPE", "code")
+        monkeypatch.setenv("VIBE_TASK_TYPE", "code")
         assert _resolve_task_type(config) == "test_generation"
 
 
@@ -554,12 +554,12 @@ class TestClarificationRequest:
     def test_to_dict(self):
         req = ClarificationRequest(
             questions=["Which DB?", "What auth method?"],
-            blocking_node="genesia",
+            blocking_node="vibe",
             context_summary="Building auth module",
         )
         d = req.to_dict()
         assert d["questions"] == ["Which DB?", "What auth method?"]
-        assert d["blocking_node"] == "genesia"
+        assert d["blocking_node"] == "vibe"
         assert d["context_summary"] == "Building auth module"
 
     def test_empty_questions(self):
@@ -576,7 +576,7 @@ class TestHeartbeatResultClarification:
             issue_id="i1",
             clarification={
                 "questions": ["PostgreSQL or SQLite?"],
-                "blocking_node": "genesia",
+                "blocking_node": "vibe",
                 "context_summary": "DB choice",
             },
         )
@@ -770,7 +770,7 @@ class TestRunHeartbeatClarification:
             "clarification_needed": True,
             "clarification_questions": ["Which DB engine?", "REST or GraphQL?"],
             "specification": "Build an API with a database backend",
-            "last_node": "genesia",
+            "last_node": "vibe",
         }
 
         result = run_heartbeat(config)
@@ -778,7 +778,7 @@ class TestRunHeartbeatClarification:
         assert result.exit_code == 0
         assert result.clarification is not None
         assert len(result.clarification["questions"]) == 2
-        assert result.clarification["blocking_node"] == "genesia"
+        assert result.clarification["blocking_node"] == "vibe"
 
         # Should have posted structured comment + set blocked (2 calls: in_progress + blocked)
         assert client.update_issue.call_count == 2
@@ -917,7 +917,7 @@ class TestAdapterSlackContract:
             issue_id="GEN-42",
             clarification={
                 "questions": ["PostgreSQL or SQLite?"],
-                "blocking_node": "genesia",
+                "blocking_node": "vibe",
                 "context_summary": "DB choice",
             },
         )
@@ -1182,7 +1182,7 @@ class TestOrchestratorBranch:
         self, MockClient, mock_orch, config, monkeypatch,
     ):
         """When task_type=orchestrator, should call run_orchestrator_heartbeat."""
-        monkeypatch.setenv("GENESIA_TASK_TYPE", "orchestrator")
+        monkeypatch.setenv("VIBE_TASK_TYPE", "orchestrator")
         config.paperclip.task_type = "orchestrator"
 
         client = MockClient.return_value
@@ -1213,7 +1213,7 @@ class TestOrchestratorBranch:
         self, MockClient, mock_workflow, config, monkeypatch,
     ):
         """When task_type != orchestrator, should call _run_workflow."""
-        monkeypatch.setenv("GENESIA_TASK_TYPE", "code_generation")
+        monkeypatch.setenv("VIBE_TASK_TYPE", "code_generation")
         config.paperclip.task_type = "code_generation"
 
         client = MockClient.return_value
@@ -1264,7 +1264,7 @@ class TestMultiRoundClarification:
         mock_workflow.return_value = {
             "clarification_needed": True,
             "clarification_questions": ["PostgreSQL or SQLite?"],
-            "last_node": "genesia",
+            "last_node": "vibe",
             "specification": "DB choice needed",
         }
 
@@ -1320,7 +1320,7 @@ class TestHeartbeatMetrics:
         # Check that 'started' was recorded
         increment_calls = [
             c for c in mock_metrics.increment.call_args_list
-            if c[0][0] == "genesia_heartbeat_total"
+            if c[0][0] == "vibe_heartbeat_total"
         ]
         started_calls = [
             c for c in increment_calls
@@ -1343,7 +1343,7 @@ class TestHeartbeatMetrics:
 
         observe_calls = [
             c for c in mock_metrics.observe.call_args_list
-            if c[0][0] == "genesia_heartbeat_duration_seconds"
+            if c[0][0] == "vibe_heartbeat_duration_seconds"
         ]
         assert len(observe_calls) >= 1
 
@@ -1373,7 +1373,7 @@ class TestHeartbeatMetrics:
 
         token_calls = [
             c for c in mock_metrics.increment.call_args_list
-            if c[0][0] == "genesia_heartbeat_tokens_total"
+            if c[0][0] == "vibe_heartbeat_tokens_total"
         ]
         assert len(token_calls) >= 2  # input + output
 
@@ -1388,7 +1388,7 @@ class TestHeartbeatMetrics:
 
         error_calls = [
             c for c in mock_metrics.increment.call_args_list
-            if c[0][0] == "genesia_paperclip_api_errors_total"
+            if c[0][0] == "vibe_paperclip_api_errors_total"
         ]
         assert len(error_calls) >= 1
 
@@ -1399,7 +1399,7 @@ class TestHeartbeatMetrics:
 
 class TestHeartbeatResultAdapterContract:
     def test_all_fields_present_in_json(self):
-        """The adapter's parseGenesiaOutput depends on these specific field names."""
+        """The adapter's parseVibeOutput depends on these specific field names."""
         result = HeartbeatResult(
             status="success",
             issue_id="GEN-42",
@@ -1441,7 +1441,7 @@ class TestHeartbeatResultAdapterContract:
             status="clarification_needed",
             clarification={
                 "questions": ["Q1?"],
-                "blocking_node": "genesia",
+                "blocking_node": "vibe",
                 "context_summary": "Building API",
             },
         )

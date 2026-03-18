@@ -24,7 +24,7 @@ from typing import Dict, List
 import pytest
 
 # Disable remote lookups by default in tests
-os.environ["GENESIA_DISABLE_REMOTE_SKILLS"] = "1"
+os.environ["VIBE_DISABLE_REMOTE_SKILLS"] = "1"
 
 from agents.config import SkillSourceConfig, SkillsConfig, SystemConfig
 from agents.skill_registry import SkillRegistry
@@ -773,9 +773,9 @@ class TestIntegration:
         assert entry["source_name"] == "superpowers"
 
     def test_offline_mode_via_env_var(self, skills_dir, security):
-        """GENESIA_DISABLE_REMOTE_SKILLS=1 prevents all remote lookups."""
+        """VIBE_DISABLE_REMOTE_SKILLS=1 prevents all remote lookups."""
         config = SkillsConfig(enable_remote=True)
-        with patch.dict(os.environ, {"GENESIA_DISABLE_REMOTE_SKILLS": "1"}):
+        with patch.dict(os.environ, {"VIBE_DISABLE_REMOTE_SKILLS": "1"}):
             reg = SkillRegistry(str(skills_dir), security=security, skills_config=config)
 
         assert reg._enable_remote is False
@@ -788,7 +788,7 @@ class TestIntegration:
     def test_config_disable_remote(self, skills_dir, security):
         """SkillsConfig.enable_remote=False prevents remote lookups."""
         config = SkillsConfig(enable_remote=False)
-        with patch.dict(os.environ, {"GENESIA_DISABLE_REMOTE_SKILLS": ""}):
+        with patch.dict(os.environ, {"VIBE_DISABLE_REMOTE_SKILLS": ""}):
             reg = SkillRegistry(str(skills_dir), security=security, skills_config=config)
 
         assert reg._enable_remote is False

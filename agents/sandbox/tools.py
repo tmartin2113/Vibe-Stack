@@ -1,5 +1,5 @@
 """
-Sandboxed tool implementations for Genesia.
+Sandboxed tool implementations for Vibe.
 
 Drop-in replacements for PythonExecutor, PytestRunner, BanditScanner, and
 ShellExecutor that execute inside OpenSandbox containers instead of local
@@ -341,7 +341,7 @@ class SandboxedWebFetchTool(_SandboxedToolMixin):
         script = (
             f"python3 -c \""
             f"import urllib.request, sys; "
-            f"req = urllib.request.Request('{url}', headers={{'User-Agent': 'Genesia/1.0'}}); "
+            f"req = urllib.request.Request('{url}', headers={{'User-Agent': 'Vibe/1.0'}}); "
             f"r = urllib.request.urlopen(req, timeout={timeout}); "
             f"sys.stdout.buffer.write(r.read())\""
         )

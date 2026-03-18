@@ -1,4 +1,4 @@
-# OpenSandbox server configuration for Genesia
+# OpenSandbox server configuration for Vibe
 # See: https://github.com/alibaba/OpenSandbox
 
 [server]
@@ -21,5 +21,5 @@ pids_limit = 512
 
 [storage]
 # Directories that can be bind-mounted into sandboxes.
-# The Genesia project root is mounted read-only by default.
-allowed_host_paths = ["/home/user/Genesia", "/tmp"]
+# The Vibe project root is mounted read-only by default.
+allowed_host_paths = ["/home/user/Vibe", "/tmp"]

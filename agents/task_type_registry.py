@@ -23,7 +23,7 @@ class TaskTypeEntry:
 
     name: str
     description: str
-    adapter: str  # specialist adapter name (e.g. "genesia", "test_generator")
+    adapter: str  # specialist adapter name (e.g. "vibe", "test_generator")
     label: str  # human-readable label (e.g. "test generation")
     patterns: List[str] = field(default_factory=list)
     pattern_weights: Dict[str, float] = field(default_factory=dict)
@@ -237,7 +237,7 @@ BUILTIN_TYPES: List[TaskTypeEntry] = [
     _builtin_entry(
         name="refactoring",
         description="Code restructuring, cleaning, improving architecture, removing code smells",
-        adapter="genesia",
+        adapter="vibe",
         label="refactoring",
         patterns=[
             r"\brefactor", r"\bclean.*code", r"\brestructure",
@@ -258,7 +258,7 @@ BUILTIN_TYPES: List[TaskTypeEntry] = [
     _builtin_entry(
         name="code_generation",
         description="Writing new code, implementing features, scaffolding, creating functions",
-        adapter="genesia",
+        adapter="vibe",
         label="code generation",
         patterns=[
             r"\bcreate.*function", r"\bwrite.*(?:a |the )?(?:\w+ )?function",
@@ -405,7 +405,7 @@ BUILTIN_TYPES: List[TaskTypeEntry] = [
     _builtin_entry(
         name="general",
         description="General tasks that don't fit specific categories",
-        adapter="genesia",
+        adapter="vibe",
         label="general development",
         patterns=[],
         pattern_weights={},
@@ -445,7 +445,7 @@ def populate_from_skill_registry(
         entry = TaskTypeEntry(
             name=task_type,
             description=description,
-            adapter="genesia",  # skill's adapter_prompt overrides at execution
+            adapter="vibe",  # skill's adapter_prompt overrides at execution
             label=task_type.replace("_", " "),
             patterns=[],  # LLM-only classification
             pattern_weights={},

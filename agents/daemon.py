@@ -26,12 +26,12 @@ from .paperclip_client import PaperclipClient, PaperclipAPIError
 logger = logging.getLogger(__name__)
 
 # Configuration from environment variables
-POLL_INTERVAL = int(os.getenv("GENESIA_DAEMON_POLL_INTERVAL", "5"))  # seconds
-COMPLETION_POLL_INTERVAL = int(os.getenv("GENESIA_BRIDGE_COMPLETION_POLL", "10"))  # seconds
-COMPLETION_TIMEOUT = int(os.getenv("GENESIA_BRIDGE_COMPLETION_TIMEOUT", "600"))  # seconds
-MAX_QUEUE_SIZE = int(os.getenv("GENESIA_DAEMON_QUEUE_SIZE", "100"))  # max pending requests
+POLL_INTERVAL = int(os.getenv("VIBE_DAEMON_POLL_INTERVAL", "5"))  # seconds
+COMPLETION_POLL_INTERVAL = int(os.getenv("VIBE_BRIDGE_COMPLETION_POLL", "10"))  # seconds
+COMPLETION_TIMEOUT = int(os.getenv("VIBE_BRIDGE_COMPLETION_TIMEOUT", "600"))  # seconds
+MAX_QUEUE_SIZE = int(os.getenv("VIBE_DAEMON_QUEUE_SIZE", "100"))  # max pending requests
 # Maximum age (seconds) for dedup cache entries before eviction
-DEDUP_TTL_SECONDS = int(os.getenv("GENESIA_DAEMON_DEDUP_TTL", "3600"))  # 1 hour default
+DEDUP_TTL_SECONDS = int(os.getenv("VIBE_DAEMON_DEDUP_TTL", "3600"))  # 1 hour default
 DEDUP_MAX_SIZE = 5000  # hard cap — evict oldest when exceeded
 
 
@@ -559,7 +559,7 @@ class PaperclipBridge:
                         )
                     except Full:
                         logger.warning("Queue full (%d)! Dropping request.", MAX_QUEUE_SIZE)
-                        metrics.increment("genesia_requests_dropped_total")
+                        metrics.increment("vibe_requests_dropped_total")
                         self._send_response(
                             mention.get("platform", ""),
                             mention.get("channel_id", ""),

@@ -118,10 +118,10 @@ class TestMattermostGetBotUsername:
     @patch("agents.messenger_client.requests")
     def test_returns_username(self, mock_requests, mm_client):
         mock_requests.get.return_value = _mock_response(
-            {"id": "bot-id", "username": "genesia-bot"}
+            {"id": "bot-id", "username": "vibe-bot"}
         )
         result = mm_client.get_bot_username()
-        assert result == "genesia-bot"
+        assert result == "vibe-bot"
 
     @patch("agents.messenger_client.requests")
     def test_raises_on_failure(self, mock_requests, mm_client):

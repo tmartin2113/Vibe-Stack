@@ -1,7 +1,7 @@
-# GPU-enabled sandbox image for Genesia
+# GPU-enabled sandbox image for Vibe
 # Extends the OpenSandbox code-interpreter with CUDA + ML packages.
 #
-# Build:  docker build -t genesia/sandbox-gpu -f sandbox/Dockerfile.gpu .
+# Build:  docker build -t vibe/sandbox-gpu -f sandbox/Dockerfile.gpu .
 # Used when ResourcePlan enables sandbox GPU (VRAM >= 24GB).
 
 FROM opensandbox/code-interpreter:v1.0.1
@@ -18,7 +18,7 @@ RUN pip install --no-cache-dir \
     torch torchvision --index-url https://download.pytorch.org/whl/cu121 \
     numpy pandas scikit-learn matplotlib
 
-# Genesia tool dependencies (pytest, bandit) so sandboxed tools work
+# Vibe tool dependencies (pytest, bandit) so sandboxed tools work
 RUN pip install --no-cache-dir \
     pytest pytest-cov bandit ruff
 

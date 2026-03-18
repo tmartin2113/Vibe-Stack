@@ -18,7 +18,7 @@ from unittest.mock import patch, MagicMock
 import pytest
 
 # Disable remote lookups
-os.environ["GENESIA_DISABLE_REMOTE_SKILLS"] = "1"
+os.environ["VIBE_DISABLE_REMOTE_SKILLS"] = "1"
 
 from agents.skill_outcome_store import SkillOutcomeStore
 from agents.skill_generator import SkillGeneratorNode, REFINEMENT_THRESHOLD
@@ -42,7 +42,7 @@ def tmp_store(tmp_path):
 @pytest.fixture
 def skills_dir(tmp_path):
     """Create a temporary skills directory."""
-    base = tmp_path / "genesia_skills"
+    base = tmp_path / "vibe_skills"
     (base / "official").mkdir(parents=True)
     (base / "local").mkdir(parents=True)
     (base / "temp").mkdir(parents=True)

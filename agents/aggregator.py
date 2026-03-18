@@ -28,7 +28,7 @@ class AggregatorNode:
     """
     Aggregates outputs from multiple specialists into a final result.
 
-    When an adapter_registry is provided, the aggregator uses the genesia
+    When an adapter_registry is provided, the aggregator uses the vibe
     (or other available) LLM adapter to intelligently merge outputs —
     resolving cross-references, deduplicating content, and harmonizing
     style. Without a registry, it falls back to structured concatenation.
@@ -104,16 +104,16 @@ class AggregatorNode:
         """
         Get an LLM adapter for aggregation.
 
-        Prefers 'genesia' (the spec-builder, good at synthesis) but
+        Prefers 'vibe' (the spec-builder, good at synthesis) but
         will use any available adapter. Returns None if no registry
         or no adapter is available.
         """
         if self.adapter_registry is None:
             return None
 
-        # Prefer genesia for synthesis tasks
+        # Prefer vibe for synthesis tasks
         try:
-            adapter = self.adapter_registry.get("genesia")
+            adapter = self.adapter_registry.get("vibe")
             if adapter is not None:
                 return adapter
         except (KeyError, Exception):

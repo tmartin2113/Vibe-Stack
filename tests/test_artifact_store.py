@@ -171,14 +171,14 @@ class TestStoreInit:
         assert Path(deep_path).exists()
 
     def test_default_path(self):
-        """Default db_path is ~/.genesia/artifact_cache.db."""
+        """Default db_path is ~/.vibe/artifact_cache.db."""
         store = ArtifactStore.__new__(ArtifactStore)
         store.db_path = None
         store.max_entries = 1000
         store.default_ttl_seconds = 3600
         store.min_score_to_cache = 70
         # Just verify the default logic
-        expected = str(Path.home() / ".genesia" / "artifact_cache.db")
+        expected = str(Path.home() / ".vibe" / "artifact_cache.db")
         s = ArtifactStore()
         assert s.db_path == expected
 
