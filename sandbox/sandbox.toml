@@ -1,0 +1,25 @@
+# OpenSandbox server configuration for Genesia
+# See: https://github.com/alibaba/OpenSandbox
+
+[server]
+host = "0.0.0.0"
+port = 8080
+log_level = "INFO"
+# Empty API key = dev mode (no auth required).
+# Set for production: api_key = "your-secret-key"
+api_key = ""
+
+[runtime]
+type = "docker"
+execd_image = "opensandbox/execd:latest"
+
+[docker]
+network_mode = "bridge"
+host_ip = "localhost"
+no_new_privileges = true
+pids_limit = 512
+
+[storage]
+# Directories that can be bind-mounted into sandboxes.
+# The Genesia project root is mounted read-only by default.
+allowed_host_paths = ["/home/user/Genesia", "/tmp"]

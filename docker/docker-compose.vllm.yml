@@ -1,0 +1,170 @@
+# Paperclip + Genesia Agent Stack (vLLM backend)
+#
+# Replaces Ollama with vLLM for high-throughput concurrent inference.
+# vLLM supports continuous batching — multiple agents can hit it
+# simultaneously without queuing.
+#
+# Usage:
+#   docker compose -f docker/docker-compose.vllm.yml up
+#
+# Set VLLM_MODEL to the HuggingFace model ID you want to serve.
+# Default: Qwen/Qwen2.5-Coder-7B-Instruct
+#
+# Required environment variables (set in .env or export before running):
+#   PAPERCLIP_API_KEY    — Bearer token for Paperclip API authentication
+#   PAPERCLIP_COMPANY_ID — Company UUID in Paperclip
+
+x-genesia-env: &genesia-env
+  GENESIA_BACKEND: vllm
+  GENESIA_BACKEND_HOST: vllm
+  GENESIA_BACKEND_PORT: "8000"
+  GENESIA_MODEL: ${VLLM_MODEL:-Qwen/Qwen2.5-Coder-7B-Instruct}
+  GENESIA_SANDBOX_URL: http://opensandbox:8080
+  PAPERCLIP_API_URL: http://paperclip:3100
+  PAPERCLIP_API_KEY: ${PAPERCLIP_API_KEY:?Set PAPERCLIP_API_KEY in .env or environment}
+  PAPERCLIP_COMPANY_ID: ${PAPERCLIP_COMPANY_ID:?Set PAPERCLIP_COMPANY_ID in .env or environment}
+
+x-genesia-agent: &genesia-agent-base
+  build:
+    context: ..
+    dockerfile: docker/Dockerfile.genesia-agent
+  depends_on:
+    vllm:
+      condition: service_healthy
+    opensandbox:
+      condition: service_healthy
+    paperclip:
+      condition: service_healthy
+
+services:
+  # ── Control Plane ──
+  paperclip:
+    image: ghcr.io/paperclipai/paperclip:latest
+    ports:
+      - "3100:3100"
+    volumes:
+      - paperclip-data:/root/.paperclip
+    environment:
+      - NODE_ENV=production
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:3100/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # ── LLM Backend (vLLM) ──
+  vllm:
+    image: vllm/vllm-openai:latest
+    ports:
+      - "8000:8000"
+    volumes:
+      - vllm-cache:/root/.cache/huggingface
+    environment:
+      - VLLM_MODEL=${VLLM_MODEL:-Qwen/Qwen2.5-Coder-7B-Instruct}
+    command:
+      - --model
+      - ${VLLM_MODEL:-Qwen/Qwen2.5-Coder-7B-Instruct}
+      - --host
+      - "0.0.0.0"
+      - --port
+      - "8000"
+      - --max-model-len
+      - "16384"
+      - --gpu-memory-utilization
+      - "0.88"
+      - --enable-prefix-caching
+      - --enable-chunked-prefill
+      - --max-num-seqs
+      - "4"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8000/health"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 120s
+
+  # ── Sandbox (OpenSandbox) ──
+  opensandbox:
+    image: opensandbox/server:v0.1.4
+    ports:
+      - "9090:8080"
+    volumes:
+      - ../sandbox/sandbox.toml:/root/.sandbox.toml:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ../:/home/user/Genesia:ro
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/docs"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  # ── Genesia Agents ──
+  genesia-code:
+    <<: *genesia-agent-base
+    environment:
+      <<: *genesia-env
+      GENESIA_TASK_TYPE: code
+      PAPERCLIP_AGENT_ID: ${PAPERCLIP_AGENT_ID_CODE:-}
+    volumes:
+      - genesia-skills-code:/home/genesia/.genesia
+
+  genesia-test:
+    <<: *genesia-agent-base
+    environment:
+      <<: *genesia-env
+      GENESIA_TASK_TYPE: test_generation
+      PAPERCLIP_AGENT_ID: ${PAPERCLIP_AGENT_ID_TEST:-}
+    volumes:
+      - genesia-skills-test:/home/genesia/.genesia
+
+  genesia-security:
+    <<: *genesia-agent-base
+    environment:
+      <<: *genesia-env
+      GENESIA_TASK_TYPE: security_audit
+      PAPERCLIP_AGENT_ID: ${PAPERCLIP_AGENT_ID_SECURITY:-}
+    volumes:
+      - genesia-skills-security:/home/genesia/.genesia
+
+  genesia-research:
+    <<: *genesia-agent-base
+    environment:
+      <<: *genesia-env
+      GENESIA_TASK_TYPE: research
+      PAPERCLIP_AGENT_ID: ${PAPERCLIP_AGENT_ID_RESEARCH:-}
+    volumes:
+      - genesia-skills-research:/home/genesia/.genesia
+
+  genesia-orchestrator:
+    <<: *genesia-agent-base
+    environment:
+      <<: *genesia-env
+      GENESIA_TASK_TYPE: orchestrator
+      PAPERCLIP_AGENT_ID: ${PAPERCLIP_AGENT_ID_ORCHESTRATOR:-}
+    volumes:
+      - genesia-skills-orchestrator:/home/genesia/.genesia
+
+volumes:
+  paperclip-data:
+  vllm-cache:
+  genesia-skills-code:
+  genesia-skills-test:
+  genesia-skills-security:
+  genesia-skills-research:
+  genesia-skills-orchestrator:

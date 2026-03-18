@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(grep genesia:*)",
+      "Bash(grep:*)",
+      "Bash(tail:*)",
+      "Bash(pnpm:*)",
+      "Bash(docker exec:*)",
+      "Bash(echo Log file: $RUN_LOG:*)",
+      "Bash(# Skills dir might be elsewhere or created at runtime find /home/prime -name \"\"genesia_skills\"\" -type d)",
+      "Bash(echo === $repo ===:*)",
+      "Bash(ls:*)",
+      "Bash(GENESIA_MODEL=\"Qwen/Qwen3.5-9B\" timeout 90 python:*)"
+    ]
+  }
+}

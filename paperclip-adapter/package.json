@@ -1,0 +1,23 @@
+{
+  "name": "@paperclipai/adapter-genesia-local",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Paperclip process adapter for Genesia agents",
+  "exports": {
+    ".": "./src/index.ts",
+    "./server": "./src/server/index.ts"
+  },
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "test": "node --import tsx --test src/server/*.test.ts"
+  },
+  "dependencies": {
+    "@paperclipai/adapter-utils": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.0",
+    "tsx": "^4.19.0"
+  }
+}

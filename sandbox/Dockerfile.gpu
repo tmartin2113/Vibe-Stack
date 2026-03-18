@@ -1,0 +1,25 @@
+# GPU-enabled sandbox image for Genesia
+# Extends the OpenSandbox code-interpreter with CUDA + ML packages.
+#
+# Build:  docker build -t genesia/sandbox-gpu -f sandbox/Dockerfile.gpu .
+# Used when ResourcePlan enables sandbox GPU (VRAM >= 24GB).
+
+FROM opensandbox/code-interpreter:v1.0.1
+
+USER root
+
+# CUDA toolkit for GPU workloads
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    nvidia-cuda-toolkit \
+    && rm -rf /var/lib/apt/lists/*
+
+# Common ML/data-science packages
+RUN pip install --no-cache-dir \
+    torch torchvision --index-url https://download.pytorch.org/whl/cu121 \
+    numpy pandas scikit-learn matplotlib
+
+# Genesia tool dependencies (pytest, bandit) so sandboxed tools work
+RUN pip install --no-cache-dir \
+    pytest pytest-cov bandit ruff
+
+USER sandbox

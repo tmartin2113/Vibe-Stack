@@ -1,0 +1,227 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "genesia"
+version = "1.0.0"
+description = "Multi-agent code generation system with iterative quality refinement"
+readme = "README.md"
+requires-python = ">=3.9"
+license = "MIT"
+authors = [
+    {name = "Genesia Contributors"}
+]
+keywords = ["llm", "agents", "ai", "code-generation", "multi-agent"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+dependencies = [
+    "requests>=2.31.0,<3.0.0",
+]
+
+[project.optional-dependencies]
+agents = [
+    "python-dotenv>=1.0.0,<2.0.0",
+    "pydantic>=2.0.0,<3.0.0",
+    "typing-extensions>=4.9.0,<5.0.0",
+    "loguru>=0.7.0,<1.0.0",
+    "rich>=13.0.0,<14.0.0",
+]
+sandbox = [
+    "opensandbox>=0.1.4",
+    "opensandbox-code-interpreter>=0.1.2",
+]
+firecrawl = [
+    "firecrawl-py>=1.0.0",
+]
+tools = [
+    "beautifulsoup4>=4.12.0",
+    "gitpython>=3.1.0",
+]
+dev = [
+    "pytest>=7.4.0,<9.0.0",
+    "pytest-cov>=4.1.0,<7.0.0",
+    "pytest-timeout>=2.1.0,<3.0.0",
+    "mypy>=1.5.0,<2.0.0",
+    "ruff>=0.1.0,<1.0.0",
+    "black>=23.0.0,<26.0.0",
+    "pre-commit>=3.4.0,<5.0.0",
+]
+
+[project.scripts]
+genesia = "genesia.cli:main"
+genesia-agents = "agents.main:main"
+
+[tool.setuptools]
+packages = ["genesia", "genesia.backends", "agents", "agents.tools", "agents.sandbox"]
+
+[tool.setuptools.package-data]
+genesia = ["py.typed"]
+
+[tool.black]
+line-length = 100
+target-version = ['py39', 'py310', 'py311', 'py312']
+include = '\.pyi?$'
+extend-exclude = '''
+/(
+  # directories
+  \.eggs
+  | \.git
+  | \.hg
+  | \.mypy_cache
+  | \.tox
+  | \.venv
+  | build
+  | dist
+)/
+'''
+
+[tool.ruff]
+line-length = 100
+target-version = "py39"
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "F",   # pyflakes
+    "I",   # isort
+    "N",   # pep8-naming
+    "W",   # pycodestyle warnings
+    "UP",  # pyupgrade
+    "B",   # flake8-bugbear
+    "A",   # flake8-builtins
+    "C4",  # flake8-comprehensions
+    "T20", # flake8-print
+]
+ignore = [
+    "E501",  # line too long (handled by black)
+    "T201",  # print statements (we use them intentionally)
+]
+
+[tool.ruff.lint.per-file-ignores]
+"__init__.py" = ["F401"]  # Allow unused imports in __init__.py
+
+[tool.mypy]
+python_version = "3.9"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = false
+no_implicit_optional = true
+check_untyped_defs = true
+no_implicit_reexport = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_no_return = true
+strict_equality = true
+
+[[tool.mypy.overrides]]
+module = "requests.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "bs4.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "git.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "yaml.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "jsonschema.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "tomllib.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "tomli.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "anthropic.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "rich.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "opensandbox.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "firecrawl.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "code_interpreter.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "dotenv.*"
+ignore_missing_imports = true
+
+# Mixin classes access attributes from the composed class; suppress attr-defined
+[[tool.mypy.overrides]]
+module = [
+    "agents.critic_nodes",
+    "agents.specialist_nodes",
+    "agents.output_nodes",
+]
+disable_error_code = ["attr-defined"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = "test_*.py"
+python_classes = "Test*"
+python_functions = "test_*"
+addopts = [
+    "--verbose",
+    "--cov=genesia",
+    "--cov=agents",
+    "--cov-report=html",
+    "--cov-report=term-missing",
+    "--cov-report=xml",
+    "--cov-fail-under=45",
+]
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "integration: marks tests as integration tests",
+    "unit: marks tests as unit tests",
+]
+
+[tool.coverage.run]
+source = ["genesia", "agents"]
+omit = [
+    "*/tests/*",
+    "*/test_*.py",
+    "*/__pycache__/*",
+    "*/venv/*",
+    "*/.venv/*",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
+    "class .*\\bProtocol\\):",
+    "@(abc\\.)?abstractmethod",
+]

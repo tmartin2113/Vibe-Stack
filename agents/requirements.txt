@@ -1,0 +1,29 @@
+# Multi-Agent Framework Requirements
+#
+# For reproducible installs, use the lock file instead:
+#   pip install -r requirements-production.lock
+#
+# For development:
+#   pip install -e ".[agents,dev]"
+#   or: pip install -r requirements-dev.lock
+#
+# All version constraints are canonical in pyproject.toml.
+# This file exists for convenience / backward compatibility.
+
+## Core (always required)
+requests>=2.31.0,<3.0.0
+python-dotenv>=1.0.0,<2.0.0
+pydantic>=2.0.0,<3.0.0
+typing-extensions>=4.9.0,<5.0.0
+
+## Monitoring & Logging
+loguru>=0.7.0,<1.0.0
+rich>=13.0.0,<14.0.0
+
+## Optional: Cloud API backends (uncomment as needed)
+# anthropic>=0.39.0,<1.0.0
+# openai>=1.0.0,<2.0.0
+# google-generativeai>=0.3.0,<1.0.0
+
+## Optional: Mattermost driver for advanced bot features
+# mattermostdriver>=7.0.0,<8.0.0

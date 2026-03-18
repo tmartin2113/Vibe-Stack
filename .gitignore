@@ -1,7 +1,12 @@
 secrets/
 .env
+.env.local
+.env.*.local
 *.pyc
 __pycache__/
+*.py[cod]
+*$py.class
+*.so
 *.egg-info/
 .DS_Store
 docker-compose.override.yml
@@ -10,3 +15,51 @@ skill-sources/obra-superpowers/
 skill-sources/vercel-agent-skills/
 skill-sources/voltagent-skills/
 skill-sources/openclaw-skills/
+
+# Virtual Environments
+.venv/
+venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Testing
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# Build
+build/
+dist/
+
+# Models
+models/
+*.gguf
+*.bin
+*.safetensors
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Logs
+*.log
+
+# Node
+node_modules/
+
+# Skills (runtime state)
+genesia_skills/
+
+# llama.cpp
+llama.cpp/
+
+# GitHub workflows (requires workflow scope to push)
+.github/workflows/

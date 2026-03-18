@@ -1,0 +1,9 @@
+# Core dependencies for the genesia library.
+# For reproducible installs, use the lock file instead:
+#   pip install -r requirements-production.lock
+#
+# For development:
+#   pip install -e ".[agents,dev]"
+#   or: pip install -r requirements-dev.lock
+#
+requests>=2.31.0,<3.0.0

@@ -1,0 +1,40 @@
+# OpenSandbox — Code Execution Isolation
+#
+# Companion to the Genesia agent pipeline.
+# Paperclip runs natively (systemd service, see paperclip.service).
+# vLLM runs separately (standalone container, restart: unless-stopped).
+#
+# Usage:
+#   docker compose -f docker/docker-compose.paperclip.yml up -d
+#
+# Prerequisites:
+#   - vLLM running on host port 8000
+#   - Paperclip running natively on port 3100
+
+services:
+  # ── Sandbox (OpenSandbox) ──
+  opensandbox:
+    image: opensandbox/server:latest
+    restart: unless-stopped
+    ports:
+      - "9090:8080"
+    command: ["--config", "/root/.sandbox.toml"]
+    volumes:
+      - ../sandbox/sandbox.toml:/root/.sandbox.toml:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ../:/home/user/Genesia:ro
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/docs"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+volumes: {}

@@ -1,0 +1,68 @@
+# Production overlay for docker-compose.paperclip.yml
+#
+# Usage:
+#   docker compose -f docker/docker-compose.paperclip.yml \
+#                  -f docker/docker-compose.production.yml up -d
+#
+# Changes from development:
+#   - Pulls pre-built images from GHCR instead of building locally
+#   - Adds resource limits and restart policies
+#   - Configures JSON log driver for log aggregation
+#   - Adds health checks to agent containers
+#   - Pins image tags (override GENESIA_IMAGE_TAG in .env)
+
+x-genesia-production: &genesia-production
+  image: ghcr.io/tmartin2113/genesia:${GENESIA_IMAGE_TAG:-latest}
+  build: !reset null
+  restart: unless-stopped
+  deploy:
+    resources:
+      limits:
+        cpus: "2.0"
+        memory: 2G
+      reservations:
+        cpus: "0.5"
+        memory: 512M
+  logging:
+    driver: json-file
+    options:
+      max-size: "50m"
+      max-file: "5"
+  healthcheck:
+    test: ["CMD", "python", "-c", "import agents; print('ok')"]
+    interval: 30s
+    timeout: 10s
+    retries: 3
+    start_period: 15s
+
+services:
+  paperclip:
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
+
+  vllm:
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "100m"
+        max-file: "5"
+
+  genesia-code:
+    <<: *genesia-production
+
+  genesia-test:
+    <<: *genesia-production
+
+  genesia-security:
+    <<: *genesia-production
+
+  genesia-research:
+    <<: *genesia-production
+
+  genesia-orchestrator:
+    <<: *genesia-production
