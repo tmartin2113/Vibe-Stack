@@ -23,7 +23,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN groupadd -r vibe && useradd -r -g vibe -m -d /home/vibe vibe
 
 # Copy installed Python packages from deps stage
-COPY --from=deps /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
+COPY --from=deps /usr/local/lib/python3.14/site-packages /usr/local/lib/python3.14/site-packages
 COPY --from=deps /usr/local/bin /usr/local/bin
 
 # Copy application code (owned by vibe user)

@@ -260,7 +260,6 @@ Vibe/
 |   |   +-- aggregator.py              # Multi-specialist output aggregation
 |   |   +-- llm_backend.py             # Unified backend wrapper
 |   |   +-- llm_retry.py              # Retry utility (backoff + jitter)
-|   |   +-- training_collector.py       # SFT/DPO training data collection
 |   |   +-- doctor.py                   # Health checks
 |   |   +-- resource_discovery.py       # Hardware auto-discovery
 |   |   +-- resource_allocator.py       # Resource planning
@@ -325,7 +324,7 @@ cd paperclip-adapter && node --import tsx --test src/server/*.test.ts
 - Docker with NVIDIA Container Toolkit (for GPU passthrough)
 - 8GB+ RAM
 - NVIDIA GPU with 4GB+ VRAM (optional, for GPU inference)
-- Python 3.9+
+- Python 3.14+
 
 **Cloud backends:** No GPU required — just an API key.
 
@@ -356,7 +355,7 @@ python -m agents.doctor  # Checks hardware, backends, sandbox, GPU
 - **Sandboxing**: OpenSandbox (Docker) with GPU passthrough, subprocess fallback
 - **Tools**: Dev tools + SEO tools with runtime permission enforcement
 - **Persistence**: SQLite (sessions), JSONL (skill outcomes)
-- **Language**: Python 3.9+ (agents), TypeScript (adapter)
+- **Language**: Python 3.14+ (agents), TypeScript (adapter)
 - **Model**: Qwen 3.5 7B (default)
 - **Testing**: ~1772 tests (Python + TypeScript)
 

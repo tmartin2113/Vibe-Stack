@@ -169,4 +169,3 @@ tests/                     # ~1772 tests
 - **Local-first LLM** — Ollama is the default and only production-tested backend. Cloud backends are code-complete but untested in production.
 - **Paperclip owns orchestration** — No standalone K8s manifests. Paperclip handles scheduling, pod lifecycle, environment injection.
 - **Per-agent skill isolation** — Each agent has its own skill volume. No cross-agent skill sharing by design.
-- **Training data collection is passive** — `training_collector.py` writes SFT/DPO JSONL files that nothing reads yet. Kept for future fine-tuning.
