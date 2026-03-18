@@ -269,20 +269,21 @@ if [[ "$VLLM_SKIP" == "false" ]]; then
         GPU_MEM_UTIL=0.92
         MAX_NUM_SEQS=8
         EXTRA_ARGS=""
-    elif (( GPU_VRAM_MB >= 20480 )); then
-        # >= 20GB — 27B GPTQ-Int4 (hybrid architecture, only 16/64 layers need KV cache)
+    elif (( GPU_VRAM_MB >= 24576 )); then
+        # >= 24GB (true 24GB, e.g. A5000/L4) — 27B GPTQ-Int4
+        # Note: 22GB cards (e.g. 3090) OOM — weights alone use ~21.3GB
         VLLM_MODEL="Qwen/Qwen3.5-27B-GPTQ-Int4"
         VLLM_MODEL_SHORT="Qwen3.5-27B-GPTQ-Int4"
-        MAX_MODEL_LEN=32768
-        GPU_MEM_UTIL=0.90
+        MAX_MODEL_LEN=16384
+        GPU_MEM_UTIL=0.85
         MAX_NUM_SEQS=4
         EXTRA_ARGS="--enforce-eager"
     elif (( GPU_VRAM_MB >= 12288 )); then
-        # >= 12GB — 9B FP16
+        # >= 12GB — 9B FP16 (weights ~17.7GB, needs 0.92 util on 22GB cards)
         VLLM_MODEL="Qwen/Qwen3.5-9B"
         VLLM_MODEL_SHORT="Qwen3.5-9B"
         MAX_MODEL_LEN=8192
-        GPU_MEM_UTIL=0.88
+        GPU_MEM_UTIL=0.92
         MAX_NUM_SEQS=4
         EXTRA_ARGS="--enforce-eager"
     elif (( GPU_VRAM_MB >= 8192 )); then
