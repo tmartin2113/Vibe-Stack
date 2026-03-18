@@ -76,6 +76,22 @@ services:
               count: all
               capabilities: [gpu]
 
+  tailscale:
+    image: tailscale/tailscale:latest
+    hostname: ${TS_HOSTNAME:-vibe}
+    restart: unless-stopped
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      - TS_AUTHKEY=${TS_AUTHKEY:-}
+      - TS_STATE_DIR=/var/lib/tailscale
+      - TS_SERVE_CONFIG=/config/serve-config.json
+      - TS_USERSPACE=true
+    volumes:
+      - tailscale-state:/var/lib/tailscale
+      - ./tailscale/serve-config.json:/config/serve-config.json:ro
+
 volumes:
   vllm-models:
   vibe-data:
+  tailscale-state:
