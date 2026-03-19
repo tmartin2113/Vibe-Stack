@@ -6,7 +6,7 @@ payloads for structured inter-agent communication.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields as dataclass_fields
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Dict, List, Optional
@@ -265,3 +265,44 @@ class StatusPayload:
             current_step=data.get("current_step", ""),
             eta_seconds=data.get("eta_seconds"),
         )
+
+
+# ── Payload validation ──────────────────────────────────────────
+
+# Map message types to their expected payload dataclass
+_PAYLOAD_MAP: Dict[MessageType, type] = {
+    MessageType.DECISION: DecisionPayload,
+    MessageType.BLOCKER: BlockerPayload,
+    MessageType.HANDOFF: HandoffPayload,
+    MessageType.STATUS: StatusPayload,
+}
+
+
+def validate_metadata(msg_type: MessageType, metadata: Dict[str, Any]) -> List[str]:
+    """Validate metadata dict against the expected payload for the given type.
+
+    Returns list of warning strings (empty = valid). Advisory only — never raises.
+    Types not in the payload map (INFO, QUESTION, COMPLETION) always pass.
+    """
+    payload_cls = _PAYLOAD_MAP.get(msg_type)
+    if payload_cls is None:
+        return []
+
+    warnings: List[str] = []
+    expected_fields = {f.name for f in dataclass_fields(payload_cls)}
+
+    # Check for unexpected keys
+    extra = set(metadata.keys()) - expected_fields
+    if extra:
+        warnings.append(
+            f"{msg_type.value}: unexpected metadata keys: {sorted(extra)}"
+        )
+
+    # Check for missing expected keys (only warn, don't require)
+    missing = expected_fields - set(metadata.keys())
+    if missing:
+        warnings.append(
+            f"{msg_type.value}: missing expected metadata keys: {sorted(missing)}"
+        )
+
+    return warnings

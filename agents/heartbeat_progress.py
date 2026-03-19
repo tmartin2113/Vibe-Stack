@@ -7,6 +7,7 @@ in_progress and completion.
 """
 
 import logging
+import os
 from typing import Any, Callable, Dict
 
 from .paperclip_client import PaperclipAPIError, PaperclipClient
@@ -57,5 +58,23 @@ def make_progress_callback(
         except PaperclipAPIError:
             # Progress updates are best-effort — don't fail the workflow
             pass
+
+        # Best-effort dual-write to MessageStore
+        try:
+            from .message_store import get_shared_message_store
+            from .message_types import MessageType
+
+            store = get_shared_message_store()
+            store.send(
+                content=comment,
+                sender=os.environ.get("VIBE_AGENT_NAME", "vibe"),
+                msg_type=MessageType.STATUS,
+                topic=f"progress:{issue_id}",
+                issue_id=issue_id,
+                metadata={"node": node_name, "iteration": iteration, "score": score},
+                ttl_seconds=3600,  # 1 hour — progress is ephemeral
+            )
+        except Exception:
+            pass  # Best-effort, same as Paperclip write
 
     return _on_node_complete

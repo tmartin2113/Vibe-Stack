@@ -849,10 +849,10 @@ class TestVLLMEmbedder:
     """Test the VLLMEmbedder class (mocked, no real vLLM needed)."""
 
     def test_init_defaults(self):
-        from agents.memory_store import VLLMEmbedder, _DEFAULT_EMBED_MODEL, _DEFAULT_VLLM_URL
+        from agents.embedder import VLLMEmbedder, DEFAULT_EMBED_MODEL, DEFAULT_VLLM_URL
         embedder = VLLMEmbedder()
-        assert embedder.model == _DEFAULT_EMBED_MODEL
-        assert _DEFAULT_VLLM_URL.rstrip("/") in embedder.base_url
+        assert embedder.model == DEFAULT_EMBED_MODEL
+        assert DEFAULT_VLLM_URL.rstrip("/") in embedder.base_url
 
     def test_is_available_cached(self):
         from agents.memory_store import VLLMEmbedder

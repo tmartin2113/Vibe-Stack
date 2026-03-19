@@ -262,6 +262,25 @@ def run_heartbeat(config: SystemConfig) -> HeartbeatResult:
     finally:
         if ws_client is not None:
             ws_client.stop()
+
+        # Best-effort message store maintenance
+        try:
+            if config.messages.cleanup_on_heartbeat or config.messages.backfill_on_heartbeat:
+                from .message_store import get_shared_message_store
+                msg_store = get_shared_message_store()
+                if config.messages.cleanup_on_heartbeat:
+                    expired = msg_store.cleanup_expired()
+                    if expired:
+                        logger.info("Heartbeat cleanup: removed %d expired messages", expired)
+                if config.messages.backfill_on_heartbeat:
+                    backfilled = msg_store.backfill_embeddings(
+                        batch_size=config.messages.backfill_batch_size,
+                    )
+                    if backfilled:
+                        logger.info("Heartbeat backfill: embedded %d messages", backfilled)
+        except Exception as e:
+            logger.debug("Message store maintenance skipped: %s", e)
+
         try:
             client.release_issue(issue.id)
         except PaperclipAPIError as e:

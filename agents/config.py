@@ -219,6 +219,22 @@ class SpendingConfig:
 
 
 @dataclass
+class MessageStoreConfig:
+    """MessageStore (V2 inter-agent messaging) configuration.
+
+    Controls the SQLite-backed message store that replaces BULLETIN.md.
+    """
+
+    enabled: bool = False
+    db_path: str = ""                  # Override MESSAGE_STORE_PATH
+    max_messages: int = 5000           # FIFO eviction cap
+    default_ttl_seconds: int = 604800  # 7 days
+    cleanup_on_heartbeat: bool = True  # Run cleanup_expired in heartbeat finally
+    backfill_on_heartbeat: bool = True # Run backfill_embeddings in heartbeat finally
+    backfill_batch_size: int = 50
+
+
+@dataclass
 class PaperclipConfig:
     """Paperclip control plane integration configuration.
 
@@ -256,6 +272,7 @@ class SystemConfig:
     paperclip: PaperclipConfig = field(default_factory=PaperclipConfig)
     cache: CacheConfig = field(default_factory=CacheConfig)
     spending: SpendingConfig = field(default_factory=SpendingConfig)
+    messages: MessageStoreConfig = field(default_factory=MessageStoreConfig)
 
     # Logging
     log_level: str = "INFO"
@@ -301,6 +318,28 @@ class SystemConfig:
         poll_timeout = os.getenv("PAPERCLIP_ORCHESTRATOR_POLL_TIMEOUT")
         if poll_timeout:
             config.paperclip.orchestrator_poll_timeout = int(poll_timeout)
+
+        # MessageStore env overrides
+        msg_db = os.getenv("MESSAGE_STORE_PATH")
+        if msg_db:
+            config.messages.db_path = msg_db
+            config.messages.enabled = True
+        elif os.getenv("BULLETIN_PATH"):
+            config.messages.enabled = True
+        for attr, env_key in [
+            ("max_messages", "VIBE_MSG_MAX_MESSAGES"),
+            ("default_ttl_seconds", "VIBE_MSG_DEFAULT_TTL"),
+        ]:
+            val = os.getenv(env_key)
+            if val:
+                setattr(config.messages, attr, int(val))
+        for attr, env_key in [
+            ("cleanup_on_heartbeat", "VIBE_MSG_CLEANUP_ON_HEARTBEAT"),
+            ("backfill_on_heartbeat", "VIBE_MSG_BACKFILL_ON_HEARTBEAT"),
+        ]:
+            val = os.getenv(env_key)
+            if val is not None:
+                setattr(config.messages, attr, val.lower() not in ("false", "0", "no"))
 
         return config
 

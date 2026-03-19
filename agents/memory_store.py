@@ -34,7 +34,6 @@ Embeddings:
 
 import json
 import logging
-import math
 import sqlite3
 import threading
 from contextlib import contextmanager
@@ -42,124 +41,21 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+from .embedder import VLLMEmbedder, cosine_similarity
+
+# Backward-compat alias for internal usage
+_cosine_similarity = cosine_similarity
+
 logger = logging.getLogger(__name__)
 
 _DB_DIR = Path.home() / ".vibe"
 _DB_PATH = _DB_DIR / "memory.db"
-
-# Default embedding model — lightweight, fast, good for semantic similarity
-_DEFAULT_EMBED_MODEL = "nomic-embed-text"
-_DEFAULT_VLLM_URL = "http://localhost:8000"
 
 
 def _get_db_path() -> Path:
     """Return the database path, creating the parent directory if needed."""
     _DB_DIR.mkdir(parents=True, exist_ok=True)
     return _DB_PATH
-
-
-def _cosine_similarity(a: List[float], b: List[float]) -> float:
-    """Compute cosine similarity between two vectors."""
-    if len(a) != len(b) or not a:
-        return 0.0
-    dot = sum(x * y for x, y in zip(a, b))
-    norm_a = math.sqrt(sum(x * x for x in a))
-    norm_b = math.sqrt(sum(x * x for x in b))
-    if norm_a == 0.0 or norm_b == 0.0:
-        return 0.0
-    return dot / (norm_a * norm_b)
-
-
-class VLLMEmbedder:
-    """Generate embeddings via vLLM's OpenAI-compatible /v1/embeddings endpoint.
-
-    Gracefully degrades: if vLLM is unreachable or the model isn't loaded,
-    all methods return None instead of raising.
-    """
-
-    def __init__(
-        self,
-        model: str = _DEFAULT_EMBED_MODEL,
-        vllm_url: str = _DEFAULT_VLLM_URL,
-        timeout: int = 10,
-    ):
-        self.model = model
-        self.base_url = vllm_url.rstrip("/")
-        self.timeout = timeout
-        self._available: Optional[bool] = None
-
-    def is_available(self) -> bool:
-        """Check if the embedding model is reachable (cached after first call)."""
-        if self._available is not None:
-            return self._available
-        try:
-            import requests
-            resp = requests.post(
-                f"{self.base_url}/v1/embeddings",
-                json={"model": self.model, "input": "test"},
-                timeout=self.timeout,
-            )
-            self._available = resp.status_code == 200
-        except Exception:
-            self._available = False
-        if not self._available:
-            logger.info(
-                f"vLLM embeddings unavailable (model={self.model}). "
-                f"Memory search will use BM25 only."
-            )
-        return self._available
-
-    def embed(self, text: str) -> Optional[List[float]]:
-        """Return embedding vector for text, or None on failure."""
-        if not self.is_available():
-            return None
-        try:
-            import requests
-            resp = requests.post(
-                f"{self.base_url}/v1/embeddings",
-                json={"model": self.model, "input": text},
-                timeout=self.timeout,
-            )
-            if resp.status_code != 200:
-                return None
-            data = resp.json()
-            # OpenAI-compatible: {"data": [{"embedding": [...]}]}
-            items = data.get("data", [])
-            if items and len(items) > 0:
-                return items[0].get("embedding")
-            return None
-        except Exception as e:
-            logger.debug(f"Embedding failed: {e}")
-            return None
-
-    def embed_batch(self, texts: List[str]) -> List[Optional[List[float]]]:
-        """Embed multiple texts. Returns list of vectors (None on per-item failure)."""
-        if not texts:
-            return []
-        if not self.is_available():
-            return [None] * len(texts)
-        try:
-            import requests
-            resp = requests.post(
-                f"{self.base_url}/v1/embeddings",
-                json={"model": self.model, "input": texts},
-                timeout=self.timeout * 2,  # longer timeout for batch
-            )
-            if resp.status_code != 200:
-                return [None] * len(texts)
-            data = resp.json()
-            # OpenAI-compatible: {"data": [{"embedding": [...]}, ...]}
-            items = data.get("data", [])
-            result: List[Optional[List[float]]] = []
-            for i in range(len(texts)):
-                if i < len(items) and items[i].get("embedding"):
-                    result.append(items[i]["embedding"])
-                else:
-                    result.append(None)
-            return result
-        except Exception as e:
-            logger.debug(f"Batch embedding failed: {e}")
-            return [None] * len(texts)
 
 
 class MemoryEntry:

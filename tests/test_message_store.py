@@ -442,6 +442,7 @@ class TestSemanticSearch:
         # Mock the embedder
         mock_embedder = MagicMock()
         mock_embedder.is_available.return_value = True
+        mock_embedder.model = "test-model"
         store._embedder = mock_embedder
         return store, mock_embedder
 
@@ -904,24 +905,24 @@ class TestUpdatePaperclipCommentId:
 
 
 class TestVLLMEmbedder:
-    """VLLMEmbedder graceful degradation."""
+    """VLLMEmbedder graceful degradation (imported from agents.embedder)."""
 
     def test_unavailable_returns_none(self):
-        from agents.message_store import VLLMEmbedder
+        from agents.embedder import VLLMEmbedder
 
         embedder = VLLMEmbedder(vllm_url="http://nonexistent:9999", timeout=1)
         embedder._available = False
         assert embedder.embed("test") is None
 
     def test_available_cached(self):
-        from agents.message_store import VLLMEmbedder
+        from agents.embedder import VLLMEmbedder
 
         embedder = VLLMEmbedder()
         embedder._available = True
         assert embedder.is_available() is True
 
     def test_embed_failure_returns_none(self):
-        from agents.message_store import VLLMEmbedder
+        from agents.embedder import VLLMEmbedder
 
         embedder = VLLMEmbedder()
         embedder._available = True
