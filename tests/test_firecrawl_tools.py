@@ -442,7 +442,11 @@ class TestInfraToolSecurity:
 
 
 class TestBulletinBoardTool:
-    """Tests for the bulletin_board tool (shared inter-agent messaging)."""
+    """Tests for the bulletin_board tool (V2 SQLite-backed inter-agent messaging)."""
+
+    def _make_store(self, tmp_path):
+        from agents.message_store import MessageStore
+        return MessageStore(db_path=tmp_path / "test.db")
 
     def test_name_and_category(self):
         from agents.tools.bulletin_board import BulletinBoardTool
@@ -466,157 +470,156 @@ class TestBulletinBoardTool:
         assert "limit" in schema["properties"]
         assert "query" in schema["properties"]
 
-    def test_empty_action_rejected(self):
+    def test_empty_action_rejected(self, tmp_path):
         from agents.tools.bulletin_board import BulletinBoardTool
         tool = BulletinBoardTool()
-        with patch.dict(os.environ, {"BULLETIN_PATH": "/tmp/test_bulletin.md"}):
+        env = {"MESSAGE_STORE_PATH": str(tmp_path / "test.db")}
+        with patch.dict(os.environ, env, clear=False):
             result = tool.execute(action="")
             assert not result.success
             assert "No action" in result.error
 
-    def test_unknown_action_rejected(self):
+    def test_unknown_action_rejected(self, tmp_path):
         from agents.tools.bulletin_board import BulletinBoardTool
         tool = BulletinBoardTool()
-        with patch.dict(os.environ, {"BULLETIN_PATH": "/tmp/test_bulletin.md"}):
-            result = tool.execute(action="delete")
-            assert not result.success
-            assert "Unknown action" in result.error
+        store = self._make_store(tmp_path)
+        env = {"MESSAGE_STORE_PATH": str(tmp_path / "test.db")}
+        with patch.dict(os.environ, env, clear=False):
+            with patch("agents.tools.bulletin_board._get_store", return_value=store):
+                result = tool.execute(action="delete")
+                assert not result.success
+                assert "Unknown action" in result.error
 
     def test_missing_env_var(self):
         from agents.tools.bulletin_board import BulletinBoardTool
         tool = BulletinBoardTool()
         with patch.dict(os.environ, {}, clear=False):
             os.environ.pop("BULLETIN_PATH", None)
+            os.environ.pop("MESSAGE_STORE_PATH", None)
             result = tool.execute(action="read")
             assert not result.success
-            assert "BULLETIN_PATH" in result.error
+            assert "not configured" in result.error
 
-    def test_post_creates_file_and_writes(self, tmp_path):
+    def test_post_success(self, tmp_path):
         from agents.tools.bulletin_board import BulletinBoardTool
         tool = BulletinBoardTool()
-        bulletin_file = str(tmp_path / "BULLETIN.md")
-        with patch.dict(os.environ, {
-            "BULLETIN_PATH": bulletin_file,
-            "VIBE_AGENT_NAME": "test-agent",
-        }):
-            result = tool.execute(action="post", message="Hello from tests")
-            assert result.success
-            assert "Posted to bulletin board" in result.output
-            assert result.metadata["agent"] == "test-agent"
-
-            # Verify file was created with content
-            content = (tmp_path / "BULLETIN.md").read_text()
-            assert "Hello from tests" in content
-            assert "test-agent" in content
+        store = self._make_store(tmp_path)
+        env = {"MESSAGE_STORE_PATH": str(tmp_path / "test.db"), "VIBE_AGENT_NAME": "test-agent"}
+        with patch.dict(os.environ, env, clear=False):
+            with patch("agents.tools.bulletin_board._get_store", return_value=store):
+                result = tool.execute(action="post", message="Hello from tests")
+                assert result.success
+                assert "Posted" in result.output
+                assert result.metadata["sender"] == "test-agent"
 
     def test_post_with_topic(self, tmp_path):
         from agents.tools.bulletin_board import BulletinBoardTool
         tool = BulletinBoardTool()
-        bulletin_file = str(tmp_path / "BULLETIN.md")
-        with patch.dict(os.environ, {
-            "BULLETIN_PATH": bulletin_file,
-            "VIBE_AGENT_NAME": "test-agent",
-        }):
-            result = tool.execute(action="post", message="Use Redis", topic="architecture")
-            assert result.success
-            assert result.metadata["topic"] == "architecture"
-            content = (tmp_path / "BULLETIN.md").read_text()
-            assert "> Topic: architecture" in content
+        store = self._make_store(tmp_path)
+        env = {"MESSAGE_STORE_PATH": str(tmp_path / "test.db"), "VIBE_AGENT_NAME": "test-agent"}
+        with patch.dict(os.environ, env, clear=False):
+            with patch("agents.tools.bulletin_board._get_store", return_value=store):
+                result = tool.execute(action="post", message="Use Redis", topic="architecture")
+                assert result.success
+                assert result.metadata["topic"] == "architecture"
 
     def test_post_empty_message_rejected(self, tmp_path):
         from agents.tools.bulletin_board import BulletinBoardTool
         tool = BulletinBoardTool()
-        with patch.dict(os.environ, {"BULLETIN_PATH": str(tmp_path / "BULLETIN.md")}):
-            result = tool.execute(action="post", message="")
-            assert not result.success
-            assert "No message" in result.error
+        store = self._make_store(tmp_path)
+        env = {"MESSAGE_STORE_PATH": str(tmp_path / "test.db")}
+        with patch.dict(os.environ, env, clear=False):
+            with patch("agents.tools.bulletin_board._get_store", return_value=store):
+                result = tool.execute(action="post", message="")
+                assert not result.success
+                assert "No message" in result.error
 
-    def test_read_empty_bulletin(self, tmp_path):
+    def test_read_empty(self, tmp_path):
         from agents.tools.bulletin_board import BulletinBoardTool
         tool = BulletinBoardTool()
-        bulletin_file = str(tmp_path / "BULLETIN.md")
-        with patch.dict(os.environ, {"BULLETIN_PATH": bulletin_file}):
-            result = tool.execute(action="read")
-            assert result.success
-            assert "No bulletin entries" in result.output
+        store = self._make_store(tmp_path)
+        env = {"MESSAGE_STORE_PATH": str(tmp_path / "test.db")}
+        with patch.dict(os.environ, env, clear=False):
+            with patch("agents.tools.bulletin_board._get_store", return_value=store):
+                result = tool.execute(action="read")
+                assert result.success
+                assert "No messages" in result.output
 
     def test_read_returns_posted_entries(self, tmp_path):
         from agents.tools.bulletin_board import BulletinBoardTool
         tool = BulletinBoardTool()
-        bulletin_file = str(tmp_path / "BULLETIN.md")
-        with patch.dict(os.environ, {
-            "BULLETIN_PATH": bulletin_file,
-            "VIBE_AGENT_NAME": "agent-1",
-        }):
-            tool.execute(action="post", message="First message")
-            tool.execute(action="post", message="Second message")
-            result = tool.execute(action="read", limit=10)
-            assert result.success
-            assert "First message" in result.output
-            assert "Second message" in result.output
-            assert result.metadata["count"] == 2
+        store = self._make_store(tmp_path)
+        store.send(content="First message", sender="agent-1")
+        store.send(content="Second message", sender="agent-1")
+        env = {"MESSAGE_STORE_PATH": str(tmp_path / "test.db")}
+        with patch.dict(os.environ, env, clear=False):
+            with patch("agents.tools.bulletin_board._get_store", return_value=store):
+                result = tool.execute(action="read", limit=10)
+                assert result.success
+                assert "First message" in result.output
+                assert "Second message" in result.output
+                assert result.metadata["count"] == 2
 
     def test_read_respects_limit(self, tmp_path):
         from agents.tools.bulletin_board import BulletinBoardTool
         tool = BulletinBoardTool()
-        bulletin_file = str(tmp_path / "BULLETIN.md")
-        with patch.dict(os.environ, {
-            "BULLETIN_PATH": bulletin_file,
-            "VIBE_AGENT_NAME": "agent-1",
-        }):
-            for i in range(5):
-                tool.execute(action="post", message=f"Message {i}")
-            result = tool.execute(action="read", limit=2)
-            assert result.success
-            assert result.metadata["count"] == 2
-            assert result.metadata["total"] == 5
+        store = self._make_store(tmp_path)
+        for i in range(5):
+            store.send(content=f"Message {i}", sender="agent-1")
+        env = {"MESSAGE_STORE_PATH": str(tmp_path / "test.db")}
+        with patch.dict(os.environ, env, clear=False):
+            with patch("agents.tools.bulletin_board._get_store", return_value=store):
+                result = tool.execute(action="read", limit=2)
+                assert result.success
+                assert result.metadata["count"] == 2
 
     def test_search_finds_matching_entries(self, tmp_path):
         from agents.tools.bulletin_board import BulletinBoardTool
         tool = BulletinBoardTool()
-        bulletin_file = str(tmp_path / "BULLETIN.md")
-        with patch.dict(os.environ, {
-            "BULLETIN_PATH": bulletin_file,
-            "VIBE_AGENT_NAME": "agent-1",
-        }):
-            tool.execute(action="post", message="Use Redis for caching")
-            tool.execute(action="post", message="SQLite for local storage")
-            result = tool.execute(action="search", query="Redis")
-            assert result.success
-            assert "Redis" in result.output
-            assert "SQLite" not in result.output
-            assert result.metadata["count"] == 1
+        store = self._make_store(tmp_path)
+        store.send(content="Use Redis for caching", sender="agent-1")
+        store.send(content="SQLite for local storage", sender="agent-1")
+        env = {"MESSAGE_STORE_PATH": str(tmp_path / "test.db")}
+        with patch.dict(os.environ, env, clear=False):
+            with patch("agents.tools.bulletin_board._get_store", return_value=store):
+                result = tool.execute(action="search", query="Redis")
+                assert result.success
+                assert "Redis" in result.output
+                assert result.metadata["count"] >= 1
 
     def test_search_no_match(self, tmp_path):
         from agents.tools.bulletin_board import BulletinBoardTool
         tool = BulletinBoardTool()
-        bulletin_file = str(tmp_path / "BULLETIN.md")
-        with patch.dict(os.environ, {
-            "BULLETIN_PATH": bulletin_file,
-            "VIBE_AGENT_NAME": "agent-1",
-        }):
-            tool.execute(action="post", message="Hello world")
-            result = tool.execute(action="search", query="nonexistent")
-            assert result.success
-            assert "No entries matching" in result.output
+        store = self._make_store(tmp_path)
+        store.send(content="Hello world", sender="agent-1")
+        env = {"MESSAGE_STORE_PATH": str(tmp_path / "test.db")}
+        with patch.dict(os.environ, env, clear=False):
+            with patch("agents.tools.bulletin_board._get_store", return_value=store):
+                result = tool.execute(action="search", query="nonexistent")
+                assert result.success
+                assert "No messages" in result.output
 
     def test_search_empty_query_rejected(self, tmp_path):
         from agents.tools.bulletin_board import BulletinBoardTool
         tool = BulletinBoardTool()
-        with patch.dict(os.environ, {"BULLETIN_PATH": str(tmp_path / "BULLETIN.md")}):
-            result = tool.execute(action="search", query="")
-            assert not result.success
-            assert "No search query" in result.error
+        store = self._make_store(tmp_path)
+        env = {"MESSAGE_STORE_PATH": str(tmp_path / "test.db")}
+        with patch.dict(os.environ, env, clear=False):
+            with patch("agents.tools.bulletin_board._get_store", return_value=store):
+                result = tool.execute(action="search", query="")
+                assert not result.success
+                assert "No search query" in result.error
 
     def test_agent_name_fallback_to_paperclip_id(self, tmp_path):
         from agents.tools.bulletin_board import BulletinBoardTool
         tool = BulletinBoardTool()
-        bulletin_file = str(tmp_path / "BULLETIN.md")
-        env = {"BULLETIN_PATH": bulletin_file, "PAPERCLIP_AGENT_ID": "pc-agent-42"}
+        store = self._make_store(tmp_path)
+        env = {"MESSAGE_STORE_PATH": str(tmp_path / "test.db"), "PAPERCLIP_AGENT_ID": "pc-agent-42"}
         with patch.dict(os.environ, env, clear=False):
             os.environ.pop("VIBE_AGENT_NAME", None)
-            result = tool.execute(action="post", message="Test")
-            assert result.metadata["agent"] == "pc-agent-42"
+            with patch("agents.tools.bulletin_board._get_store", return_value=store):
+                result = tool.execute(action="post", message="Test")
+                assert result.metadata["sender"] == "pc-agent-42"
 
     def test_get_schema_full(self):
         from agents.tools.bulletin_board import BulletinBoardTool
@@ -626,160 +629,127 @@ class TestBulletinBoardTool:
         assert "description" in schema
         assert "parameters" in schema
 
-
     def test_read_with_topic_shows_topic(self, tmp_path):
         from agents.tools.bulletin_board import BulletinBoardTool
         tool = BulletinBoardTool()
-        bulletin_file = str(tmp_path / "BULLETIN.md")
-        with patch.dict(os.environ, {
-            "BULLETIN_PATH": bulletin_file,
-            "VIBE_AGENT_NAME": "agent-1",
-        }):
-            tool.execute(action="post", message="Use Redis", topic="architecture")
-            result = tool.execute(action="read")
-            assert result.success
-            assert "Topic: architecture" in result.output
+        store = self._make_store(tmp_path)
+        store.send(content="Use Redis", sender="agent-1", topic="architecture")
+        env = {"MESSAGE_STORE_PATH": str(tmp_path / "test.db")}
+        with patch.dict(os.environ, env, clear=False):
+            with patch("agents.tools.bulletin_board._get_store", return_value=store):
+                result = tool.execute(action="read")
+                assert result.success
+                assert "architecture" in result.output
 
     def test_read_limit_clamped_low(self, tmp_path):
         from agents.tools.bulletin_board import BulletinBoardTool
         tool = BulletinBoardTool()
-        bulletin_file = str(tmp_path / "BULLETIN.md")
-        with patch.dict(os.environ, {
-            "BULLETIN_PATH": bulletin_file,
-            "VIBE_AGENT_NAME": "agent-1",
-        }):
-            tool.execute(action="post", message="msg")
-            result = tool.execute(action="read", limit=0)
-            assert result.success
-            assert result.metadata["count"] == 1
+        store = self._make_store(tmp_path)
+        store.send(content="msg", sender="agent-1")
+        env = {"MESSAGE_STORE_PATH": str(tmp_path / "test.db")}
+        with patch.dict(os.environ, env, clear=False):
+            with patch("agents.tools.bulletin_board._get_store", return_value=store):
+                result = tool.execute(action="read", limit=0)
+                assert result.success
+                assert result.metadata["count"] == 1
 
     def test_read_limit_clamped_high(self, tmp_path):
         from agents.tools.bulletin_board import BulletinBoardTool
         tool = BulletinBoardTool()
-        bulletin_file = str(tmp_path / "BULLETIN.md")
-        with patch.dict(os.environ, {
-            "BULLETIN_PATH": bulletin_file,
-            "VIBE_AGENT_NAME": "agent-1",
-        }):
-            tool.execute(action="post", message="msg")
-            result = tool.execute(action="read", limit=999)
-            assert result.success
-            assert result.metadata["count"] == 1
+        store = self._make_store(tmp_path)
+        store.send(content="msg", sender="agent-1")
+        env = {"MESSAGE_STORE_PATH": str(tmp_path / "test.db")}
+        with patch.dict(os.environ, env, clear=False):
+            with patch("agents.tools.bulletin_board._get_store", return_value=store):
+                result = tool.execute(action="read", limit=999)
+                assert result.success
+                assert result.metadata["count"] == 1
 
     def test_search_by_topic(self, tmp_path):
         from agents.tools.bulletin_board import BulletinBoardTool
         tool = BulletinBoardTool()
-        bulletin_file = str(tmp_path / "BULLETIN.md")
-        with patch.dict(os.environ, {
-            "BULLETIN_PATH": bulletin_file,
-            "VIBE_AGENT_NAME": "agent-1",
-        }):
-            tool.execute(action="post", message="Use Redis", topic="architecture")
-            tool.execute(action="post", message="Fix bug", topic="bugfix")
-            result = tool.execute(action="search", query="architecture")
-            assert result.success
-            assert "Redis" in result.output
-            assert "Topic: architecture" in result.output
-            assert result.metadata["count"] == 1
+        store = self._make_store(tmp_path)
+        store.send(content="Use Redis", sender="agent-1", topic="architecture")
+        store.send(content="Fix bug", sender="agent-1", topic="bugfix")
+        env = {"MESSAGE_STORE_PATH": str(tmp_path / "test.db")}
+        with patch.dict(os.environ, env, clear=False):
+            with patch("agents.tools.bulletin_board._get_store", return_value=store):
+                result = tool.execute(action="search", query="architecture")
+                assert result.success
+                assert "Redis" in result.output
+                assert result.metadata["count"] >= 1
 
     def test_read_recent_entries_no_env(self):
         from agents.tools.bulletin_board import read_recent_entries
         with patch.dict(os.environ, {}, clear=False):
             os.environ.pop("BULLETIN_PATH", None)
-            assert read_recent_entries() == ""
-
-    def test_read_recent_entries_missing_file(self, tmp_path):
-        from agents.tools.bulletin_board import read_recent_entries
-        with patch.dict(os.environ, {"BULLETIN_PATH": str(tmp_path / "nonexistent.md")}):
+            os.environ.pop("MESSAGE_STORE_PATH", None)
             assert read_recent_entries() == ""
 
     def test_read_recent_entries_with_posts(self, tmp_path):
-        from agents.tools.bulletin_board import BulletinBoardTool, read_recent_entries
-        tool = BulletinBoardTool()
-        bulletin_file = str(tmp_path / "BULLETIN.md")
-        with patch.dict(os.environ, {
-            "BULLETIN_PATH": bulletin_file,
-            "VIBE_AGENT_NAME": "agent-1",
-        }):
-            tool.execute(action="post", message="Hello world")
-            tool.execute(action="post", message="Topic post", topic="test-topic")
-            result = read_recent_entries(limit=10)
-            assert "## Bulletin Board" in result
-            assert "Hello world" in result
-            assert "topic: test-topic" in result
-
-    def test_read_recent_entries_empty_bulletin(self, tmp_path):
-        from agents.tools.bulletin_board import read_recent_entries, _BULLETIN_HEADER
-        bulletin_file = tmp_path / "BULLETIN.md"
-        bulletin_file.write_text(_BULLETIN_HEADER, encoding="utf-8")
-        with patch.dict(os.environ, {"BULLETIN_PATH": str(bulletin_file)}):
-            assert read_recent_entries() == ""
-
-    def test_post_error_on_readonly_path(self, tmp_path):
-        """Post to unwritable directory returns error."""
-        from agents.tools.bulletin_board import BulletinBoardTool
-        tool = BulletinBoardTool()
-        # Point to a path under /proc which is not writable
-        with patch.dict(os.environ, {
-            "BULLETIN_PATH": "/proc/nonexistent/BULLETIN.md",
-            "VIBE_AGENT_NAME": "agent-1",
-        }):
-            result = tool.execute(action="post", message="This should fail")
-            assert not result.success
-            assert "Failed to post" in result.error
-
-    def test_read_error_handling(self):
-        """Read handles file system errors gracefully."""
-        from agents.tools.bulletin_board import BulletinBoardTool
-        tool = BulletinBoardTool()
-        with patch.dict(os.environ, {"BULLETIN_PATH": "/tmp/test_bulletin.md"}):
-            with patch("agents.tools.bulletin_board._read_entries", side_effect=OSError("disk error")):
-                result = tool.execute(action="read")
-                assert not result.success
-                assert "Failed to read" in result.error
-
-    def test_search_error_handling(self):
-        """Search handles file system errors gracefully."""
-        from agents.tools.bulletin_board import BulletinBoardTool
-        tool = BulletinBoardTool()
-        with patch.dict(os.environ, {"BULLETIN_PATH": "/tmp/test_bulletin.md"}):
-            with patch("agents.tools.bulletin_board._read_entries", side_effect=OSError("disk error")):
-                result = tool.execute(action="search", query="test")
-                assert not result.success
-                assert "Failed to search" in result.error
+        from agents.tools.bulletin_board import read_recent_entries
+        store = self._make_store(tmp_path)
+        store.send(content="Hello world", sender="agent-1")
+        store.send(content="Topic post", sender="agent-1", topic="test-topic")
+        env = {"MESSAGE_STORE_PATH": str(tmp_path / "test.db")}
+        with patch.dict(os.environ, env, clear=False):
+            with patch("agents.tools.bulletin_board._get_store", return_value=store):
+                result = read_recent_entries(limit=10)
+                assert "Bulletin Board" in result
+                assert "Hello world" in result
 
     def test_read_recent_entries_error_handling(self, tmp_path):
         """read_recent_entries returns empty string on error."""
         from agents.tools.bulletin_board import read_recent_entries
-        with patch.dict(os.environ, {"BULLETIN_PATH": str(tmp_path / "BULLETIN.md")}):
-            with patch("agents.tools.bulletin_board._read_entries", side_effect=OSError("disk error")):
-                # Create the file so it gets past the exists() check
-                (tmp_path / "BULLETIN.md").write_text("# test\n")
+        env = {"MESSAGE_STORE_PATH": str(tmp_path / "test.db")}
+        with patch.dict(os.environ, env, clear=False):
+            with patch("agents.tools.bulletin_board._get_store", side_effect=OSError("disk error")):
                 assert read_recent_entries() == ""
 
-    def test_search_empty_bulletin_file(self, tmp_path):
-        """Search on a bulletin file with header only returns no entries."""
-        from agents.tools.bulletin_board import BulletinBoardTool, _BULLETIN_HEADER
+    def test_post_error_handling(self, tmp_path):
+        """Post handles store errors gracefully."""
+        from agents.tools.bulletin_board import BulletinBoardTool
         tool = BulletinBoardTool()
-        bulletin_file = tmp_path / "BULLETIN.md"
-        bulletin_file.write_text(_BULLETIN_HEADER, encoding="utf-8")
-        with patch.dict(os.environ, {"BULLETIN_PATH": str(bulletin_file)}):
-            result = tool.execute(action="search", query="anything")
-            assert result.success
-            assert "No bulletin entries" in result.output
+        mock_store = MagicMock()
+        mock_store.send.side_effect = RuntimeError("db error")
+        env = {"MESSAGE_STORE_PATH": str(tmp_path / "test.db")}
+        with patch.dict(os.environ, env, clear=False):
+            with patch("agents.tools.bulletin_board._get_store", return_value=mock_store):
+                result = tool.execute(action="post", message="test")
+                assert not result.success
+                assert "Failed to post" in result.error
+
+    def test_search_error_handling(self, tmp_path):
+        """Search handles store errors gracefully."""
+        from agents.tools.bulletin_board import BulletinBoardTool
+        tool = BulletinBoardTool()
+        mock_store = MagicMock()
+        mock_store.hybrid_search.side_effect = RuntimeError("db error")
+        env = {"MESSAGE_STORE_PATH": str(tmp_path / "test.db")}
+        with patch.dict(os.environ, env, clear=False):
+            with patch("agents.tools.bulletin_board._get_store", return_value=mock_store):
+                result = tool.execute(action="search", query="test")
+                assert not result.success
+                assert "Failed to search" in result.error
 
 
 class TestBulletinRegistryWiring:
-    """Test that bulletin_board appears in the registry when BULLETIN_PATH is set."""
+    """Test that bulletin_board appears in the registry when env is set."""
 
     def test_not_registered_without_env(self):
         with patch.dict(os.environ, {}, clear=False):
             os.environ.pop("BULLETIN_PATH", None)
+            os.environ.pop("MESSAGE_STORE_PATH", None)
             registry = create_default_tool_registry(sandbox_pool=MagicMock(), network_egress=False)
             assert registry.get("bulletin_board") is None
 
-    def test_registered_when_env_set(self):
+    def test_registered_when_bulletin_path_set(self):
         with patch.dict(os.environ, {"BULLETIN_PATH": "/shared/bulletin/BULLETIN.md"}):
+            registry = create_default_tool_registry(sandbox_pool=MagicMock(), network_egress=False)
+            assert registry.get("bulletin_board") is not None
+
+    def test_registered_when_message_store_path_set(self):
+        with patch.dict(os.environ, {"MESSAGE_STORE_PATH": "/shared/bulletin/messages.db"}):
             registry = create_default_tool_registry(sandbox_pool=MagicMock(), network_egress=False)
             assert registry.get("bulletin_board") is not None
 

@@ -98,6 +98,7 @@ class AgentState(TypedDict, total=False):
 
     # ===== MEMORY CONTEXT (auto-injected) =====
     memory_context: str  # Relevant memories auto-injected for the specialist
+    pending_messages: List[Dict[str, Any]]  # Raw message dicts from MessageStore
 
     # ===== TOOL CALLING =====
     tool_calls_made: List[Dict[str, Any]]  # History of tool executions
@@ -216,6 +217,7 @@ def create_initial_state(
 
         # Memory context (auto-injected before specialist)
         memory_context="",
+        pending_messages=[],
 
         # History
         conversation_history=[],

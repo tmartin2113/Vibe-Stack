@@ -535,15 +535,36 @@ def create_agent_graph(adapter_registry: AdapterRegistry, tool_registry: Optiona
             logger.debug(f"Memory injection skipped: {e}")
             state["memory_context"] = ""
 
-        # Append recent bulletin board entries (if configured)
+        # Append inter-agent messages (MessageStore or v1 fallback)
         try:
-            from .tools.bulletin_board import read_recent_entries
-            bulletin_text = read_recent_entries(limit=10)
-            if bulletin_text:
+            from .message_store import get_shared_message_store, _get_agent_name as _msg_agent_name
+            msg_store = get_shared_message_store()
+            agent_name = _msg_agent_name()
+            messages = msg_store.relevant_messages(
+                query=user_request,
+                agent_name=agent_name,
+                max_results=10,
+            )
+            if messages:
+                sections = [m.format_for_context() for m in messages]
+                bulletin_text = (
+                    "\n\n## Inter-Agent Messages\n\n"
+                    + "\n".join(sections)
+                )
                 state["memory_context"] = state.get("memory_context", "") + bulletin_text
-                logger.info("Injected bulletin board entries into specialist context")
+                state["pending_messages"] = [m.to_dict() for m in messages]
+                logger.info(f"Injected {len(messages)} inter-agent messages into specialist context")
         except Exception as e:
-            logger.debug(f"Bulletin injection skipped: {e}")
+            logger.debug(f"Message injection skipped: {e}")
+            # Fallback to v1 bulletin board
+            try:
+                from .tools.bulletin_board import read_recent_entries
+                bulletin_text = read_recent_entries(limit=10)
+                if bulletin_text:
+                    state["memory_context"] = state.get("memory_context", "") + bulletin_text
+                    logger.info("Injected v1 bulletin board entries into specialist context")
+            except Exception as e2:
+                logger.debug(f"V1 bulletin fallback also skipped: {e2}")
 
         return state
 

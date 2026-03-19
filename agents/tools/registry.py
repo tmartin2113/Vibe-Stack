@@ -1305,7 +1305,7 @@ def create_default_tool_registry(
     if os.environ.get("MINIO_URL"):
         registry.register(ArtifactStorageTool())
         logger.info("Tool registry: artifact_storage enabled (MinIO)")
-    if os.environ.get("BULLETIN_PATH"):
+    if os.environ.get("MESSAGE_STORE_PATH") or os.environ.get("BULLETIN_PATH"):
         from .bulletin_board import BulletinBoardTool
         registry.register(BulletinBoardTool())
         logger.info("Tool registry: bulletin_board enabled")
@@ -1393,7 +1393,7 @@ def create_subprocess_tool_registry(
         registry.register(GitForgeTool())
     if os.environ.get("MINIO_URL"):
         registry.register(ArtifactStorageTool())
-    if os.environ.get("BULLETIN_PATH"):
+    if os.environ.get("MESSAGE_STORE_PATH") or os.environ.get("BULLETIN_PATH"):
         from .bulletin_board import BulletinBoardTool
         registry.register(BulletinBoardTool())
 

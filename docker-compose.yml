@@ -16,6 +16,7 @@ services:
       - VIBE_SANDBOX_URL=http://opensandbox:8080
       - VIBE_HEALTH_PORT=8080
       - BULLETIN_PATH=/shared/bulletin/BULLETIN.md
+      - MESSAGE_STORE_PATH=/shared/bulletin/messages.db
       - LOG_LEVEL=INFO
       - LOG_FORMAT=json
     volumes:

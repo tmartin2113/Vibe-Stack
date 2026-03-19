@@ -481,14 +481,15 @@ class TestInnerFunctions:
         mock_store.hybrid_recall.return_value = [entry1, entry2]
 
         with patch("agents.tools.registry._get_shared_memory_store", return_value=mock_store):
-            with patch("agents.tools.bulletin_board.read_recent_entries", side_effect=Exception("skip")):
-                app, _ = self._build_graph_and_extract_nodes()
-                inject_fn = app._nodes["inject_memory"]
-                state = create_initial_state("design an API")
-                result = inject_fn(state)
-                assert "Previous decision about API design" in result["memory_context"]
-                assert "session-123" in result["memory_context"]
-                assert "Code review feedback" in result["memory_context"]
+            with patch("agents.message_store.get_shared_message_store", side_effect=Exception("skip")):
+                with patch("agents.tools.bulletin_board.read_recent_entries", side_effect=Exception("skip")):
+                    app, _ = self._build_graph_and_extract_nodes()
+                    inject_fn = app._nodes["inject_memory"]
+                    state = create_initial_state("design an API")
+                    result = inject_fn(state)
+                    assert "Previous decision about API design" in result["memory_context"]
+                    assert "session-123" in result["memory_context"]
+                    assert "Code review feedback" in result["memory_context"]
 
     def test_inject_memory_no_results(self):
         """Lines 515-517: no memory results sets empty context."""
@@ -496,44 +497,67 @@ class TestInnerFunctions:
         mock_store.hybrid_recall.return_value = []
 
         with patch("agents.tools.registry._get_shared_memory_store", return_value=mock_store):
-            with patch("agents.tools.bulletin_board.read_recent_entries", side_effect=Exception("skip")):
-                app, _ = self._build_graph_and_extract_nodes()
-                inject_fn = app._nodes["inject_memory"]
-                state = create_initial_state("test request")
-                result = inject_fn(state)
-                assert result["memory_context"] == ""
+            with patch("agents.message_store.get_shared_message_store", side_effect=Exception("skip")):
+                with patch("agents.tools.bulletin_board.read_recent_entries", side_effect=Exception("skip")):
+                    app, _ = self._build_graph_and_extract_nodes()
+                    inject_fn = app._nodes["inject_memory"]
+                    state = create_initial_state("test request")
+                    result = inject_fn(state)
+                    assert result["memory_context"] == ""
 
     def test_inject_memory_exception_handled(self):
         """Lines 534-536: exception during memory recall is caught gracefully."""
         with patch("agents.tools.registry._get_shared_memory_store", side_effect=RuntimeError("DB fail")):
-            with patch("agents.tools.bulletin_board.read_recent_entries", side_effect=Exception("skip")):
-                app, _ = self._build_graph_and_extract_nodes()
-                inject_fn = app._nodes["inject_memory"]
-                state = create_initial_state("test")
-                result = inject_fn(state)
-                assert result["memory_context"] == ""
+            with patch("agents.message_store.get_shared_message_store", side_effect=Exception("skip")):
+                with patch("agents.tools.bulletin_board.read_recent_entries", side_effect=Exception("skip")):
+                    app, _ = self._build_graph_and_extract_nodes()
+                    inject_fn = app._nodes["inject_memory"]
+                    state = create_initial_state("test")
+                    result = inject_fn(state)
+                    assert result["memory_context"] == ""
 
-    def test_inject_memory_with_bulletin_board(self):
-        """Lines 539-546: bulletin board entries appended to memory context.
+    def test_inject_memory_with_message_store(self):
+        """Inter-agent messages from MessageStore appended to memory context.
 
-        The bulletin board code runs AFTER the memory recall block.  To reach
+        The MessageStore code runs AFTER the memory recall block.  To reach
         it we need the first try block to complete without an early return.
         We make hybrid_recall raise so the except sets memory_context="" and
-        falls through to the bulletin board try block.
+        falls through to the MessageStore try block.
         """
-        mock_store = MagicMock()
-        mock_store.hybrid_recall.side_effect = RuntimeError("memory unavailable")
+        mock_memory_store = MagicMock()
+        mock_memory_store.hybrid_recall.side_effect = RuntimeError("memory unavailable")
 
-        # _get_shared_memory_store is imported at graph-build time (line 494),
-        # so we must patch before building the graph so the closure captures the mock.
-        with patch("agents.tools.registry._get_shared_memory_store", return_value=mock_store):
+        # Mock MessageStore with relevant_messages returning mock messages
+        mock_msg = MagicMock()
+        mock_msg.format_for_context.return_value = "- **[BLOCKER] from agent-a**: API is down"
+        mock_msg.to_dict.return_value = {"id": "1", "content": "API is down"}
+
+        mock_msg_store = MagicMock()
+        mock_msg_store.relevant_messages.return_value = [mock_msg]
+
+        with patch("agents.tools.registry._get_shared_memory_store", return_value=mock_memory_store):
             app, _ = self._build_graph_and_extract_nodes()
             inject_fn = app._nodes["inject_memory"]
-            # bulletin board import happens at call-time (line 540)
-            with patch("agents.tools.bulletin_board.read_recent_entries", return_value="\n## Bulletin\n- Item 1"):
+            with patch("agents.message_store.get_shared_message_store", return_value=mock_msg_store):
                 state = create_initial_state("test request")
                 result = inject_fn(state)
-                assert "Bulletin" in result.get("memory_context", "")
+                assert "Inter-Agent Messages" in result.get("memory_context", "")
+                assert "API is down" in result.get("memory_context", "")
+                assert len(result.get("pending_messages", [])) == 1
+
+    def test_inject_memory_v1_fallback(self):
+        """When MessageStore fails, falls back to v1 read_recent_entries."""
+        mock_memory_store = MagicMock()
+        mock_memory_store.hybrid_recall.side_effect = RuntimeError("memory unavailable")
+
+        with patch("agents.tools.registry._get_shared_memory_store", return_value=mock_memory_store):
+            app, _ = self._build_graph_and_extract_nodes()
+            inject_fn = app._nodes["inject_memory"]
+            with patch("agents.message_store.get_shared_message_store", side_effect=Exception("db fail")):
+                with patch("agents.tools.bulletin_board.read_recent_entries", return_value="\n## Bulletin\n- Item 1"):
+                    state = create_initial_state("test request")
+                    result = inject_fn(state)
+                    assert "Bulletin" in result.get("memory_context", "")
 
     # --- cache_lookup (lines 571-606) ---
 

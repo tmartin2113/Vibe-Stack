@@ -1,40 +1,23 @@
-"""Inter-Agent Bulletin Board — shared message board across agent sessions and containers.
+"""Inter-Agent Bulletin Board V2 — SQLite-backed message board with structured types.
 
-Posts timestamped, attributed messages to a shared BULLETIN.md file mounted
-via Docker volume.  Agents can post notes, read recent entries, and search
-by keyword.  Thread-safe via fcntl file locking.
+Backward-compatible upgrade from v1 (file-based BULLETIN.md).  Now uses
+MessageStore for structured storage, FTS5 search, threading, and read tracking.
 
-Requires ``BULLETIN_PATH`` environment variable pointing to the bulletin
-file (e.g. ``/shared/bulletin/BULLETIN.md``).
+Activates when ``MESSAGE_STORE_PATH`` or ``BULLETIN_PATH`` env var is set.
+
+Actions: post, read, search, reply, thread, stats
 """
 
 from __future__ import annotations
 
-import fcntl
+import json
 import logging
 import os
-import re
-from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from .registry import Tool, ToolCategory, ToolResult
 
 logger = logging.getLogger(__name__)
-
-_BULLETIN_HEADER = "# Inter-Agent Bulletin Board\n\nShared notes between agents.\n\n---\n"
-
-# Regex to split the file into individual entries.
-# Each entry starts with ### [timestamp] agent-name
-_ENTRY_RE = re.compile(
-    r"^### \[(?P<timestamp>[^\]]+)\] (?P<agent>.+?)$",
-    re.MULTILINE,
-)
-
-
-def _get_bulletin_path() -> Optional[str]:
-    """Return the configured bulletin file path, or None."""
-    return os.environ.get("BULLETIN_PATH")
 
 
 def _get_agent_name() -> str:
@@ -46,80 +29,49 @@ def _get_agent_name() -> str:
     )
 
 
-def _ensure_file(path: Path) -> None:
-    """Create the bulletin file with header if it doesn't exist."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    if not path.exists():
-        path.write_text(_BULLETIN_HEADER, encoding="utf-8")
+def _is_configured() -> bool:
+    """Check if the bulletin board / message store is configured."""
+    return bool(
+        os.environ.get("MESSAGE_STORE_PATH")
+        or os.environ.get("BULLETIN_PATH")
+    )
 
 
-def _read_entries(path: Path) -> List[Dict[str, str]]:
-    """Parse all entries from the bulletin file.
+def _get_store():
+    """Get the shared MessageStore instance."""
+    from ..message_store import get_shared_message_store
 
-    Returns a list of dicts with keys: timestamp, agent, topic, body.
-    """
-    if not path.exists():
-        return []
-
-    text = path.read_text(encoding="utf-8")
-    entries: List[Dict[str, str]] = []
-    matches = list(_ENTRY_RE.finditer(text))
-
-    for i, match in enumerate(matches):
-        start = match.end()
-        end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
-        block = text[start:end].strip()
-
-        # Extract optional topic line
-        topic = ""
-        body_lines = []
-        for line in block.split("\n"):
-            stripped = line.strip()
-            if stripped.startswith("> Topic:"):
-                topic = stripped[len("> Topic:"):].strip()
-            elif stripped == "---":
-                continue
-            else:
-                body_lines.append(line)
-
-        entries.append({
-            "timestamp": match.group("timestamp"),
-            "agent": match.group("agent"),
-            "topic": topic,
-            "body": "\n".join(body_lines).strip(),
-        })
-
-    return entries
+    return get_shared_message_store()
 
 
 def read_recent_entries(limit: int = 10) -> str:
-    """Read the last N bulletin entries, formatted for context injection.
+    """Read recent messages, formatted for context injection.
 
-    Returns empty string if bulletin is not configured or has no entries.
+    Backward-compatible with the v1 function signature used by
+    ``inject_memory`` in ``graph.py``.
+
+    Returns empty string if not configured or no entries.
     """
-    bulletin_path = _get_bulletin_path()
-    if not bulletin_path:
-        return ""
-
-    path = Path(bulletin_path)
-    if not path.exists():
+    if not _is_configured():
         return ""
 
     try:
-        entries = _read_entries(path)
-        if not entries:
+        store = _get_store()
+        agent = _get_agent_name()
+        messages = store.relevant_messages(
+            query="",
+            agent_name=agent,
+            max_results=limit,
+        )
+        if not messages:
             return ""
 
-        recent = entries[-limit:]
         lines = []
-        for e in recent:
-            header = f"[{e['timestamp']}] {e['agent']}"
-            if e["topic"]:
-                header += f" (topic: {e['topic']})"
-            lines.append(f"- **{header}**: {e['body']}")
+        for msg in messages:
+            lines.append(msg.format_for_context())
 
         return (
-            "\n\n## Bulletin Board (Recent Posts)\n\n"
+            "\n\n## Bulletin Board (Recent Messages)\n\n"
             + "\n".join(lines)
         )
     except Exception as exc:
@@ -130,11 +82,12 @@ def read_recent_entries(limit: int = 10) -> str:
 class BulletinBoardTool(Tool):
     """Shared inter-agent bulletin board for posting and reading messages.
 
-    All agents share a single ``BULLETIN.md`` file mounted via Docker volume.
-    Use this to leave notes, share decisions, flag blockers, or coordinate
-    work across agent sessions and containers.
+    Uses MessageStore (SQLite + FTS5) for structured message storage with
+    typed messages, threading, search, and read tracking.
 
-    Requires ``BULLETIN_PATH`` environment variable.
+    Actions: post, read, search, reply, thread, stats
+
+    Requires ``MESSAGE_STORE_PATH`` or ``BULLETIN_PATH`` environment variable.
     """
 
     def __init__(self):
@@ -143,10 +96,19 @@ class BulletinBoardTool(Tool):
             description=(
                 "Post and read messages on a shared inter-agent bulletin board. "
                 "Use to leave notes, share decisions, flag blockers, or coordinate "
-                "work across agent sessions. Actions: post, read, search."
+                "work across agent sessions. "
+                "Actions: post, read, search, reply, thread, stats."
             ),
             category=ToolCategory.SPECIALIZED,
         )
+        self._bridge = None
+
+    def _get_bridge(self):
+        if self._bridge is None:
+            from ..message_store import PaperclipBridge
+
+            self._bridge = PaperclipBridge()
+        return self._bridge
 
     def _get_parameters_schema(self) -> Dict[str, Any]:
         return {
@@ -156,12 +118,14 @@ class BulletinBoardTool(Tool):
                     "type": "string",
                     "description": (
                         "Bulletin action: 'post' (add a message), "
-                        "'read' (get recent entries), 'search' (find by keyword)"
+                        "'read' (get recent entries), 'search' (find by keyword), "
+                        "'reply' (reply to a message), 'thread' (get message thread), "
+                        "'stats' (message store statistics)"
                     ),
                 },
                 "message": {
                     "type": "string",
-                    "description": "The message to post (required for 'post' action)",
+                    "description": "The message to post (required for 'post' and 'reply')",
                 },
                 "topic": {
                     "type": "string",
@@ -177,6 +141,44 @@ class BulletinBoardTool(Tool):
                     "type": "string",
                     "description": "Search keyword (for 'search' action)",
                 },
+                "msg_type": {
+                    "type": "string",
+                    "description": (
+                        "Message type: 'info' (default), 'decision', 'blocker', "
+                        "'handoff', 'status', 'question', 'completion'"
+                    ),
+                    "default": "info",
+                },
+                "recipient": {
+                    "type": "string",
+                    "description": "Target agent name, or '*' for broadcast (default)",
+                    "default": "*",
+                },
+                "reply_to": {
+                    "type": "string",
+                    "description": "Message ID to reply to (for 'reply' action)",
+                },
+                "message_id": {
+                    "type": "string",
+                    "description": "Message ID (for 'thread' action)",
+                },
+                "ttl_seconds": {
+                    "type": "integer",
+                    "description": "Time-to-live in seconds (0 = never expire)",
+                },
+                "metadata": {
+                    "type": "object",
+                    "description": "Additional structured metadata for the message",
+                },
+                "type_filter": {
+                    "type": "string",
+                    "description": "Comma-separated message types to filter by (for 'read')",
+                },
+                "unread_only": {
+                    "type": "boolean",
+                    "description": "Only return unread messages (for 'read')",
+                    "default": False,
+                },
             },
             "required": ["action"],
         }
@@ -184,133 +186,317 @@ class BulletinBoardTool(Tool):
     def execute(self, **kwargs) -> ToolResult:
         action = kwargs.get("action", "").strip().lower()
         if not action:
-            return ToolResult(success=False, output="", error="No action specified. Use: post, read, search")
-
-        bulletin_path = _get_bulletin_path()
-        if not bulletin_path:
             return ToolResult(
                 success=False, output="",
-                error="BULLETIN_PATH not configured. Bulletin board is disabled.",
+                error="No action specified. Use: post, read, search, reply, thread, stats",
             )
 
-        path = Path(bulletin_path)
-
-        if action == "post":
-            return self._post(path, kwargs)
-        elif action == "read":
-            return self._read(path, kwargs)
-        elif action == "search":
-            return self._search(path, kwargs)
-        else:
+        if not _is_configured():
             return ToolResult(
                 success=False, output="",
-                error=f"Unknown action: {action!r}. Use: post, read, search",
+                error="MESSAGE_STORE_PATH or BULLETIN_PATH not configured. Bulletin board is disabled.",
             )
 
-    def _post(self, path: Path, kwargs: Dict) -> ToolResult:
+        try:
+            store = _get_store()
+        except Exception as exc:
+            return ToolResult(
+                success=False, output="",
+                error=f"Failed to initialize message store: {exc}",
+            )
+
+        dispatch = {
+            "post": self._post,
+            "read": self._read,
+            "search": self._search,
+            "reply": self._reply,
+            "thread": self._thread,
+            "stats": self._stats,
+        }
+        handler = dispatch.get(action)
+        if not handler:
+            return ToolResult(
+                success=False, output="",
+                error=f"Unknown action: {action!r}. Use: post, read, search, reply, thread, stats",
+            )
+
+        return handler(store, kwargs)
+
+    def _post(self, store, kwargs: Dict) -> ToolResult:
+        from ..message_types import MessageType, DEFAULT_TTL_SECONDS
+
         message = kwargs.get("message", "").strip()
         if not message:
-            return ToolResult(success=False, output="", error="No message provided for post action")
+            return ToolResult(
+                success=False, output="", error="No message provided for post action"
+            )
 
         topic = kwargs.get("topic", "").strip()
-        agent = _get_agent_name()
-        timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+        recipient = kwargs.get("recipient", "*").strip()
+        metadata = kwargs.get("metadata") or {}
+        ttl = kwargs.get("ttl_seconds", DEFAULT_TTL_SECONDS)
 
-        # Build entry
-        entry_lines = [f"\n### [{timestamp}] {agent}"]
-        if topic:
-            entry_lines.append(f"> Topic: {topic}")
-        entry_lines.append("")
-        entry_lines.append(message)
-        entry_lines.append("")
-        entry_lines.append("---")
-        entry_lines.append("")
-        entry_text = "\n".join(entry_lines)
+        # Parse msg_type
+        type_str = kwargs.get("msg_type", "info").strip().lower()
+        try:
+            msg_type = MessageType(type_str)
+        except ValueError:
+            msg_type = MessageType.INFO
 
         try:
-            _ensure_file(path)
+            msg = store.send(
+                content=message,
+                recipient=recipient,
+                msg_type=msg_type,
+                topic=topic,
+                metadata=metadata,
+                issue_id=kwargs.get("issue_id"),
+                ttl_seconds=ttl,
+            )
 
-            # Append with file locking for thread safety
-            with open(path, "a", encoding="utf-8") as f:
-                fcntl.flock(f.fileno(), fcntl.LOCK_EX)
-                try:
-                    f.write(entry_text)
-                finally:
-                    fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+            # Paperclip dual-write (best-effort)
+            bridge = self._get_bridge()
+            comment_id = bridge.post_comment(msg)
+            if comment_id:
+                store.update_paperclip_comment_id(msg.id, comment_id)
 
-            logger.info(f"Bulletin post by {agent}: {message[:80]}...")
             return ToolResult(
                 success=True,
-                output=f"Posted to bulletin board at {timestamp} as {agent}",
-                metadata={"timestamp": timestamp, "agent": agent, "topic": topic},
+                output=(
+                    f"Posted {msg.msg_type.value} message to bulletin board "
+                    f"at {msg.created_at} as {msg.sender}"
+                ),
+                metadata={
+                    "message_id": msg.id,
+                    "timestamp": msg.created_at,
+                    "sender": msg.sender,
+                    "topic": topic,
+                    "msg_type": msg.msg_type.value,
+                },
             )
         except Exception as exc:
-            return ToolResult(success=False, output="", error=f"Failed to post: {exc}")
+            return ToolResult(
+                success=False, output="", error=f"Failed to post: {exc}"
+            )
 
-    def _read(self, path: Path, kwargs: Dict) -> ToolResult:
+    def _read(self, store, kwargs: Dict) -> ToolResult:
+        from ..message_types import MessageType
+
         limit = int(kwargs.get("limit", 20))
-        if limit < 1:
-            limit = 1
-        if limit > 100:
-            limit = 100
+        limit = max(1, min(limit, 100))
+        unread_only = kwargs.get("unread_only", False)
+        agent = _get_agent_name()
 
         try:
-            entries = _read_entries(path)
-            if not entries:
-                return ToolResult(success=True, output="No bulletin entries found.")
+            if unread_only:
+                messages = store.get_unread(agent_name=agent, limit=limit)
+            else:
+                # Parse type filter
+                type_filter = None
+                filter_str = kwargs.get("type_filter", "").strip()
+                if filter_str:
+                    types = []
+                    for t in filter_str.split(","):
+                        t = t.strip().lower()
+                        try:
+                            types.append(MessageType(t))
+                        except ValueError:
+                            pass
+                    if types:
+                        type_filter = types
 
-            recent = entries[-limit:]
+                messages = store.read_recent(
+                    limit=limit,
+                    recipient=agent,
+                    type_filter=type_filter,
+                    topic=kwargs.get("topic", "").strip() or None,
+                )
+
+            if not messages:
+                return ToolResult(success=True, output="No messages found.")
+
             lines = []
-            for e in recent:
-                header = f"[{e['timestamp']}] {e['agent']}"
-                if e["topic"]:
-                    header += f" | Topic: {e['topic']}"
-                lines.append(f"### {header}\n{e['body']}\n")
+            for msg in messages:
+                header = f"[{msg.created_at}] {msg.sender}"
+                if msg.topic:
+                    header += f" | Topic: {msg.topic}"
+                header += f" | Type: {msg.msg_type.value}"
+                read_status = (
+                    " (read)" if agent in msg.read_by else " (unread)"
+                )
+                lines.append(
+                    f"### {header}{read_status}\n"
+                    f"ID: {msg.id}\n"
+                    f"{msg.content}\n"
+                )
+
+            # Mark as read
+            store.mark_many_read(
+                [m.id for m in messages], agent_name=agent
+            )
 
             return ToolResult(
                 success=True,
                 output="\n".join(lines),
-                metadata={"count": len(recent), "total": len(entries)},
+                metadata={"count": len(messages)},
             )
         except Exception as exc:
-            return ToolResult(success=False, output="", error=f"Failed to read bulletin: {exc}")
+            return ToolResult(
+                success=False, output="", error=f"Failed to read: {exc}"
+            )
 
-    def _search(self, path: Path, kwargs: Dict) -> ToolResult:
+    def _search(self, store, kwargs: Dict) -> ToolResult:
         query = kwargs.get("query", "").strip()
         if not query:
-            return ToolResult(success=False, output="", error="No search query provided")
+            return ToolResult(
+                success=False, output="", error="No search query provided"
+            )
 
         try:
-            entries = _read_entries(path)
-            if not entries:
-                return ToolResult(success=True, output="No bulletin entries found.")
-
-            query_lower = query.lower()
-            matches = [
-                e for e in entries
-                if query_lower in e["body"].lower()
-                or query_lower in e["topic"].lower()
-                or query_lower in e["agent"].lower()
-            ]
-
-            if not matches:
+            results = store.hybrid_search(query, max_results=20)
+            if not results:
                 return ToolResult(
                     success=True,
-                    output=f"No entries matching '{query}'.",
-                    metadata={"count": 0, "total": len(entries)},
+                    output=f"No messages matching '{query}'.",
+                    metadata={"count": 0},
                 )
 
             lines = []
-            for e in matches:
-                header = f"[{e['timestamp']}] {e['agent']}"
-                if e["topic"]:
-                    header += f" | Topic: {e['topic']}"
-                lines.append(f"### {header}\n{e['body']}\n")
+            for msg in results:
+                header = f"[{msg.created_at}] {msg.sender}"
+                if msg.topic:
+                    header += f" | Topic: {msg.topic}"
+                header += f" | Type: {msg.msg_type.value}"
+                lines.append(
+                    f"### {header} (score: {msg.score:.3f})\n"
+                    f"ID: {msg.id}\n"
+                    f"{msg.content}\n"
+                )
 
             return ToolResult(
                 success=True,
                 output="\n".join(lines),
-                metadata={"count": len(matches), "total": len(entries)},
+                metadata={"count": len(results)},
             )
         except Exception as exc:
-            return ToolResult(success=False, output="", error=f"Failed to search bulletin: {exc}")
+            return ToolResult(
+                success=False, output="", error=f"Failed to search: {exc}"
+            )
+
+    def _reply(self, store, kwargs: Dict) -> ToolResult:
+        parent_id = kwargs.get("reply_to", "").strip()
+        if not parent_id:
+            return ToolResult(
+                success=False, output="",
+                error="No reply_to message ID provided",
+            )
+
+        message = kwargs.get("message", "").strip()
+        if not message:
+            return ToolResult(
+                success=False, output="",
+                error="No message provided for reply action",
+            )
+
+        type_str = kwargs.get("msg_type", "").strip().lower()
+        msg_type = None
+        if type_str:
+            from ..message_types import MessageType
+
+            try:
+                msg_type = MessageType(type_str)
+            except ValueError:
+                pass
+
+        try:
+            msg = store.reply(
+                parent_id=parent_id,
+                content=message,
+                msg_type=msg_type,
+                metadata=kwargs.get("metadata") or {},
+            )
+
+            # Paperclip dual-write
+            bridge = self._get_bridge()
+            comment_id = bridge.post_comment(msg)
+            if comment_id:
+                store.update_paperclip_comment_id(msg.id, comment_id)
+
+            return ToolResult(
+                success=True,
+                output=f"Replied to message {parent_id}",
+                metadata={
+                    "message_id": msg.id,
+                    "parent_id": parent_id,
+                    "sender": msg.sender,
+                },
+            )
+        except ValueError as exc:
+            return ToolResult(
+                success=False, output="", error=str(exc)
+            )
+        except Exception as exc:
+            return ToolResult(
+                success=False, output="", error=f"Failed to reply: {exc}"
+            )
+
+    def _thread(self, store, kwargs: Dict) -> ToolResult:
+        message_id = kwargs.get("message_id", "").strip()
+        if not message_id:
+            return ToolResult(
+                success=False, output="",
+                error="No message_id provided for thread action",
+            )
+
+        try:
+            thread = store.get_thread(message_id)
+            if not thread:
+                return ToolResult(
+                    success=True,
+                    output=f"No thread found for message {message_id}.",
+                )
+
+            lines = []
+            for i, msg in enumerate(thread):
+                indent = "  " if msg.parent_id else ""
+                header = f"[{msg.created_at}] {msg.sender}"
+                if msg.topic:
+                    header += f" | {msg.topic}"
+                lines.append(
+                    f"{indent}### {header}\n"
+                    f"{indent}ID: {msg.id}\n"
+                    f"{indent}{msg.content}\n"
+                )
+
+            return ToolResult(
+                success=True,
+                output="\n".join(lines),
+                metadata={"thread_length": len(thread)},
+            )
+        except Exception as exc:
+            return ToolResult(
+                success=False, output="", error=f"Failed to get thread: {exc}"
+            )
+
+    def _stats(self, store, kwargs: Dict) -> ToolResult:
+        try:
+            stats = store.get_stats()
+            lines = [
+                f"Total messages: {stats['total_messages']}",
+                f"Thread count: {stats['thread_count']}",
+                f"Embeddings: {stats['embedding_count']}",
+                f"Max capacity: {stats['max_messages']}",
+                "Messages by type:",
+            ]
+            for t, count in sorted(stats["by_type"].items()):
+                lines.append(f"  {t}: {count}")
+
+            return ToolResult(
+                success=True,
+                output="\n".join(lines),
+                metadata=stats,
+            )
+        except Exception as exc:
+            return ToolResult(
+                success=False, output="", error=f"Failed to get stats: {exc}"
+            )
