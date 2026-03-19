@@ -1,22 +1,15 @@
 """
-Tests for Firecrawl tool integration.
+Tests for infrastructure service tools (replaced Firecrawl).
 
 Covers:
-- FirecrawlScrapeTool: URL validation, API key checks, import errors,
-  scrape success/failure, metadata extraction, format options
-- FirecrawlCrawlTool: URL validation, API key checks, limit clamping,
-  page combination, include/exclude patterns
-- FirecrawlSearchTool: query validation, result parsing, limit clamping
-- Registry wiring: tools registered when egress + key set, absent otherwise
-- Security: tool names in RESTRICTED_TOOLS, ALL_KNOWN_TOOLS
-- Doctor check: check_firecrawl() outcomes
-- SandboxConfig: firecrawl_api_key field and env override
+- WebSearchTool (SearXNG): query validation, result parsing, env gating
+- WebScrapeTool (Spider): URL validation, content extraction, env gating
+- Registry wiring: tools registered when env vars set, absent otherwise
+- Security: tool names in DEFAULT_ALLOWED_TOOLS / RESTRICTED_TOOLS
 """
 
-import importlib
 import os
-import sys
-import types
+import json
 from unittest.mock import patch, MagicMock
 
 import pytest
@@ -24,513 +17,287 @@ import pytest
 from agents.tools.registry import (
     ToolResult,
     ToolCategory,
-    FirecrawlScrapeTool,
-    FirecrawlCrawlTool,
-    FirecrawlSearchTool,
     create_default_tool_registry,
 )
-
-
-# ── Helpers for mocking the firecrawl package ──────────────────────────
-
-
-@pytest.fixture()
-def mock_firecrawl_module():
-    """Install a fake ``firecrawl`` package in sys.modules so that
-    ``from firecrawl import FirecrawlApp`` succeeds inside tool code.
-
-    Yields the mock FirecrawlApp *class* — tests configure its
-    return_value (the app instance) before calling tool.execute().
-    """
-    mock_cls = MagicMock(name="FirecrawlApp")
-    mod = types.ModuleType("firecrawl")
-    mod.FirecrawlApp = mock_cls  # type: ignore[attr-defined]
-
-    saved = sys.modules.get("firecrawl")
-    sys.modules["firecrawl"] = mod
-    try:
-        yield mock_cls
-    finally:
-        if saved is None:
-            sys.modules.pop("firecrawl", None)
-        else:
-            sys.modules["firecrawl"] = saved
+from agents.tools.web_search import WebSearchTool
+from agents.tools.web_scrape import WebScrapeTool
+from agents.tools.browser_automation import BrowserAutomationTool
+from agents.tools.design import DesignTool
+from agents.tools.image_generation import ImageGenerationTool
+from agents.tools.git_forge import GitForgeTool
+from agents.tools.artifact_storage import ArtifactStorageTool
 
 
 # ============================================================
-# FirecrawlScrapeTool
+# WebSearchTool (SearXNG)
 # ============================================================
 
 
-class TestFirecrawlScrapeTool:
-    """Tests for the web_scrape tool."""
+class TestWebSearchTool:
+    """Tests for the web_search tool (SearXNG-backed)."""
 
     def test_name_and_category(self):
-        tool = FirecrawlScrapeTool(api_key="fc-test")
-        assert tool.name == "web_scrape"
+        tool = WebSearchTool(base_url="http://searxng:8080")
+        assert tool.name == "web_search"
         assert tool.category == ToolCategory.WEB_API
 
-    def test_schema_has_required_url(self):
-        tool = FirecrawlScrapeTool(api_key="fc-test")
+    def test_schema_has_required_query(self):
+        tool = WebSearchTool(base_url="http://searxng:8080")
         schema = tool._get_parameters_schema()
-        assert "url" in schema["properties"]
-        assert "url" in schema["required"]
+        assert "query" in schema["properties"]
+        assert "query" in schema["required"]
 
     def test_schema_has_optional_fields(self):
-        tool = FirecrawlScrapeTool(api_key="fc-test")
+        tool = WebSearchTool(base_url="http://searxng:8080")
         schema = tool._get_parameters_schema()
-        assert "formats" in schema["properties"]
-        assert "only_main_content" in schema["properties"]
-        assert "timeout" in schema["properties"]
+        assert "categories" in schema["properties"]
+        assert "engines" in schema["properties"]
+        assert "limit" in schema["properties"]
 
-    def test_empty_url_rejected(self):
-        tool = FirecrawlScrapeTool(api_key="fc-test")
-        result = tool.execute(url="")
+    def test_empty_query_rejected(self):
+        tool = WebSearchTool(base_url="http://searxng:8080")
+        result = tool.execute(query="")
         assert not result.success
-        assert "No URL" in result.error
+        assert "No query" in result.error
 
-    def test_whitespace_url_rejected(self):
-        tool = FirecrawlScrapeTool(api_key="fc-test")
-        result = tool.execute(url="   ")
+    def test_whitespace_query_rejected(self):
+        tool = WebSearchTool(base_url="http://searxng:8080")
+        result = tool.execute(query="   ")
         assert not result.success
-        assert "No URL" in result.error
+        assert "No query" in result.error
 
-    def test_non_http_url_rejected(self):
-        tool = FirecrawlScrapeTool(api_key="fc-test")
-        result = tool.execute(url="ftp://example.com")
+    def test_missing_base_url(self):
+        tool = WebSearchTool(base_url="")
+        result = tool.execute(query="test query")
         assert not result.success
-        assert "http" in result.error.lower()
+        assert "SEARXNG_URL" in result.error
 
-    def test_missing_api_key(self):
-        tool = FirecrawlScrapeTool(api_key="")
-        result = tool.execute(url="https://example.com")
-        assert not result.success
-        assert "FIRECRAWL_API_KEY" in result.error
-
-    def test_api_key_from_env(self):
-        with patch.dict(os.environ, {"FIRECRAWL_API_KEY": "fc-from-env"}):
-            tool = FirecrawlScrapeTool()
-            assert tool._api_key == "fc-from-env"
-
-    def test_explicit_key_overrides_env(self):
-        with patch.dict(os.environ, {"FIRECRAWL_API_KEY": "fc-env"}):
-            tool = FirecrawlScrapeTool(api_key="fc-explicit")
-            assert tool._api_key == "fc-explicit"
-
-    def test_import_error_handled(self):
-        tool = FirecrawlScrapeTool(api_key="fc-test")
-        with patch.dict("sys.modules", {"firecrawl": None}):
-            result = tool.execute(url="https://example.com")
-            assert not result.success
-            assert "not installed" in result.error
-
-    def test_scrape_success_markdown(self, mock_firecrawl_module):
-        tool = FirecrawlScrapeTool(api_key="fc-test")
-        mock_app = MagicMock()
-        mock_app.scrape_url.return_value = {
-            "markdown": "# Hello World\n\nSome content here.",
-            "metadata": {
-                "title": "Hello World",
-                "description": "A test page",
-                "language": "en",
-            },
-            "links": ["https://example.com/link1"],
-        }
-        mock_firecrawl_module.return_value = mock_app
-
-        result = tool.execute(url="https://example.com")
-
-        assert result.success
-        assert "Hello World" in result.output
-        assert result.metadata["title"] == "Hello World"
-        assert result.metadata["link_count"] == 1
-
-    def test_scrape_success_html_fallback(self, mock_firecrawl_module):
-        tool = FirecrawlScrapeTool(api_key="fc-test")
-        mock_app = MagicMock()
-        mock_app.scrape_url.return_value = {
-            "html": "<h1>Hello</h1>",
-            "metadata": {},
-        }
-        mock_firecrawl_module.return_value = mock_app
-
-        result = tool.execute(url="https://example.com", formats=["html"])
-
-        assert result.success
-        assert "<h1>Hello</h1>" in result.output
-
-    def test_scrape_passes_params(self, mock_firecrawl_module):
-        tool = FirecrawlScrapeTool(api_key="fc-test")
-        mock_app = MagicMock()
-        mock_app.scrape_url.return_value = {"markdown": "content"}
-        mock_firecrawl_module.return_value = mock_app
-
-        tool.execute(
-            url="https://example.com",
-            formats=["markdown", "html"],
-            only_main_content=False,
-            timeout=60,
-        )
-
-        call_args = mock_app.scrape_url.call_args
-        assert call_args[0][0] == "https://example.com"
-        params = call_args[1]["params"]
-        assert params["formats"] == ["markdown", "html"]
-        assert params["onlyMainContent"] is False
-        assert params["timeout"] == 60000  # converted to ms
-
-    def test_scrape_api_error(self, mock_firecrawl_module):
-        tool = FirecrawlScrapeTool(api_key="fc-test")
-        mock_app = MagicMock()
-        mock_app.scrape_url.side_effect = RuntimeError("rate limited")
-        mock_firecrawl_module.return_value = mock_app
-
-        result = tool.execute(url="https://example.com")
-
-        assert not result.success
-        assert "rate limited" in result.error
-
-    def test_scrape_non_dict_response(self, mock_firecrawl_module):
-        tool = FirecrawlScrapeTool(api_key="fc-test")
-        mock_app = MagicMock()
-        mock_app.scrape_url.return_value = "raw string response"
-        mock_firecrawl_module.return_value = mock_app
-
-        result = tool.execute(url="https://example.com")
-
-        assert result.success
-        assert "raw string response" in result.output
-
-    def test_scrape_empty_metadata(self, mock_firecrawl_module):
-        """No metadata key in response — should not crash."""
-        tool = FirecrawlScrapeTool(api_key="fc-test")
-        mock_app = MagicMock()
-        mock_app.scrape_url.return_value = {"markdown": "content"}
-        mock_firecrawl_module.return_value = mock_app
-
-        result = tool.execute(url="https://example.com")
-
-        assert result.success
-        assert "title" not in result.metadata
-
-    def test_default_formats(self, mock_firecrawl_module):
-        """Default format should be markdown."""
-        tool = FirecrawlScrapeTool(api_key="fc-test")
-        mock_app = MagicMock()
-        mock_app.scrape_url.return_value = {"markdown": "ok"}
-        mock_firecrawl_module.return_value = mock_app
-
-        tool.execute(url="https://example.com")
-
-        params = mock_app.scrape_url.call_args[1]["params"]
-        assert params["formats"] == ["markdown"]
+    def test_base_url_from_env(self):
+        with patch.dict(os.environ, {"SEARXNG_URL": "http://searxng:8080"}):
+            tool = WebSearchTool()
+            assert tool._base_url == "http://searxng:8080"
 
     def test_get_schema_full(self):
-        tool = FirecrawlScrapeTool(api_key="fc-test")
+        tool = WebSearchTool(base_url="http://searxng:8080")
         schema = tool.get_schema()
-        assert schema["name"] == "web_scrape"
+        assert schema["name"] == "web_search"
         assert "description" in schema
         assert "parameters" in schema
 
 
 # ============================================================
-# FirecrawlCrawlTool
+# WebScrapeTool (Spider)
 # ============================================================
 
 
-class TestFirecrawlCrawlTool:
-    """Tests for the web_crawl tool."""
+class TestWebScrapeTool:
+    """Tests for the web_scrape tool (Spider-backed)."""
 
     def test_name_and_category(self):
-        tool = FirecrawlCrawlTool(api_key="fc-test")
-        assert tool.name == "web_crawl"
+        tool = WebScrapeTool(base_url="http://spider:3002")
+        assert tool.name == "web_scrape"
         assert tool.category == ToolCategory.WEB_API
 
-    def test_schema_required_fields(self):
-        tool = FirecrawlCrawlTool(api_key="fc-test")
+    def test_schema_has_required_url(self):
+        tool = WebScrapeTool(base_url="http://spider:3002")
         schema = tool._get_parameters_schema()
+        assert "url" in schema["properties"]
         assert "url" in schema["required"]
-        assert "limit" in schema["properties"]
-        assert "max_depth" in schema["properties"]
-        assert "include_patterns" in schema["properties"]
-        assert "exclude_patterns" in schema["properties"]
 
     def test_empty_url_rejected(self):
-        tool = FirecrawlCrawlTool(api_key="fc-test")
+        tool = WebScrapeTool(base_url="http://spider:3002")
         result = tool.execute(url="")
         assert not result.success
+        assert "No URL" in result.error
 
     def test_non_http_url_rejected(self):
-        tool = FirecrawlCrawlTool(api_key="fc-test")
-        result = tool.execute(url="file:///etc/passwd")
+        tool = WebScrapeTool(base_url="http://spider:3002")
+        result = tool.execute(url="ftp://example.com")
         assert not result.success
+        assert "http" in result.error.lower()
 
-    def test_missing_api_key(self):
-        tool = FirecrawlCrawlTool(api_key="")
-        result = tool.execute(url="https://docs.example.com")
+    def test_missing_base_url(self):
+        tool = WebScrapeTool(base_url="")
+        result = tool.execute(url="https://example.com")
         assert not result.success
-        assert "FIRECRAWL_API_KEY" in result.error
+        assert "SPIDER_URL" in result.error
 
-    def test_limit_clamped_to_max(self, mock_firecrawl_module):
-        """limit > 50 should be clamped to 50."""
-        tool = FirecrawlCrawlTool(api_key="fc-test")
-        mock_app = MagicMock()
-        mock_app.crawl_url.return_value = {"data": []}
-        mock_firecrawl_module.return_value = mock_app
-
-        tool.execute(url="https://example.com", limit=200)
-
-        params = mock_app.crawl_url.call_args[1]["params"]
-        assert params["limit"] == 50
-
-    def test_limit_clamped_to_min(self, mock_firecrawl_module):
-        """limit < 1 should be clamped to 1."""
-        tool = FirecrawlCrawlTool(api_key="fc-test")
-        mock_app = MagicMock()
-        mock_app.crawl_url.return_value = {"data": []}
-        mock_firecrawl_module.return_value = mock_app
-
-        tool.execute(url="https://example.com", limit=-5)
-
-        params = mock_app.crawl_url.call_args[1]["params"]
-        assert params["limit"] == 1
-
-    def test_max_depth_clamped(self, mock_firecrawl_module):
-        """max_depth > 5 should be clamped to 5."""
-        tool = FirecrawlCrawlTool(api_key="fc-test")
-        mock_app = MagicMock()
-        mock_app.crawl_url.return_value = {"data": []}
-        mock_firecrawl_module.return_value = mock_app
-
-        tool.execute(url="https://example.com", max_depth=20)
-
-        params = mock_app.crawl_url.call_args[1]["params"]
-        assert params["maxDepth"] == 5
-
-    def test_crawl_multiple_pages(self, mock_firecrawl_module):
-        tool = FirecrawlCrawlTool(api_key="fc-test")
-        mock_app = MagicMock()
-        mock_app.crawl_url.return_value = {
-            "data": [
-                {
-                    "markdown": "# Page 1\nContent 1",
-                    "metadata": {"sourceURL": "https://example.com/p1", "title": "Page 1"},
-                },
-                {
-                    "markdown": "# Page 2\nContent 2",
-                    "metadata": {"sourceURL": "https://example.com/p2", "title": "Page 2"},
-                },
-            ]
-        }
-        mock_firecrawl_module.return_value = mock_app
-
-        result = tool.execute(url="https://example.com")
-
-        assert result.success
-        assert "Page 1" in result.output
-        assert "Page 2" in result.output
-        assert "---" in result.output  # page separator
-        assert result.metadata["pages_crawled"] == 2
-
-    def test_crawl_empty_result(self, mock_firecrawl_module):
-        tool = FirecrawlCrawlTool(api_key="fc-test")
-        mock_app = MagicMock()
-        mock_app.crawl_url.return_value = {"data": []}
-        mock_firecrawl_module.return_value = mock_app
-
-        result = tool.execute(url="https://example.com")
-
-        assert result.success
-        assert "no pages" in result.output.lower()
-        assert result.metadata["pages_found"] == 0
-
-    def test_crawl_with_include_exclude(self, mock_firecrawl_module):
-        tool = FirecrawlCrawlTool(api_key="fc-test")
-        mock_app = MagicMock()
-        mock_app.crawl_url.return_value = {"data": []}
-        mock_firecrawl_module.return_value = mock_app
-
-        tool.execute(
-            url="https://example.com",
-            include_patterns=["/docs/*"],
-            exclude_patterns=["/blog/*"],
-        )
-
-        params = mock_app.crawl_url.call_args[1]["params"]
-        assert params["includePaths"] == ["/docs/*"]
-        assert params["excludePaths"] == ["/blog/*"]
-
-    def test_crawl_no_patterns_omitted(self, mock_firecrawl_module):
-        """When no patterns, includePaths/excludePaths should not be in params."""
-        tool = FirecrawlCrawlTool(api_key="fc-test")
-        mock_app = MagicMock()
-        mock_app.crawl_url.return_value = {"data": []}
-        mock_firecrawl_module.return_value = mock_app
-
-        tool.execute(url="https://example.com")
-
-        params = mock_app.crawl_url.call_args[1]["params"]
-        assert "includePaths" not in params
-        assert "excludePaths" not in params
-
-    def test_crawl_api_error(self, mock_firecrawl_module):
-        tool = FirecrawlCrawlTool(api_key="fc-test")
-        mock_app = MagicMock()
-        mock_app.crawl_url.side_effect = ConnectionError("timeout")
-        mock_firecrawl_module.return_value = mock_app
-
-        result = tool.execute(url="https://example.com")
-
-        assert not result.success
-        assert "timeout" in result.error
-
-    def test_crawl_skips_empty_content_pages(self, mock_firecrawl_module):
-        tool = FirecrawlCrawlTool(api_key="fc-test")
-        mock_app = MagicMock()
-        mock_app.crawl_url.return_value = {
-            "data": [
-                {"markdown": "Good content", "metadata": {"sourceURL": "https://example.com/ok", "title": "OK"}},
-                {"markdown": "", "metadata": {"sourceURL": "https://example.com/empty", "title": "Empty"}},
-            ]
-        }
-        mock_firecrawl_module.return_value = mock_app
-
-        result = tool.execute(url="https://example.com")
-
-        assert result.success
-        assert result.metadata["pages_crawled"] == 1
-        assert result.metadata["pages_total"] == 2
-
-    def test_crawl_list_response(self, mock_firecrawl_module):
-        """Handle response as a plain list (not wrapped in {data: []})."""
-        tool = FirecrawlCrawlTool(api_key="fc-test")
-        mock_app = MagicMock()
-        mock_app.crawl_url.return_value = [
-            {"markdown": "Content", "metadata": {"sourceURL": "https://example.com", "title": "T"}},
-        ]
-        mock_firecrawl_module.return_value = mock_app
-
-        result = tool.execute(url="https://example.com")
-
-        assert result.success
-        assert result.metadata["pages_crawled"] == 1
-
-    def test_import_error_handled(self):
-        tool = FirecrawlCrawlTool(api_key="fc-test")
-        with patch.dict("sys.modules", {"firecrawl": None}):
-            result = tool.execute(url="https://example.com")
-            assert not result.success
-            assert "not installed" in result.error
+    def test_base_url_from_env(self):
+        with patch.dict(os.environ, {"SPIDER_URL": "http://spider:3002"}):
+            tool = WebScrapeTool()
+            assert tool._base_url == "http://spider:3002"
 
 
 # ============================================================
-# FirecrawlSearchTool
+# BrowserAutomationTool (Playwright)
 # ============================================================
 
 
-class TestFirecrawlSearchTool:
-    """Tests for the web_search tool."""
+class TestBrowserAutomationTool:
+    """Tests for the browser_automation tool."""
 
     def test_name_and_category(self):
-        tool = FirecrawlSearchTool(api_key="fc-test")
-        assert tool.name == "web_search"
+        tool = BrowserAutomationTool(ws_url="ws://playwright:3003")
+        assert tool.name == "browser_automation"
         assert tool.category == ToolCategory.WEB_API
 
-    def test_schema_required_query(self):
-        tool = FirecrawlSearchTool(api_key="fc-test")
-        schema = tool._get_parameters_schema()
-        assert "query" in schema["required"]
-        assert "limit" in schema["properties"]
-
-    def test_empty_query_rejected(self):
-        tool = FirecrawlSearchTool(api_key="fc-test")
-        result = tool.execute(query="")
+    def test_empty_action_rejected(self):
+        tool = BrowserAutomationTool(ws_url="ws://playwright:3003")
+        result = tool.execute(action="")
         assert not result.success
-        assert "No query" in result.error
+        assert "No action" in result.error
 
-    def test_missing_api_key(self):
-        tool = FirecrawlSearchTool(api_key="")
-        result = tool.execute(query="test query")
+    def test_invalid_action_rejected(self):
+        tool = BrowserAutomationTool(ws_url="ws://playwright:3003")
+        result = tool.execute(action="destroy")
         assert not result.success
-        assert "FIRECRAWL_API_KEY" in result.error
+        assert "Invalid action" in result.error
 
-    def test_limit_clamped(self, mock_firecrawl_module):
-        tool = FirecrawlSearchTool(api_key="fc-test")
-        mock_app = MagicMock()
-        mock_app.search.return_value = {"data": []}
-        mock_firecrawl_module.return_value = mock_app
-
-        tool.execute(query="test", limit=50)
-
-        params = mock_app.search.call_args[1]["params"]
-        assert params["limit"] == 10
-
-    def test_search_with_results(self, mock_firecrawl_module):
-        tool = FirecrawlSearchTool(api_key="fc-test")
-        mock_app = MagicMock()
-        mock_app.search.return_value = {
-            "data": [
-                {
-                    "markdown": "Result 1 content",
-                    "metadata": {"title": "Result 1", "sourceURL": "https://example.com/1"},
-                },
-                {
-                    "markdown": "Result 2 content",
-                    "metadata": {"title": "Result 2", "sourceURL": "https://example.com/2"},
-                },
-            ]
-        }
-        mock_firecrawl_module.return_value = mock_app
-
-        result = tool.execute(query="python web scraping")
-
-        assert result.success
-        assert "Result 1" in result.output
-        assert "Result 2" in result.output
-        assert result.metadata["results"] == 2
-
-    def test_search_no_results(self, mock_firecrawl_module):
-        tool = FirecrawlSearchTool(api_key="fc-test")
-        mock_app = MagicMock()
-        mock_app.search.return_value = {"data": []}
-        mock_firecrawl_module.return_value = mock_app
-
-        result = tool.execute(query="zzzzzzz nonexistent")
-
-        assert result.success
-        assert "No results" in result.output
-
-    def test_search_api_error(self, mock_firecrawl_module):
-        tool = FirecrawlSearchTool(api_key="fc-test")
-        mock_app = MagicMock()
-        mock_app.search.side_effect = RuntimeError("quota exceeded")
-        mock_firecrawl_module.return_value = mock_app
-
-        result = tool.execute(query="test")
-
+    def test_missing_ws_url(self):
+        tool = BrowserAutomationTool(ws_url="")
+        result = tool.execute(action="navigate", url="https://example.com")
         assert not result.success
-        assert "quota exceeded" in result.error
+        assert "PLAYWRIGHT_WS_URL" in result.error
 
-    def test_search_list_response(self, mock_firecrawl_module):
-        """Handle response as a plain list."""
-        tool = FirecrawlSearchTool(api_key="fc-test")
-        mock_app = MagicMock()
-        mock_app.search.return_value = [
-            {"markdown": "Content", "metadata": {"title": "T", "sourceURL": "https://example.com"}},
-        ]
-        mock_firecrawl_module.return_value = mock_app
 
-        result = tool.execute(query="test")
+# ============================================================
+# DesignTool (Penpot)
+# ============================================================
 
-        assert result.success
-        assert result.metadata["results"] == 1
 
-    def test_import_error_handled(self):
-        tool = FirecrawlSearchTool(api_key="fc-test")
-        with patch.dict("sys.modules", {"firecrawl": None}):
-            result = tool.execute(query="test")
-            assert not result.success
-            assert "not installed" in result.error
+class TestDesignTool:
+    """Tests for the design tool."""
+
+    def test_name_and_category(self):
+        tool = DesignTool(api_url="http://penpot:6060")
+        assert tool.name == "design"
+        assert tool.category == ToolCategory.EXTERNAL_SERVICE
+
+    def test_empty_action_rejected(self):
+        tool = DesignTool(api_url="http://penpot:6060")
+        result = tool.execute(action="")
+        assert not result.success
+        assert "No action" in result.error
+
+    def test_invalid_action_rejected(self):
+        tool = DesignTool(api_url="http://penpot:6060")
+        result = tool.execute(action="destroy")
+        assert not result.success
+        assert "Invalid action" in result.error
+
+    def test_missing_api_url(self):
+        tool = DesignTool(api_url="")
+        result = tool.execute(action="list_projects")
+        assert not result.success
+        assert "PENPOT_API_URL" in result.error
+
+
+# ============================================================
+# ImageGenerationTool (ComfyUI)
+# ============================================================
+
+
+class TestImageGenerationTool:
+    """Tests for the image_generation tool."""
+
+    def test_name_and_category(self):
+        tool = ImageGenerationTool(base_url="http://comfyui:8188")
+        assert tool.name == "image_generation"
+        assert tool.category == ToolCategory.EXTERNAL_SERVICE
+
+    def test_empty_prompt_rejected(self):
+        tool = ImageGenerationTool(base_url="http://comfyui:8188")
+        result = tool.execute(prompt="")
+        assert not result.success
+        assert "No prompt" in result.error
+
+    def test_missing_base_url(self):
+        tool = ImageGenerationTool(base_url="")
+        result = tool.execute(prompt="a cat")
+        assert not result.success
+        assert "COMFYUI_URL" in result.error
+
+
+# ============================================================
+# GitForgeTool (Gitea)
+# ============================================================
+
+
+class TestGitForgeTool:
+    """Tests for the git_forge tool."""
+
+    def test_name_and_category(self):
+        tool = GitForgeTool(base_url="http://gitea:3000")
+        assert tool.name == "git_forge"
+        assert tool.category == ToolCategory.EXTERNAL_SERVICE
+
+    def test_empty_action_rejected(self):
+        tool = GitForgeTool(base_url="http://gitea:3000")
+        result = tool.execute(action="")
+        assert not result.success
+        assert "No action" in result.error
+
+    def test_invalid_action_rejected(self):
+        tool = GitForgeTool(base_url="http://gitea:3000")
+        result = tool.execute(action="destroy")
+        assert not result.success
+        assert "Invalid action" in result.error
+
+    def test_missing_base_url(self):
+        tool = GitForgeTool(base_url="")
+        result = tool.execute(action="list_repos")
+        assert not result.success
+        assert "GITEA_URL" in result.error
+
+    def test_create_repo_requires_name(self):
+        tool = GitForgeTool(base_url="http://gitea:3000")
+        result = tool.execute(action="create_repo")
+        assert not result.success
+        assert "name required" in result.error
+
+
+# ============================================================
+# ArtifactStorageTool (MinIO)
+# ============================================================
+
+
+class TestArtifactStorageTool:
+    """Tests for the artifact_storage tool."""
+
+    def test_name_and_category(self):
+        tool = ArtifactStorageTool(base_url="http://minio:9000")
+        assert tool.name == "artifact_storage"
+        assert tool.category == ToolCategory.EXTERNAL_SERVICE
+
+    def test_empty_action_rejected(self):
+        tool = ArtifactStorageTool(base_url="http://minio:9000")
+        result = tool.execute(action="")
+        assert not result.success
+        assert "No action" in result.error
+
+    def test_invalid_action_rejected(self):
+        tool = ArtifactStorageTool(base_url="http://minio:9000")
+        result = tool.execute(action="destroy")
+        assert not result.success
+        assert "Invalid action" in result.error
+
+    def test_missing_base_url(self):
+        tool = ArtifactStorageTool(base_url="")
+        result = tool.execute(action="list")
+        assert not result.success
+        assert "MINIO_URL" in result.error
+
+    def test_put_requires_key(self):
+        tool = ArtifactStorageTool(base_url="http://minio:9000")
+        result = tool.execute(action="put")
+        assert not result.success
+        assert "key required" in result.error
+
+    def test_put_requires_content(self):
+        tool = ArtifactStorageTool(base_url="http://minio:9000")
+        result = tool.execute(action="put", key="test.txt")
+        assert not result.success
+        assert "content required" in result.error
 
 
 # ============================================================
@@ -538,68 +305,78 @@ class TestFirecrawlSearchTool:
 # ============================================================
 
 
-class TestFirecrawlRegistryWiring:
-    """Test that Firecrawl tools appear in the registry under correct conditions."""
+class TestInfraRegistryWiring:
+    """Test that infrastructure tools appear in the registry under correct conditions."""
 
-    def test_no_firecrawl_when_key_missing(self):
+    def _clean_env(self):
+        """Remove all infrastructure service env vars."""
+        for key in ["SEARXNG_URL", "SPIDER_URL", "PLAYWRIGHT_WS_URL",
+                     "PENPOT_API_URL", "COMFYUI_URL", "GITEA_URL", "MINIO_URL",
+                     "FIRECRAWL_API_KEY"]:
+            os.environ.pop(key, None)
+
+    def test_no_tools_when_env_missing(self):
         with patch.dict(os.environ, {}, clear=False):
-            os.environ.pop("FIRECRAWL_API_KEY", None)
+            self._clean_env()
             registry = create_default_tool_registry(sandbox_pool=MagicMock(), network_egress=False)
-            assert registry.get("web_scrape") is None
-            assert registry.get("web_crawl") is None
             assert registry.get("web_search") is None
+            assert registry.get("web_scrape") is None
+            assert registry.get("browser_automation") is None
+            assert registry.get("design") is None
+            assert registry.get("image_generation") is None
+            assert registry.get("git_forge") is None
+            assert registry.get("artifact_storage") is None
 
-    def test_firecrawl_registered_when_key_set_no_egress(self):
-        """Firecrawl tools register even without network_egress."""
-        with patch.dict(os.environ, {"FIRECRAWL_API_KEY": "fc-test123"}):
+    def test_searxng_registered_when_env_set(self):
+        with patch.dict(os.environ, {"SEARXNG_URL": "http://searxng:8080"}):
             registry = create_default_tool_registry(sandbox_pool=MagicMock(), network_egress=False)
-            assert registry.get("web_scrape") is not None
-            assert registry.get("web_crawl") is not None
             assert registry.get("web_search") is not None
 
-    def test_firecrawl_registered_with_egress(self):
-        with patch.dict(os.environ, {"FIRECRAWL_API_KEY": "fc-test123"}):
-            registry = create_default_tool_registry(sandbox_pool=MagicMock(), network_egress=True)
-            assert registry.get("web_scrape") is not None
-            assert registry.get("web_crawl") is not None
-            assert registry.get("web_search") is not None
-
-    def test_web_fetch_still_registered_with_firecrawl(self):
-        """web_fetch should coexist with Firecrawl tools."""
-        with patch.dict(os.environ, {"FIRECRAWL_API_KEY": "fc-test123"}):
-            registry = create_default_tool_registry(sandbox_pool=MagicMock(), network_egress=True)
-            assert registry.get("web_fetch") is not None
+    def test_spider_registered_when_env_set(self):
+        with patch.dict(os.environ, {"SPIDER_URL": "http://spider:3002"}):
+            registry = create_default_tool_registry(sandbox_pool=MagicMock(), network_egress=False)
             assert registry.get("web_scrape") is not None
 
-    def test_all_tools_in_schemas(self):
-        with patch.dict(os.environ, {"FIRECRAWL_API_KEY": "fc-test123"}):
+    def test_all_tools_registered(self):
+        env = {
+            "SEARXNG_URL": "http://searxng:8080",
+            "SPIDER_URL": "http://spider:3002",
+            "PLAYWRIGHT_WS_URL": "ws://playwright:3003",
+            "PENPOT_API_URL": "http://penpot:6060",
+            "COMFYUI_URL": "http://comfyui:8188",
+            "GITEA_URL": "http://gitea:3000",
+            "MINIO_URL": "http://minio:9000",
+        }
+        with patch.dict(os.environ, env):
             registry = create_default_tool_registry(sandbox_pool=MagicMock(), network_egress=False)
-            names = [s["name"] for s in registry.get_all_schemas()]
-            assert "web_scrape" in names
-            assert "web_crawl" in names
-            assert "web_search" in names
+            for name in ["web_search", "web_scrape", "browser_automation",
+                         "design", "image_generation", "git_forge", "artifact_storage"]:
+                assert registry.get(name) is not None, f"Expected {name} to be registered"
 
-    def test_firecrawl_tools_executable_via_registry(self):
-        """Registry.execute_tool should route to Firecrawl tools."""
-        with patch.dict(os.environ, {"FIRECRAWL_API_KEY": "fc-test123"}):
-            registry = create_default_tool_registry(sandbox_pool=MagicMock(), network_egress=False)
-
-            # Execute with empty URL — should fail gracefully
-            result = registry.execute_tool("web_scrape", url="")
-            assert not result.success
-
-    def test_tool_count_with_firecrawl(self):
-        """Registry should have 3 more tools when Firecrawl is enabled."""
+    def test_tool_count_with_infra(self):
+        """Registry should have 7 more tools when all infra env vars are set."""
         with patch.dict(os.environ, {}, clear=False):
-            os.environ.pop("FIRECRAWL_API_KEY", None)
+            for key in ["SEARXNG_URL", "SPIDER_URL", "PLAYWRIGHT_WS_URL",
+                         "PENPOT_API_URL", "COMFYUI_URL", "GITEA_URL", "MINIO_URL",
+                         "FIRECRAWL_API_KEY"]:
+                os.environ.pop(key, None)
             reg_without = create_default_tool_registry(sandbox_pool=MagicMock(), network_egress=False)
             count_without = len(reg_without.list_tools())
 
-        with patch.dict(os.environ, {"FIRECRAWL_API_KEY": "fc-test123"}):
+        env = {
+            "SEARXNG_URL": "http://searxng:8080",
+            "SPIDER_URL": "http://spider:3002",
+            "PLAYWRIGHT_WS_URL": "ws://playwright:3003",
+            "PENPOT_API_URL": "http://penpot:6060",
+            "COMFYUI_URL": "http://comfyui:8188",
+            "GITEA_URL": "http://gitea:3000",
+            "MINIO_URL": "http://minio:9000",
+        }
+        with patch.dict(os.environ, env):
             reg_with = create_default_tool_registry(sandbox_pool=MagicMock(), network_egress=False)
             count_with = len(reg_with.list_tools())
 
-        assert count_with == count_without + 3
+        assert count_with == count_without + 7
 
 
 # ============================================================
@@ -607,110 +384,1176 @@ class TestFirecrawlRegistryWiring:
 # ============================================================
 
 
-class TestFirecrawlSecurity:
-    """Verify Firecrawl tool names in skill security sets."""
+class TestInfraToolSecurity:
+    """Verify infrastructure tool names in skill security sets."""
 
-    def test_tools_in_default_allowed(self):
-        """Firecrawl tools should be allowed by default for all skills."""
+    def test_search_and_scrape_in_default_allowed(self):
+        """web_search and web_scrape should be allowed by default for all skills."""
         from agents.skill_security import DEFAULT_ALLOWED_TOOLS
-        assert "web_scrape" in DEFAULT_ALLOWED_TOOLS
-        assert "web_crawl" in DEFAULT_ALLOWED_TOOLS
         assert "web_search" in DEFAULT_ALLOWED_TOOLS
+        assert "web_scrape" in DEFAULT_ALLOWED_TOOLS
 
-    def test_tools_not_in_restricted(self):
+    def test_restricted_tools_set(self):
+        """Interactive/write tools should be in RESTRICTED_TOOLS."""
         from agents.skill_security import RESTRICTED_TOOLS
-        assert "web_scrape" not in RESTRICTED_TOOLS
-        assert "web_crawl" not in RESTRICTED_TOOLS
+        assert "browser_automation" in RESTRICTED_TOOLS
+        assert "design" in RESTRICTED_TOOLS
+        assert "image_generation" in RESTRICTED_TOOLS
+        assert "git_forge" in RESTRICTED_TOOLS
+        assert "artifact_storage" in RESTRICTED_TOOLS
+
+    def test_search_scrape_not_in_restricted(self):
+        from agents.skill_security import RESTRICTED_TOOLS
         assert "web_search" not in RESTRICTED_TOOLS
+        assert "web_scrape" not in RESTRICTED_TOOLS
 
-    def test_tools_in_all_known(self):
+    def test_all_infra_tools_in_all_known(self):
         from agents.skill_security import ALL_KNOWN_TOOLS
-        assert "web_scrape" in ALL_KNOWN_TOOLS
-        assert "web_crawl" in ALL_KNOWN_TOOLS
-        assert "web_search" in ALL_KNOWN_TOOLS
+        for name in ["web_search", "web_scrape", "browser_automation",
+                      "design", "image_generation", "git_forge", "artifact_storage"]:
+            assert name in ALL_KNOWN_TOOLS, f"Expected {name} in ALL_KNOWN_TOOLS"
 
-    def test_skills_get_firecrawl_by_default(self):
-        """Skills without allowed-tools frontmatter get Firecrawl tools."""
+    def test_skills_get_search_scrape_by_default(self):
+        """Skills without allowed-tools frontmatter get web_search and web_scrape."""
         from agents.skill_security import SkillSecurity
         security = SkillSecurity()
         content = "# Just a skill with no frontmatter"
         allowed = security.parse_allowed_tools(content)
-        assert "web_scrape" in allowed
-        assert "web_crawl" in allowed
         assert "web_search" in allowed
+        assert "web_scrape" in allowed
+
+    def test_bulletin_board_in_default_allowed(self):
+        """bulletin_board should be allowed by default for all skills."""
+        from agents.skill_security import DEFAULT_ALLOWED_TOOLS
+        assert "bulletin_board" in DEFAULT_ALLOWED_TOOLS
+
+    def test_bulletin_board_in_all_known(self):
+        from agents.skill_security import ALL_KNOWN_TOOLS
+        assert "bulletin_board" in ALL_KNOWN_TOOLS
+
+    def test_bulletin_board_not_in_restricted(self):
+        from agents.skill_security import RESTRICTED_TOOLS
+        assert "bulletin_board" not in RESTRICTED_TOOLS
 
 
 # ============================================================
-# Doctor check
+# BulletinBoardTool
 # ============================================================
 
 
-class TestFirecrawlDoctorCheck:
-    """Test the check_firecrawl() diagnostic."""
+class TestBulletinBoardTool:
+    """Tests for the bulletin_board tool (shared inter-agent messaging)."""
 
-    def test_no_api_key(self):
-        from agents.doctor import check_firecrawl
+    def test_name_and_category(self):
+        from agents.tools.bulletin_board import BulletinBoardTool
+        tool = BulletinBoardTool()
+        assert tool.name == "bulletin_board"
+        assert tool.category == ToolCategory.SPECIALIZED
+
+    def test_schema_has_required_action(self):
+        from agents.tools.bulletin_board import BulletinBoardTool
+        tool = BulletinBoardTool()
+        schema = tool._get_parameters_schema()
+        assert "action" in schema["properties"]
+        assert "action" in schema["required"]
+
+    def test_schema_has_optional_fields(self):
+        from agents.tools.bulletin_board import BulletinBoardTool
+        tool = BulletinBoardTool()
+        schema = tool._get_parameters_schema()
+        assert "message" in schema["properties"]
+        assert "topic" in schema["properties"]
+        assert "limit" in schema["properties"]
+        assert "query" in schema["properties"]
+
+    def test_empty_action_rejected(self):
+        from agents.tools.bulletin_board import BulletinBoardTool
+        tool = BulletinBoardTool()
+        with patch.dict(os.environ, {"BULLETIN_PATH": "/tmp/test_bulletin.md"}):
+            result = tool.execute(action="")
+            assert not result.success
+            assert "No action" in result.error
+
+    def test_unknown_action_rejected(self):
+        from agents.tools.bulletin_board import BulletinBoardTool
+        tool = BulletinBoardTool()
+        with patch.dict(os.environ, {"BULLETIN_PATH": "/tmp/test_bulletin.md"}):
+            result = tool.execute(action="delete")
+            assert not result.success
+            assert "Unknown action" in result.error
+
+    def test_missing_env_var(self):
+        from agents.tools.bulletin_board import BulletinBoardTool
+        tool = BulletinBoardTool()
         with patch.dict(os.environ, {}, clear=False):
-            os.environ.pop("FIRECRAWL_API_KEY", None)
-            result = check_firecrawl()
-            assert result.status == "warn"
-            assert "not set" in result.summary.lower()
+            os.environ.pop("BULLETIN_PATH", None)
+            result = tool.execute(action="read")
+            assert not result.success
+            assert "BULLETIN_PATH" in result.error
 
-    def test_package_not_installed(self):
-        from agents.doctor import check_firecrawl
-        with patch.dict(os.environ, {"FIRECRAWL_API_KEY": "fc-test"}):
-            with patch.dict("sys.modules", {"firecrawl": None}):
-                result = check_firecrawl()
-                assert result.status == "warn"
-                assert "not installed" in result.summary.lower()
+    def test_post_creates_file_and_writes(self, tmp_path):
+        from agents.tools.bulletin_board import BulletinBoardTool
+        tool = BulletinBoardTool()
+        bulletin_file = str(tmp_path / "BULLETIN.md")
+        with patch.dict(os.environ, {
+            "BULLETIN_PATH": bulletin_file,
+            "VIBE_AGENT_NAME": "test-agent",
+        }):
+            result = tool.execute(action="post", message="Hello from tests")
+            assert result.success
+            assert "Posted to bulletin board" in result.output
+            assert result.metadata["agent"] == "test-agent"
 
-    def test_api_success(self, mock_firecrawl_module):
-        from agents.doctor import check_firecrawl
-        mock_app = MagicMock()
-        mock_app.scrape_url.return_value = {"markdown": "Example Domain"}
-        mock_firecrawl_module.return_value = mock_app
+            # Verify file was created with content
+            content = (tmp_path / "BULLETIN.md").read_text()
+            assert "Hello from tests" in content
+            assert "test-agent" in content
 
-        with patch.dict(os.environ, {"FIRECRAWL_API_KEY": "fc-test"}):
-            result = check_firecrawl()
-            assert result.status == "ok"
+    def test_post_with_topic(self, tmp_path):
+        from agents.tools.bulletin_board import BulletinBoardTool
+        tool = BulletinBoardTool()
+        bulletin_file = str(tmp_path / "BULLETIN.md")
+        with patch.dict(os.environ, {
+            "BULLETIN_PATH": bulletin_file,
+            "VIBE_AGENT_NAME": "test-agent",
+        }):
+            result = tool.execute(action="post", message="Use Redis", topic="architecture")
+            assert result.success
+            assert result.metadata["topic"] == "architecture"
+            content = (tmp_path / "BULLETIN.md").read_text()
+            assert "> Topic: architecture" in content
 
-    def test_api_failure(self, mock_firecrawl_module):
-        from agents.doctor import check_firecrawl
-        mock_app = MagicMock()
-        mock_app.scrape_url.side_effect = RuntimeError("401 Unauthorized")
-        mock_firecrawl_module.return_value = mock_app
+    def test_post_empty_message_rejected(self, tmp_path):
+        from agents.tools.bulletin_board import BulletinBoardTool
+        tool = BulletinBoardTool()
+        with patch.dict(os.environ, {"BULLETIN_PATH": str(tmp_path / "BULLETIN.md")}):
+            result = tool.execute(action="post", message="")
+            assert not result.success
+            assert "No message" in result.error
 
-        with patch.dict(os.environ, {"FIRECRAWL_API_KEY": "fc-bad-key"}):
-            result = check_firecrawl()
-            assert result.status == "fail"
+    def test_read_empty_bulletin(self, tmp_path):
+        from agents.tools.bulletin_board import BulletinBoardTool
+        tool = BulletinBoardTool()
+        bulletin_file = str(tmp_path / "BULLETIN.md")
+        with patch.dict(os.environ, {"BULLETIN_PATH": bulletin_file}):
+            result = tool.execute(action="read")
+            assert result.success
+            assert "No bulletin entries" in result.output
 
-    def test_api_empty_response(self, mock_firecrawl_module):
-        from agents.doctor import check_firecrawl
-        mock_app = MagicMock()
-        mock_app.scrape_url.return_value = {}
-        mock_firecrawl_module.return_value = mock_app
+    def test_read_returns_posted_entries(self, tmp_path):
+        from agents.tools.bulletin_board import BulletinBoardTool
+        tool = BulletinBoardTool()
+        bulletin_file = str(tmp_path / "BULLETIN.md")
+        with patch.dict(os.environ, {
+            "BULLETIN_PATH": bulletin_file,
+            "VIBE_AGENT_NAME": "agent-1",
+        }):
+            tool.execute(action="post", message="First message")
+            tool.execute(action="post", message="Second message")
+            result = tool.execute(action="read", limit=10)
+            assert result.success
+            assert "First message" in result.output
+            assert "Second message" in result.output
+            assert result.metadata["count"] == 2
 
-        with patch.dict(os.environ, {"FIRECRAWL_API_KEY": "fc-test"}):
-            result = check_firecrawl()
-            assert result.status == "warn"
+    def test_read_respects_limit(self, tmp_path):
+        from agents.tools.bulletin_board import BulletinBoardTool
+        tool = BulletinBoardTool()
+        bulletin_file = str(tmp_path / "BULLETIN.md")
+        with patch.dict(os.environ, {
+            "BULLETIN_PATH": bulletin_file,
+            "VIBE_AGENT_NAME": "agent-1",
+        }):
+            for i in range(5):
+                tool.execute(action="post", message=f"Message {i}")
+            result = tool.execute(action="read", limit=2)
+            assert result.success
+            assert result.metadata["count"] == 2
+            assert result.metadata["total"] == 5
+
+    def test_search_finds_matching_entries(self, tmp_path):
+        from agents.tools.bulletin_board import BulletinBoardTool
+        tool = BulletinBoardTool()
+        bulletin_file = str(tmp_path / "BULLETIN.md")
+        with patch.dict(os.environ, {
+            "BULLETIN_PATH": bulletin_file,
+            "VIBE_AGENT_NAME": "agent-1",
+        }):
+            tool.execute(action="post", message="Use Redis for caching")
+            tool.execute(action="post", message="SQLite for local storage")
+            result = tool.execute(action="search", query="Redis")
+            assert result.success
+            assert "Redis" in result.output
+            assert "SQLite" not in result.output
+            assert result.metadata["count"] == 1
+
+    def test_search_no_match(self, tmp_path):
+        from agents.tools.bulletin_board import BulletinBoardTool
+        tool = BulletinBoardTool()
+        bulletin_file = str(tmp_path / "BULLETIN.md")
+        with patch.dict(os.environ, {
+            "BULLETIN_PATH": bulletin_file,
+            "VIBE_AGENT_NAME": "agent-1",
+        }):
+            tool.execute(action="post", message="Hello world")
+            result = tool.execute(action="search", query="nonexistent")
+            assert result.success
+            assert "No entries matching" in result.output
+
+    def test_search_empty_query_rejected(self, tmp_path):
+        from agents.tools.bulletin_board import BulletinBoardTool
+        tool = BulletinBoardTool()
+        with patch.dict(os.environ, {"BULLETIN_PATH": str(tmp_path / "BULLETIN.md")}):
+            result = tool.execute(action="search", query="")
+            assert not result.success
+            assert "No search query" in result.error
+
+    def test_agent_name_fallback_to_paperclip_id(self, tmp_path):
+        from agents.tools.bulletin_board import BulletinBoardTool
+        tool = BulletinBoardTool()
+        bulletin_file = str(tmp_path / "BULLETIN.md")
+        env = {"BULLETIN_PATH": bulletin_file, "PAPERCLIP_AGENT_ID": "pc-agent-42"}
+        with patch.dict(os.environ, env, clear=False):
+            os.environ.pop("VIBE_AGENT_NAME", None)
+            result = tool.execute(action="post", message="Test")
+            assert result.metadata["agent"] == "pc-agent-42"
+
+    def test_get_schema_full(self):
+        from agents.tools.bulletin_board import BulletinBoardTool
+        tool = BulletinBoardTool()
+        schema = tool.get_schema()
+        assert schema["name"] == "bulletin_board"
+        assert "description" in schema
+        assert "parameters" in schema
+
+
+    def test_read_with_topic_shows_topic(self, tmp_path):
+        from agents.tools.bulletin_board import BulletinBoardTool
+        tool = BulletinBoardTool()
+        bulletin_file = str(tmp_path / "BULLETIN.md")
+        with patch.dict(os.environ, {
+            "BULLETIN_PATH": bulletin_file,
+            "VIBE_AGENT_NAME": "agent-1",
+        }):
+            tool.execute(action="post", message="Use Redis", topic="architecture")
+            result = tool.execute(action="read")
+            assert result.success
+            assert "Topic: architecture" in result.output
+
+    def test_read_limit_clamped_low(self, tmp_path):
+        from agents.tools.bulletin_board import BulletinBoardTool
+        tool = BulletinBoardTool()
+        bulletin_file = str(tmp_path / "BULLETIN.md")
+        with patch.dict(os.environ, {
+            "BULLETIN_PATH": bulletin_file,
+            "VIBE_AGENT_NAME": "agent-1",
+        }):
+            tool.execute(action="post", message="msg")
+            result = tool.execute(action="read", limit=0)
+            assert result.success
+            assert result.metadata["count"] == 1
+
+    def test_read_limit_clamped_high(self, tmp_path):
+        from agents.tools.bulletin_board import BulletinBoardTool
+        tool = BulletinBoardTool()
+        bulletin_file = str(tmp_path / "BULLETIN.md")
+        with patch.dict(os.environ, {
+            "BULLETIN_PATH": bulletin_file,
+            "VIBE_AGENT_NAME": "agent-1",
+        }):
+            tool.execute(action="post", message="msg")
+            result = tool.execute(action="read", limit=999)
+            assert result.success
+            assert result.metadata["count"] == 1
+
+    def test_search_by_topic(self, tmp_path):
+        from agents.tools.bulletin_board import BulletinBoardTool
+        tool = BulletinBoardTool()
+        bulletin_file = str(tmp_path / "BULLETIN.md")
+        with patch.dict(os.environ, {
+            "BULLETIN_PATH": bulletin_file,
+            "VIBE_AGENT_NAME": "agent-1",
+        }):
+            tool.execute(action="post", message="Use Redis", topic="architecture")
+            tool.execute(action="post", message="Fix bug", topic="bugfix")
+            result = tool.execute(action="search", query="architecture")
+            assert result.success
+            assert "Redis" in result.output
+            assert "Topic: architecture" in result.output
+            assert result.metadata["count"] == 1
+
+    def test_read_recent_entries_no_env(self):
+        from agents.tools.bulletin_board import read_recent_entries
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("BULLETIN_PATH", None)
+            assert read_recent_entries() == ""
+
+    def test_read_recent_entries_missing_file(self, tmp_path):
+        from agents.tools.bulletin_board import read_recent_entries
+        with patch.dict(os.environ, {"BULLETIN_PATH": str(tmp_path / "nonexistent.md")}):
+            assert read_recent_entries() == ""
+
+    def test_read_recent_entries_with_posts(self, tmp_path):
+        from agents.tools.bulletin_board import BulletinBoardTool, read_recent_entries
+        tool = BulletinBoardTool()
+        bulletin_file = str(tmp_path / "BULLETIN.md")
+        with patch.dict(os.environ, {
+            "BULLETIN_PATH": bulletin_file,
+            "VIBE_AGENT_NAME": "agent-1",
+        }):
+            tool.execute(action="post", message="Hello world")
+            tool.execute(action="post", message="Topic post", topic="test-topic")
+            result = read_recent_entries(limit=10)
+            assert "## Bulletin Board" in result
+            assert "Hello world" in result
+            assert "topic: test-topic" in result
+
+    def test_read_recent_entries_empty_bulletin(self, tmp_path):
+        from agents.tools.bulletin_board import read_recent_entries, _BULLETIN_HEADER
+        bulletin_file = tmp_path / "BULLETIN.md"
+        bulletin_file.write_text(_BULLETIN_HEADER, encoding="utf-8")
+        with patch.dict(os.environ, {"BULLETIN_PATH": str(bulletin_file)}):
+            assert read_recent_entries() == ""
+
+    def test_post_error_on_readonly_path(self, tmp_path):
+        """Post to unwritable directory returns error."""
+        from agents.tools.bulletin_board import BulletinBoardTool
+        tool = BulletinBoardTool()
+        # Point to a path under /proc which is not writable
+        with patch.dict(os.environ, {
+            "BULLETIN_PATH": "/proc/nonexistent/BULLETIN.md",
+            "VIBE_AGENT_NAME": "agent-1",
+        }):
+            result = tool.execute(action="post", message="This should fail")
+            assert not result.success
+            assert "Failed to post" in result.error
+
+    def test_read_error_handling(self):
+        """Read handles file system errors gracefully."""
+        from agents.tools.bulletin_board import BulletinBoardTool
+        tool = BulletinBoardTool()
+        with patch.dict(os.environ, {"BULLETIN_PATH": "/tmp/test_bulletin.md"}):
+            with patch("agents.tools.bulletin_board._read_entries", side_effect=OSError("disk error")):
+                result = tool.execute(action="read")
+                assert not result.success
+                assert "Failed to read" in result.error
+
+    def test_search_error_handling(self):
+        """Search handles file system errors gracefully."""
+        from agents.tools.bulletin_board import BulletinBoardTool
+        tool = BulletinBoardTool()
+        with patch.dict(os.environ, {"BULLETIN_PATH": "/tmp/test_bulletin.md"}):
+            with patch("agents.tools.bulletin_board._read_entries", side_effect=OSError("disk error")):
+                result = tool.execute(action="search", query="test")
+                assert not result.success
+                assert "Failed to search" in result.error
+
+    def test_read_recent_entries_error_handling(self, tmp_path):
+        """read_recent_entries returns empty string on error."""
+        from agents.tools.bulletin_board import read_recent_entries
+        with patch.dict(os.environ, {"BULLETIN_PATH": str(tmp_path / "BULLETIN.md")}):
+            with patch("agents.tools.bulletin_board._read_entries", side_effect=OSError("disk error")):
+                # Create the file so it gets past the exists() check
+                (tmp_path / "BULLETIN.md").write_text("# test\n")
+                assert read_recent_entries() == ""
+
+    def test_search_empty_bulletin_file(self, tmp_path):
+        """Search on a bulletin file with header only returns no entries."""
+        from agents.tools.bulletin_board import BulletinBoardTool, _BULLETIN_HEADER
+        tool = BulletinBoardTool()
+        bulletin_file = tmp_path / "BULLETIN.md"
+        bulletin_file.write_text(_BULLETIN_HEADER, encoding="utf-8")
+        with patch.dict(os.environ, {"BULLETIN_PATH": str(bulletin_file)}):
+            result = tool.execute(action="search", query="anything")
+            assert result.success
+            assert "No bulletin entries" in result.output
+
+
+class TestBulletinRegistryWiring:
+    """Test that bulletin_board appears in the registry when BULLETIN_PATH is set."""
+
+    def test_not_registered_without_env(self):
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("BULLETIN_PATH", None)
+            registry = create_default_tool_registry(sandbox_pool=MagicMock(), network_egress=False)
+            assert registry.get("bulletin_board") is None
+
+    def test_registered_when_env_set(self):
+        with patch.dict(os.environ, {"BULLETIN_PATH": "/shared/bulletin/BULLETIN.md"}):
+            registry = create_default_tool_registry(sandbox_pool=MagicMock(), network_egress=False)
+            assert registry.get("bulletin_board") is not None
 
 
 # ============================================================
-# SandboxConfig
+# WebSearchTool execute() — mocked HTTP
 # ============================================================
 
 
-class TestSandboxConfigFirecrawl:
-    """Test firecrawl_api_key field in SandboxConfig."""
+class TestWebSearchExecution:
+    """Tests for WebSearchTool.execute() with mocked HTTP responses."""
 
-    def test_default_empty(self):
-        from agents.sandbox.config import SandboxConfig
-        cfg = SandboxConfig()
-        assert cfg.firecrawl_api_key == ""
+    def _mock_response(self, body: bytes):
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = body
+        mock_resp.__enter__ = MagicMock(return_value=mock_resp)
+        mock_resp.__exit__ = MagicMock(return_value=False)
+        return mock_resp
 
-    def test_env_override(self):
-        from agents.sandbox.config import SandboxConfig
-        cfg = SandboxConfig()
-        with patch.dict(os.environ, {"FIRECRAWL_API_KEY": "fc-from-env"}):
-            cfg.apply_env_overrides()
-            assert cfg.firecrawl_api_key == "fc-from-env"
+    def test_successful_search_with_results(self):
+        tool = WebSearchTool(base_url="http://searxng:8080")
+        payload = {
+            "results": [
+                {"title": "Python Docs", "url": "http://docs.python.org", "content": "Official docs", "engine": "google"},
+                {"title": "PEP 8", "url": "http://pep8.org", "content": "Style guide", "engine": "duckduckgo"},
+            ]
+        }
+        mock_resp = self._mock_response(json.dumps(payload).encode())
+        with patch("urllib.request.urlopen", return_value=mock_resp):
+            result = tool.execute(query="python")
+            assert result.success
+            assert "Python Docs" in result.output
+            assert "http://docs.python.org" in result.output
+            assert "(google)" in result.output
+            assert "PEP 8" in result.output
+            assert result.metadata["results"] == 2
+            assert result.metadata["query"] == "python"
+
+    def test_empty_results(self):
+        tool = WebSearchTool(base_url="http://searxng:8080")
+        payload = {"results": []}
+        mock_resp = self._mock_response(json.dumps(payload).encode())
+        with patch("urllib.request.urlopen", return_value=mock_resp):
+            result = tool.execute(query="obscure query xyz")
+            assert result.success
+            assert "No results found" in result.output
+            assert result.metadata["results"] == 0
+
+    def test_http_error(self):
+        tool = WebSearchTool(base_url="http://searxng:8080")
+        with patch("urllib.request.urlopen", side_effect=urllib.error.URLError("Connection refused")):
+            result = tool.execute(query="test")
+            assert not result.success
+            assert "SearXNG search failed" in result.error
+
+    def test_limit_clamped(self):
+        tool = WebSearchTool(base_url="http://searxng:8080")
+        many_results = [{"title": f"R{i}", "url": f"http://r{i}.com", "content": f"s{i}", "engine": "g"} for i in range(25)]
+        payload = {"results": many_results}
+        mock_resp = self._mock_response(json.dumps(payload).encode())
+        with patch("urllib.request.urlopen", return_value=mock_resp):
+            result = tool.execute(query="test", limit=25)
+            assert result.success
+            # limit is clamped to 20
+            assert result.metadata["results"] == 20
+
+    def test_result_formatting_no_snippet(self):
+        tool = WebSearchTool(base_url="http://searxng:8080")
+        payload = {"results": [{"title": "NoSnippet", "url": "http://example.com", "content": "", "engine": ""}]}
+        mock_resp = self._mock_response(json.dumps(payload).encode())
+        with patch("urllib.request.urlopen", return_value=mock_resp):
+            result = tool.execute(query="test")
+            assert result.success
+            assert "NoSnippet" in result.output
+
+
+# ============================================================
+# WebScrapeTool execute() — mocked HTTP
+# ============================================================
+
+
+import urllib.error
+
+
+class TestWebScrapeExecution:
+    """Tests for WebScrapeTool.execute() with mocked HTTP responses."""
+
+    def _mock_response(self, body: bytes):
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = body
+        mock_resp.__enter__ = MagicMock(return_value=mock_resp)
+        mock_resp.__exit__ = MagicMock(return_value=False)
+        return mock_resp
+
+    def test_successful_scrape_list_response(self):
+        tool = WebScrapeTool(base_url="http://spider:3002")
+        payload = [{"content": "# Hello World\nSome text", "url": "http://example.com"}]
+        mock_resp = self._mock_response(json.dumps(payload).encode())
+        with patch("urllib.request.urlopen", return_value=mock_resp):
+            result = tool.execute(url="http://example.com")
+            assert result.success
+            assert "Hello World" in result.output
+            assert result.metadata["url"] == "http://example.com"
+            assert result.metadata["length"] == len("# Hello World\nSome text")
+
+    def test_successful_scrape_dict_response(self):
+        tool = WebScrapeTool(base_url="http://spider:3002")
+        payload = {"content": "Page content here", "url": "http://example.com/page"}
+        mock_resp = self._mock_response(json.dumps(payload).encode())
+        with patch("urllib.request.urlopen", return_value=mock_resp):
+            result = tool.execute(url="http://example.com/page")
+            assert result.success
+            assert "Page content here" in result.output
+            assert result.metadata["url"] == "http://example.com/page"
+
+    def test_dict_response_markdown_fallback(self):
+        tool = WebScrapeTool(base_url="http://spider:3002")
+        payload = {"markdown": "Markdown fallback content", "url": "http://example.com"}
+        mock_resp = self._mock_response(json.dumps(payload).encode())
+        with patch("urllib.request.urlopen", return_value=mock_resp):
+            result = tool.execute(url="http://example.com")
+            assert result.success
+            assert "Markdown fallback content" in result.output
+
+    def test_empty_content_response(self):
+        tool = WebScrapeTool(base_url="http://spider:3002")
+        payload = [{"content": "", "url": "http://example.com"}]
+        mock_resp = self._mock_response(json.dumps(payload).encode())
+        with patch("urllib.request.urlopen", return_value=mock_resp):
+            result = tool.execute(url="http://example.com")
+            assert result.success
+            assert "no content" in result.output.lower()
+
+    def test_http_error(self):
+        tool = WebScrapeTool(base_url="http://spider:3002")
+        with patch("urllib.request.urlopen", side_effect=urllib.error.URLError("Connection refused")):
+            result = tool.execute(url="http://example.com")
+            assert not result.success
+            assert "Spider scrape failed" in result.error
+
+    def test_api_key_header_addition(self):
+        tool = WebScrapeTool(base_url="http://spider:3002")
+        payload = [{"content": "Authenticated content", "url": "http://example.com"}]
+        mock_resp = self._mock_response(json.dumps(payload).encode())
+        with patch.dict(os.environ, {"SPIDER_API_KEY": "test-key-123"}):
+            with patch("urllib.request.urlopen", return_value=mock_resp) as mock_urlopen:
+                result = tool.execute(url="http://example.com")
+                assert result.success
+                # Verify the request had the Authorization header
+                call_args = mock_urlopen.call_args
+                req_obj = call_args[0][0]
+                assert req_obj.get_header("Authorization") == "Bearer test-key-123"
+
+    def test_non_list_non_dict_response(self):
+        tool = WebScrapeTool(base_url="http://spider:3002")
+        payload = "just a string"
+        mock_resp = self._mock_response(json.dumps(payload).encode())
+        with patch("urllib.request.urlopen", return_value=mock_resp):
+            result = tool.execute(url="http://example.com")
+            assert result.success
+            assert "just a string" in result.output
+
+
+# ============================================================
+# BrowserAutomationTool execute() — mocked subprocess
+# ============================================================
+
+
+import subprocess
+
+
+class TestBrowserAutomationExecution:
+    """Tests for BrowserAutomationTool.execute() with mocked subprocess."""
+
+    def test_successful_json_output(self):
+        tool = BrowserAutomationTool(ws_url="ws://playwright:3003")
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = json.dumps({"result": "Navigated to http://example.com", "metadata": {"action": "navigate", "status": 200}})
+        mock_result.stderr = ""
+        with patch("subprocess.run", return_value=mock_result):
+            result = tool.execute(action="navigate", url="http://example.com")
+            assert result.success
+            assert "Navigated to http://example.com" in result.output
+            assert result.metadata["action"] == "navigate"
+            assert result.metadata["status"] == 200
+
+    def test_successful_non_json_output(self):
+        tool = BrowserAutomationTool(ws_url="ws://playwright:3003")
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = "Plain text output from browser"
+        mock_result.stderr = ""
+        with patch("subprocess.run", return_value=mock_result):
+            result = tool.execute(action="get_text", selector="body")
+            assert result.success
+            assert "Plain text output from browser" in result.output
+            assert result.metadata["action"] == "get_text"
+
+    def test_failed_execution(self):
+        tool = BrowserAutomationTool(ws_url="ws://playwright:3003")
+        mock_result = MagicMock()
+        mock_result.returncode = 1
+        mock_result.stdout = ""
+        mock_result.stderr = "Error: element not found"
+        with patch("subprocess.run", return_value=mock_result):
+            result = tool.execute(action="click", selector="#btn")
+            assert not result.success
+            assert "element not found" in result.error
+
+    def test_timeout(self):
+        tool = BrowserAutomationTool(ws_url="ws://playwright:3003")
+        with patch("subprocess.run", side_effect=subprocess.TimeoutExpired(cmd="python", timeout=45)):
+            result = tool.execute(action="navigate", url="http://slow.example.com")
+            assert not result.success
+            assert "timed out" in result.error
+
+    def test_generic_exception(self):
+        tool = BrowserAutomationTool(ws_url="ws://playwright:3003")
+        with patch("subprocess.run", side_effect=OSError("spawn failed")):
+            result = tool.execute(action="navigate", url="http://example.com")
+            assert not result.success
+            assert "Browser automation failed" in result.error
+
+
+# ============================================================
+# DesignTool execute() — mocked HTTP
+# ============================================================
+
+
+class TestDesignExecution:
+    """Tests for DesignTool.execute() with mocked HTTP responses."""
+
+    def _mock_response(self, body: bytes):
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = body
+        mock_resp.__enter__ = MagicMock(return_value=mock_resp)
+        mock_resp.__exit__ = MagicMock(return_value=False)
+        return mock_resp
+
+    def test_list_projects(self):
+        tool = DesignTool(api_url="http://penpot:6060")
+        payload = [{"id": "proj-1", "name": "My Project"}, {"id": "proj-2", "name": "Other"}]
+        mock_resp = self._mock_response(json.dumps(payload).encode())
+        with patch("urllib.request.urlopen", return_value=mock_resp):
+            result = tool.execute(action="list_projects")
+            assert result.success
+            assert "My Project" in result.output
+            assert result.metadata["command"] == "get-projects"
+
+    def test_get_project_with_id(self):
+        tool = DesignTool(api_url="http://penpot:6060")
+        payload = {"id": "proj-1", "name": "My Project", "files": []}
+        mock_resp = self._mock_response(json.dumps(payload).encode())
+        with patch("urllib.request.urlopen", return_value=mock_resp):
+            result = tool.execute(action="get_project", project_id="proj-1")
+            assert result.success
+            assert "proj-1" in result.output
+            assert result.metadata["command"] == "get-project"
+
+    def test_get_project_missing_id(self):
+        tool = DesignTool(api_url="http://penpot:6060")
+        result = tool.execute(action="get_project")
+        assert not result.success
+        assert "project_id required" in result.error
+
+    def test_create_file_success(self):
+        tool = DesignTool(api_url="http://penpot:6060")
+        payload = {"id": "file-1", "name": "new-design", "project-id": "proj-1"}
+        mock_resp = self._mock_response(json.dumps(payload).encode())
+        with patch("urllib.request.urlopen", return_value=mock_resp):
+            result = tool.execute(action="create_file", project_id="proj-1", name="new-design")
+            assert result.success
+            assert "new-design" in result.output
+            assert result.metadata["command"] == "create-file"
+
+    def test_create_file_missing_project_id(self):
+        tool = DesignTool(api_url="http://penpot:6060")
+        result = tool.execute(action="create_file", name="test")
+        assert not result.success
+        assert "project_id required" in result.error
+
+    def test_create_file_missing_name(self):
+        tool = DesignTool(api_url="http://penpot:6060")
+        result = tool.execute(action="create_file", project_id="proj-1")
+        assert not result.success
+        assert "name required" in result.error
+
+    def test_list_components(self):
+        tool = DesignTool(api_url="http://penpot:6060")
+        payload = [{"id": "comp-1", "name": "Button"}, {"id": "comp-2", "name": "Card"}]
+        mock_resp = self._mock_response(json.dumps(payload).encode())
+        with patch("urllib.request.urlopen", return_value=mock_resp):
+            result = tool.execute(action="list_components", file_id="file-1")
+            assert result.success
+            assert "Button" in result.output
+            assert result.metadata["command"] == "get-file-components"
+
+    def test_list_components_missing_file_id(self):
+        tool = DesignTool(api_url="http://penpot:6060")
+        result = tool.execute(action="list_components")
+        assert not result.success
+        assert "file_id required" in result.error
+
+    def test_export_asset_missing_params(self):
+        tool = DesignTool(api_url="http://penpot:6060")
+        result = tool.execute(action="export_asset", file_id="file-1")
+        assert not result.success
+        assert "file_id and component_id required" in result.error
+
+    def test_export_asset_missing_file_id(self):
+        tool = DesignTool(api_url="http://penpot:6060")
+        result = tool.execute(action="export_asset", component_id="comp-1")
+        assert not result.success
+        assert "file_id and component_id required" in result.error
+
+    def test_export_asset_success(self):
+        tool = DesignTool(api_url="http://penpot:6060")
+        payload = {"data": "svg-content-here"}
+        mock_resp = self._mock_response(json.dumps(payload).encode())
+        with patch("urllib.request.urlopen", return_value=mock_resp):
+            result = tool.execute(action="export_asset", file_id="file-1", component_id="comp-1", format="svg")
+            assert result.success
+            assert result.metadata["command"] == "export"
+
+    def test_http_error(self):
+        tool = DesignTool(api_url="http://penpot:6060")
+        with patch("urllib.request.urlopen", side_effect=urllib.error.URLError("Connection refused")):
+            result = tool.execute(action="list_projects")
+            assert not result.success
+            assert "Penpot API call failed" in result.error
+
+
+# ============================================================
+# ImageGenerationTool execute() — mocked HTTP
+# ============================================================
+
+
+class TestImageGenerationExecution:
+    """Tests for ImageGenerationTool.execute() with mocked HTTP responses."""
+
+    def _mock_response(self, body: bytes):
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = body
+        mock_resp.__enter__ = MagicMock(return_value=mock_resp)
+        mock_resp.__exit__ = MagicMock(return_value=False)
+        return mock_resp
+
+    def test_successful_generation(self):
+        tool = ImageGenerationTool(base_url="http://comfyui:8188")
+        queue_resp = self._mock_response(json.dumps({"prompt_id": "abc-123"}).encode())
+        history_resp = self._mock_response(json.dumps({
+            "abc-123": {
+                "outputs": {
+                    "9": {
+                        "images": [{"filename": "vibe_00001_.png", "subfolder": "", "type": "output"}]
+                    }
+                }
+            }
+        }).encode())
+
+        call_count = [0]
+        def mock_urlopen(req, **kwargs):
+            call_count[0] += 1
+            if call_count[0] == 1:
+                return queue_resp
+            return history_resp
+
+        with patch("urllib.request.urlopen", side_effect=mock_urlopen):
+            with patch("time.sleep"):
+                result = tool.execute(prompt="a beautiful sunset", width=512, height=512, steps=20, seed=42)
+                assert result.success
+                assert "abc-123" in result.output
+                assert result.metadata["prompt_id"] == "abc-123"
+                assert "image_url" in result.metadata
+                assert "vibe_00001_.png" in result.metadata["image_url"]
+
+    def test_missing_prompt_id_in_queue_response(self):
+        tool = ImageGenerationTool(base_url="http://comfyui:8188")
+        queue_resp = self._mock_response(json.dumps({"error": "bad workflow"}).encode())
+        with patch("urllib.request.urlopen", return_value=queue_resp):
+            result = tool.execute(prompt="a cat")
+            assert not result.success
+            assert "did not return a prompt_id" in result.error
+
+    def test_poll_timeout(self):
+        tool = ImageGenerationTool(base_url="http://comfyui:8188")
+        queue_resp = self._mock_response(json.dumps({"prompt_id": "timeout-id"}).encode())
+        # History always returns empty (prompt never completes)
+        empty_history = self._mock_response(json.dumps({}).encode())
+
+        call_count = [0]
+        def mock_urlopen(req, **kwargs):
+            call_count[0] += 1
+            if call_count[0] == 1:
+                return queue_resp
+            return empty_history
+
+        with patch("urllib.request.urlopen", side_effect=mock_urlopen):
+            with patch("time.sleep"):
+                with patch("time.monotonic", side_effect=[0, 0, 9999]):
+                    result = tool.execute(prompt="a cat", steps=1)
+                    assert not result.success
+                    assert "timed out" in result.error
+
+    def test_dimension_clamping(self):
+        tool = ImageGenerationTool(base_url="http://comfyui:8188")
+        queue_resp = self._mock_response(json.dumps({"prompt_id": "clamp-id"}).encode())
+        history_resp = self._mock_response(json.dumps({
+            "clamp-id": {
+                "outputs": {
+                    "9": {
+                        "images": [{"filename": "out.png", "subfolder": "", "type": "output"}]
+                    }
+                }
+            }
+        }).encode())
+
+        call_count = [0]
+        def mock_urlopen(req, **kwargs):
+            call_count[0] += 1
+            if call_count[0] == 1:
+                return queue_resp
+            return history_resp
+
+        with patch("urllib.request.urlopen", side_effect=mock_urlopen):
+            with patch("time.sleep"):
+                # Width too small, height too large
+                result = tool.execute(prompt="test", width=10, height=5000, steps=1, seed=42)
+                assert result.success
+                assert result.metadata["width"] == 64
+                assert result.metadata["height"] == 2048
+                assert result.metadata["steps"] == 1
+
+    def test_http_error(self):
+        tool = ImageGenerationTool(base_url="http://comfyui:8188")
+        with patch("urllib.request.urlopen", side_effect=urllib.error.URLError("Connection refused")):
+            result = tool.execute(prompt="a cat")
+            assert not result.success
+            assert "ComfyUI image generation failed" in result.error
+
+    def test_completed_but_no_images(self):
+        tool = ImageGenerationTool(base_url="http://comfyui:8188")
+        queue_resp = self._mock_response(json.dumps({"prompt_id": "no-img"}).encode())
+        history_resp = self._mock_response(json.dumps({
+            "no-img": {
+                "outputs": {
+                    "9": {"images": []}
+                }
+            }
+        }).encode())
+
+        call_count = [0]
+        def mock_urlopen(req, **kwargs):
+            call_count[0] += 1
+            if call_count[0] == 1:
+                return queue_resp
+            return history_resp
+
+        with patch("urllib.request.urlopen", side_effect=mock_urlopen):
+            with patch("time.sleep"):
+                result = tool.execute(prompt="a cat", steps=1, seed=42)
+                assert not result.success
+                assert "timed out" in result.error
+
+
+# ============================================================
+# GitForgeTool execute() — mocked HTTP
+# ============================================================
+
+
+class TestGitForgeExecution:
+    """Tests for GitForgeTool.execute() with mocked HTTP responses."""
+
+    def _mock_response(self, body: bytes):
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = body
+        mock_resp.__enter__ = MagicMock(return_value=mock_resp)
+        mock_resp.__exit__ = MagicMock(return_value=False)
+        return mock_resp
+
+    def test_list_repos(self):
+        tool = GitForgeTool(base_url="http://gitea:3000")
+        payload = {"data": [{"name": "my-repo", "full_name": "user/my-repo"}]}
+        mock_resp = self._mock_response(json.dumps(payload).encode())
+        with patch("urllib.request.urlopen", return_value=mock_resp):
+            result = tool.execute(action="list_repos")
+            assert result.success
+            assert "my-repo" in result.output
+            assert result.metadata["path"] == "/api/v1/repos/search?limit=50"
+
+    def test_create_repo_success(self):
+        tool = GitForgeTool(base_url="http://gitea:3000")
+        payload = {"id": 1, "name": "new-repo", "full_name": "user/new-repo"}
+        mock_resp = self._mock_response(json.dumps(payload).encode())
+        with patch("urllib.request.urlopen", return_value=mock_resp):
+            result = tool.execute(action="create_repo", name="new-repo")
+            assert result.success
+            assert "new-repo" in result.output
+            assert result.metadata["method"] == "POST"
+
+    def test_create_repo_missing_name(self):
+        tool = GitForgeTool(base_url="http://gitea:3000")
+        result = tool.execute(action="create_repo")
+        assert not result.success
+        assert "name required" in result.error
+
+    def test_get_file_missing_params(self):
+        tool = GitForgeTool(base_url="http://gitea:3000")
+        result = tool.execute(action="get_file", owner="user", repo="repo")
+        assert not result.success
+        assert "owner, repo, and path required" in result.error
+
+    def test_get_file_missing_owner(self):
+        tool = GitForgeTool(base_url="http://gitea:3000")
+        result = tool.execute(action="get_file", repo="repo", path="README.md")
+        assert not result.success
+        assert "owner, repo, and path required" in result.error
+
+    def test_get_file_success(self):
+        tool = GitForgeTool(base_url="http://gitea:3000")
+        payload = {"name": "README.md", "content": "SGVsbG8=", "encoding": "base64"}
+        mock_resp = self._mock_response(json.dumps(payload).encode())
+        with patch("urllib.request.urlopen", return_value=mock_resp):
+            result = tool.execute(action="get_file", owner="user", repo="myrepo", path="README.md")
+            assert result.success
+            assert "README.md" in result.output
+
+    def test_create_file_success(self):
+        tool = GitForgeTool(base_url="http://gitea:3000")
+        payload = {"content": {"name": "hello.py", "path": "hello.py"}}
+        mock_resp = self._mock_response(json.dumps(payload).encode())
+        with patch("urllib.request.urlopen", return_value=mock_resp):
+            result = tool.execute(
+                action="create_file", owner="user", repo="myrepo",
+                path="hello.py", content="print('hello')", message="add hello.py"
+            )
+            assert result.success
+            assert result.metadata["method"] == "POST"
+
+    def test_create_file_missing_params(self):
+        tool = GitForgeTool(base_url="http://gitea:3000")
+        result = tool.execute(action="create_file", owner="user", repo="myrepo", path="file.py")
+        assert not result.success
+        assert "owner, repo, path, and content required" in result.error
+
+    def test_list_branches(self):
+        tool = GitForgeTool(base_url="http://gitea:3000")
+        payload = [{"name": "main"}, {"name": "dev"}]
+        mock_resp = self._mock_response(json.dumps(payload).encode())
+        with patch("urllib.request.urlopen", return_value=mock_resp):
+            result = tool.execute(action="list_branches", owner="user", repo="myrepo")
+            assert result.success
+            assert "main" in result.output
+            assert "dev" in result.output
+
+    def test_list_branches_missing_params(self):
+        tool = GitForgeTool(base_url="http://gitea:3000")
+        result = tool.execute(action="list_branches", owner="user")
+        assert not result.success
+        assert "owner and repo required" in result.error
+
+    def test_create_issue(self):
+        tool = GitForgeTool(base_url="http://gitea:3000")
+        payload = {"id": 1, "title": "Bug report", "body": "Something broke"}
+        mock_resp = self._mock_response(json.dumps(payload).encode())
+        with patch("urllib.request.urlopen", return_value=mock_resp):
+            result = tool.execute(
+                action="create_issue", owner="user", repo="myrepo",
+                title="Bug report", content="Something broke"
+            )
+            assert result.success
+            assert "Bug report" in result.output
+            assert result.metadata["method"] == "POST"
+
+    def test_create_issue_missing_params(self):
+        tool = GitForgeTool(base_url="http://gitea:3000")
+        result = tool.execute(action="create_issue", owner="user", repo="myrepo")
+        assert not result.success
+        assert "owner, repo, and title required" in result.error
+
+    def test_http_error(self):
+        tool = GitForgeTool(base_url="http://gitea:3000")
+        with patch("urllib.request.urlopen", side_effect=urllib.error.URLError("Connection refused")):
+            result = tool.execute(action="list_repos")
+            assert not result.success
+            assert "Gitea API call failed" in result.error
+
+    def test_api_token_added_to_requests(self):
+        tool = GitForgeTool(base_url="http://gitea:3000")
+        payload = {"data": []}
+        mock_resp = self._mock_response(json.dumps(payload).encode())
+        with patch.dict(os.environ, {"GITEA_API_TOKEN": "my-token-123"}):
+            with patch("urllib.request.urlopen", return_value=mock_resp) as mock_urlopen:
+                result = tool.execute(action="list_repos")
+                assert result.success
+                req_obj = mock_urlopen.call_args[0][0]
+                assert req_obj.get_header("Authorization") == "token my-token-123"
+
+    def test_list_issues(self):
+        tool = GitForgeTool(base_url="http://gitea:3000")
+        payload = [{"id": 1, "title": "Bug"}, {"id": 2, "title": "Feature"}]
+        mock_resp = self._mock_response(json.dumps(payload).encode())
+        with patch("urllib.request.urlopen", return_value=mock_resp):
+            result = tool.execute(action="list_issues", owner="user", repo="myrepo")
+            assert result.success
+            assert "Bug" in result.output
+
+    def test_create_pull_request(self):
+        tool = GitForgeTool(base_url="http://gitea:3000")
+        payload = {"id": 1, "title": "My PR", "base": "main", "head": "feature"}
+        mock_resp = self._mock_response(json.dumps(payload).encode())
+        with patch("urllib.request.urlopen", return_value=mock_resp):
+            result = tool.execute(
+                action="create_pull_request", owner="user", repo="myrepo",
+                title="My PR", head="feature", base="main"
+            )
+            assert result.success
+            assert "My PR" in result.output
+
+    def test_create_pull_request_missing_params(self):
+        tool = GitForgeTool(base_url="http://gitea:3000")
+        result = tool.execute(action="create_pull_request", owner="user", repo="myrepo", title="PR")
+        assert not result.success
+        assert "owner, repo, title, and head required" in result.error
+
+
+# ============================================================
+# ArtifactStorageTool execute() — mocked HTTP
+# ============================================================
+
+
+class TestArtifactStorageExecution:
+    """Tests for ArtifactStorageTool.execute() with mocked HTTP responses."""
+
+    def _mock_response(self, body: bytes):
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = body
+        mock_resp.__enter__ = MagicMock(return_value=mock_resp)
+        mock_resp.__exit__ = MagicMock(return_value=False)
+        return mock_resp
+
+    def test_put_success(self):
+        tool = ArtifactStorageTool(base_url="http://minio:9000")
+        mock_resp = self._mock_response(b"")
+        with patch.dict(os.environ, {"MINIO_ROOT_USER": "vibe", "MINIO_ROOT_PASSWORD": "secret"}):
+            with patch("urllib.request.urlopen", return_value=mock_resp):
+                result = tool.execute(action="put", key="test/file.txt", content="Hello world")
+                assert result.success
+                assert "11 bytes" in result.output
+                assert result.metadata["key"] == "test/file.txt"
+                assert result.metadata["bucket"] == "vibe-artifacts"
+
+    def test_put_missing_key(self):
+        tool = ArtifactStorageTool(base_url="http://minio:9000")
+        result = tool.execute(action="put", content="data")
+        assert not result.success
+        assert "key required" in result.error
+
+    def test_put_missing_content(self):
+        tool = ArtifactStorageTool(base_url="http://minio:9000")
+        result = tool.execute(action="put", key="test.txt")
+        assert not result.success
+        assert "content required" in result.error
+
+    def test_get_text_response(self):
+        tool = ArtifactStorageTool(base_url="http://minio:9000")
+        mock_resp = self._mock_response(b"File contents here")
+        with patch.dict(os.environ, {"MINIO_ROOT_USER": "vibe", "MINIO_ROOT_PASSWORD": "secret"}):
+            with patch("urllib.request.urlopen", return_value=mock_resp):
+                result = tool.execute(action="get", key="test/file.txt")
+                assert result.success
+                assert "File contents here" in result.output
+                assert result.metadata["size"] == 18
+
+    def test_get_binary_response(self):
+        tool = ArtifactStorageTool(base_url="http://minio:9000")
+        # Binary data that can't be decoded as UTF-8
+        binary_data = bytes([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10])
+        mock_resp = self._mock_response(binary_data)
+        with patch.dict(os.environ, {"MINIO_ROOT_USER": "vibe", "MINIO_ROOT_PASSWORD": "secret"}):
+            with patch("urllib.request.urlopen", return_value=mock_resp):
+                result = tool.execute(action="get", key="image.png")
+                assert result.success
+                # Binary data should be base64-encoded
+                import base64
+                assert result.output == base64.b64encode(binary_data).decode()
+
+    def test_get_missing_key(self):
+        tool = ArtifactStorageTool(base_url="http://minio:9000")
+        result = tool.execute(action="get")
+        assert not result.success
+        assert "key required" in result.error
+
+    def test_list_objects(self):
+        tool = ArtifactStorageTool(base_url="http://minio:9000")
+        xml_body = """<?xml version="1.0" encoding="UTF-8"?>
+<ListBucketResult>
+    <Contents><Key>builds/output.zip</Key><Size>1024</Size></Contents>
+    <Contents><Key>builds/log.txt</Key><Size>256</Size></Contents>
+</ListBucketResult>"""
+        mock_resp = self._mock_response(xml_body.encode())
+        with patch.dict(os.environ, {"MINIO_ROOT_USER": "vibe", "MINIO_ROOT_PASSWORD": "secret"}):
+            with patch("urllib.request.urlopen", return_value=mock_resp):
+                result = tool.execute(action="list", prefix="builds/")
+                assert result.success
+                assert "builds/output.zip" in result.output
+                assert "1024 bytes" in result.output
+                assert "builds/log.txt" in result.output
+                assert result.metadata["count"] == 2
+
+    def test_list_empty(self):
+        tool = ArtifactStorageTool(base_url="http://minio:9000")
+        xml_body = """<?xml version="1.0" encoding="UTF-8"?>
+<ListBucketResult></ListBucketResult>"""
+        mock_resp = self._mock_response(xml_body.encode())
+        with patch.dict(os.environ, {"MINIO_ROOT_USER": "vibe", "MINIO_ROOT_PASSWORD": "secret"}):
+            with patch("urllib.request.urlopen", return_value=mock_resp):
+                result = tool.execute(action="list")
+                assert result.success
+                assert "No objects found" in result.output
+                assert result.metadata["count"] == 0
+
+    def test_delete_success(self):
+        tool = ArtifactStorageTool(base_url="http://minio:9000")
+        mock_resp = self._mock_response(b"")
+        with patch.dict(os.environ, {"MINIO_ROOT_USER": "vibe", "MINIO_ROOT_PASSWORD": "secret"}):
+            with patch("urllib.request.urlopen", return_value=mock_resp):
+                result = tool.execute(action="delete", key="old/file.txt")
+                assert result.success
+                assert "Deleted" in result.output
+                assert "old/file.txt" in result.output
+
+    def test_delete_missing_key(self):
+        tool = ArtifactStorageTool(base_url="http://minio:9000")
+        result = tool.execute(action="delete")
+        assert not result.success
+        assert "key required" in result.error
+
+    def test_presign(self):
+        tool = ArtifactStorageTool(base_url="http://minio:9000")
+        result = tool.execute(action="presign", key="builds/output.zip")
+        assert result.success
+        assert "http://minio:9000/vibe-artifacts/builds/output.zip" in result.output
+        assert result.metadata["url"] == "http://minio:9000/vibe-artifacts/builds/output.zip"
+        assert result.metadata["bucket"] == "vibe-artifacts"
+        assert result.metadata["key"] == "builds/output.zip"
+
+    def test_presign_missing_key(self):
+        tool = ArtifactStorageTool(base_url="http://minio:9000")
+        result = tool.execute(action="presign")
+        assert not result.success
+        assert "key required" in result.error
+
+    def test_presign_custom_bucket(self):
+        tool = ArtifactStorageTool(base_url="http://minio:9000")
+        result = tool.execute(action="presign", key="data.csv", bucket="custom-bucket")
+        assert result.success
+        assert "http://minio:9000/custom-bucket/data.csv" in result.output
+        assert result.metadata["bucket"] == "custom-bucket"
+
+    def test_http_error(self):
+        tool = ArtifactStorageTool(base_url="http://minio:9000")
+        with patch.dict(os.environ, {"MINIO_ROOT_USER": "vibe", "MINIO_ROOT_PASSWORD": "secret"}):
+            with patch("urllib.request.urlopen", side_effect=urllib.error.URLError("Connection refused")):
+                result = tool.execute(action="get", key="test.txt")
+                assert not result.success
+                assert "MinIO operation failed" in result.error
+
+    def test_custom_bucket(self):
+        tool = ArtifactStorageTool(base_url="http://minio:9000")
+        mock_resp = self._mock_response(b"")
+        with patch.dict(os.environ, {"MINIO_ROOT_USER": "vibe", "MINIO_ROOT_PASSWORD": "secret"}):
+            with patch("urllib.request.urlopen", return_value=mock_resp):
+                result = tool.execute(action="put", key="file.txt", content="data", bucket="my-bucket")
+                assert result.success
+                assert result.metadata["bucket"] == "my-bucket"
