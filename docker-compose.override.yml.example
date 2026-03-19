@@ -31,6 +31,7 @@ services:
         apt-get update -qq && apt-get install -y -qq locales > /dev/null 2>&1
         sed -i 's/# en_US.UTF-8/en_US.UTF-8/' /etc/locale.gen
         locale-gen en_US.UTF-8 > /dev/null 2>&1
+        chown -R node:node /paperclip
         exec su -s /bin/sh node -c 'exec node --import ./server/node_modules/tsx/dist/loader.mjs server/dist/index.js'
     volumes:
       - paperclip-data:/paperclip

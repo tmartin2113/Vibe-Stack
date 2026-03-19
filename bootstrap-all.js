@@ -132,7 +132,8 @@ function grantInstanceAdmin(userId) {
     throw new Error("Cannot find pg module in container");
   }
 
-  // Insert instance_admin role via inline Node.js
+  // Insert instance_admin role via inline Node.js (piped via stdin to avoid
+  // shell escaping issues with Node v24's TypeScript eval)
   const script = `
     const { Client } = require('${pgPath.replace("/lib/index.js", "")}');
     const c = new Client({
@@ -141,12 +142,10 @@ function grantInstanceAdmin(userId) {
     });
     (async () => {
       await c.connect();
-      // Insert role (ignore if exists)
       await c.query(
         "INSERT INTO instance_user_roles (user_id, role) VALUES ($1, 'instance_admin') ON CONFLICT DO NOTHING",
         ['${userId}']
       );
-      // Clear stale sessions so next sign-in picks up new role
       await c.query("DELETE FROM session WHERE user_id = $1", ['${userId}']);
       const check = await c.query(
         "SELECT role FROM instance_user_roles WHERE user_id = $1",
@@ -155,11 +154,11 @@ function grantInstanceAdmin(userId) {
       console.log(JSON.stringify({ roles: check.rows.map(r => r.role) }));
       await c.end();
     })().catch(e => { console.error(e.message); process.exit(1); });
-  `.replace(/\n/g, " ");
+  `;
 
   const result = execSync(
-    `docker exec ${container} node -e "${script.replace(/"/g, '\\"').replace(/\$/g, '\\$')}"`,
-    { encoding: "utf-8" }
+    `docker exec -i ${container} node --input-type=commonjs`,
+    { input: script, encoding: "utf-8" }
   ).trim();
 
   console.log("  DB result:", result);
