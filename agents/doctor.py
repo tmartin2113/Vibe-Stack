@@ -482,6 +482,74 @@ def check_memory() -> CheckResult:
         return CheckResult("Memory Store", "fail", f"Error: {exc}")
 
 
+def check_message_store() -> CheckResult:
+    """Check inter-agent message store health."""
+    try:
+        db_path_str = os.environ.get("MESSAGE_STORE_PATH")
+        bulletin_path = os.environ.get("BULLETIN_PATH")
+
+        if not db_path_str and not bulletin_path:
+            return CheckResult(
+                "Message Store", "ok",
+                "Not configured (MESSAGE_STORE_PATH / BULLETIN_PATH not set)",
+            )
+
+        if db_path_str:
+            db_path = Path(db_path_str)
+        else:
+            db_path = Path("/shared/bulletin/messages.db")
+
+        if not db_path.exists():
+            return CheckResult(
+                "Message Store", "ok",
+                "No database yet (will be created on first use)",
+            )
+
+        conn = sqlite3.connect(str(db_path), timeout=5)
+        try:
+            total = conn.execute("SELECT COUNT(*) FROM messages").fetchone()[0]
+
+            # Check expired count
+            from datetime import datetime, timezone
+            now = datetime.now(timezone.utc).isoformat()
+            expired = conn.execute(
+                "SELECT COUNT(*) FROM messages WHERE expires_at IS NOT NULL AND expires_at < ?",
+                (now,),
+            ).fetchone()[0]
+
+            # FTS5 presence
+            fts_row = conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='messages_fts'"
+            ).fetchone()
+            has_fts = fts_row is not None
+
+            # Embedding coverage
+            try:
+                embedded = conn.execute(
+                    "SELECT COUNT(*) FROM message_embeddings"
+                ).fetchone()[0]
+            except Exception:
+                embedded = 0
+        finally:
+            conn.close()
+
+        size_kb = db_path.stat().st_size / 1024
+        fts_status = "FTS5 active" if has_fts else "FTS5 missing"
+        emb_status = f"{embedded}/{total} embedded" if total > 0 else "no embeddings"
+        expired_status = f", {expired} expired" if expired > 0 else ""
+
+        status = "ok"
+        if not has_fts:
+            status = "warn"
+
+        return CheckResult(
+            "Message Store", status,
+            f"SQLite WAL, {total} messages, {fts_status}, {emb_status}{expired_status}, {size_kb:.0f} KB",
+        )
+    except Exception as exc:
+        return CheckResult("Message Store", "fail", f"Error: {exc}")
+
+
 def run_doctor(config: Any) -> DoctorReport:
     """
     Run all diagnostic checks and return the report.
@@ -506,5 +574,6 @@ def run_doctor(config: Any) -> DoctorReport:
     report.add(check_python_deps())
     report.add(check_firecrawl())
     report.add(check_memory())
+    report.add(check_message_store())
 
     return report

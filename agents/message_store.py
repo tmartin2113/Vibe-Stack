@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import json
 import logging
-import math
 import os
 import re
 import sqlite3
@@ -24,13 +23,18 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+from .embedder import VLLMEmbedder, cosine_similarity, get_shared_embedder
 from .message_types import (
     BROADCAST,
     DEFAULT_TTL_SECONDS,
     HIGH_PRIORITY_TYPES,
     Message,
     MessageType,
+    validate_metadata,
 )
+
+# Backward-compat alias
+_cosine_similarity = cosine_similarity
 
 logger = logging.getLogger(__name__)
 
@@ -40,10 +44,6 @@ MAX_MESSAGES = 5000
 # Default DB path on Docker volume
 _DEFAULT_DB_DIR = Path("/shared/bulletin")
 _DEFAULT_DB_PATH = _DEFAULT_DB_DIR / "messages.db"
-
-# Embedding config (same as MemoryStore)
-_DEFAULT_EMBED_MODEL = "nomic-embed-text"
-_DEFAULT_VLLM_URL = "http://localhost:8000"
 
 
 def _get_db_path() -> Path:
@@ -67,74 +67,6 @@ def _get_agent_name() -> str:
     )
 
 
-def _cosine_similarity(a: List[float], b: List[float]) -> float:
-    """Compute cosine similarity between two vectors."""
-    if len(a) != len(b) or not a:
-        return 0.0
-    dot = sum(x * y for x, y in zip(a, b))
-    norm_a = math.sqrt(sum(x * x for x in a))
-    norm_b = math.sqrt(sum(x * x for x in b))
-    if norm_a == 0.0 or norm_b == 0.0:
-        return 0.0
-    return dot / (norm_a * norm_b)
-
-
-class VLLMEmbedder:
-    """Generate embeddings via vLLM's OpenAI-compatible /v1/embeddings endpoint.
-
-    Gracefully degrades: returns None if vLLM is unreachable.
-    """
-
-    def __init__(
-        self,
-        model: str = _DEFAULT_EMBED_MODEL,
-        vllm_url: str = _DEFAULT_VLLM_URL,
-        timeout: int = 10,
-    ):
-        self.model = model
-        self.base_url = vllm_url.rstrip("/")
-        self.timeout = timeout
-        self._available: Optional[bool] = None
-
-    def is_available(self) -> bool:
-        if self._available is not None:
-            return self._available
-        try:
-            import requests
-
-            resp = requests.post(
-                f"{self.base_url}/v1/embeddings",
-                json={"model": self.model, "input": "test"},
-                timeout=self.timeout,
-            )
-            self._available = resp.status_code == 200
-        except Exception:
-            self._available = False
-        return self._available
-
-    def embed(self, text: str) -> Optional[List[float]]:
-        if not self.is_available():
-            return None
-        try:
-            import requests
-
-            resp = requests.post(
-                f"{self.base_url}/v1/embeddings",
-                json={"model": self.model, "input": text},
-                timeout=self.timeout,
-            )
-            if resp.status_code != 200:
-                return None
-            data = resp.json()
-            items = data.get("data", [])
-            if items:
-                return items[0].get("embedding")
-            return None
-        except Exception as e:
-            logger.debug(f"Embedding failed: {e}")
-            return None
-
-
 class MessageStore:
     """SQLite-backed message store with FTS5 full-text search and embeddings.
 
@@ -149,14 +81,15 @@ class MessageStore:
         db_path: Optional[Path] = None,
         vllm_url: Optional[str] = None,
         embed_model: Optional[str] = None,
+        config: "Optional[MessageStoreConfig]" = None,
     ):
-        self._db_path = str(db_path or _get_db_path())
+        if config and config.db_path:
+            self._db_path = config.db_path
+        else:
+            self._db_path = str(db_path or _get_db_path())
         self._lock = threading.Lock()
         self._embedder: Optional[VLLMEmbedder] = None
-        self._vllm_url = vllm_url or os.environ.get(
-            "VLLM_URL", _DEFAULT_VLLM_URL
-        )
-        self._embed_model = embed_model or _DEFAULT_EMBED_MODEL
+        self._config = config
         self._init_db()
 
     @contextmanager
@@ -177,10 +110,7 @@ class MessageStore:
 
     def _get_embedder(self) -> VLLMEmbedder:
         if self._embedder is None:
-            self._embedder = VLLMEmbedder(
-                model=self._embed_model,
-                vllm_url=self._vllm_url,
-            )
+            self._embedder = get_shared_embedder()
         return self._embedder
 
     def _init_db(self):
@@ -309,6 +239,11 @@ class MessageStore:
             issue_id=issue_id,
             ttl_seconds=ttl_seconds,
         )
+
+        # Advisory payload validation
+        warnings = validate_metadata(msg.msg_type, msg.metadata)
+        for w in warnings:
+            logger.debug("Metadata validation: %s", w)
 
         with self._lock:
             with self._connect() as conn:
@@ -473,12 +408,55 @@ class MessageStore:
                     (
                         message_id,
                         json.dumps(vec),
-                        self._embed_model,
+                        embedder.model,
                         datetime.now(timezone.utc).isoformat(),
                     ),
                 )
         except Exception as e:
             logger.debug(f"Embedding storage failed for {message_id}: {e}")
+
+    def backfill_embeddings(self, batch_size: int = 50) -> int:
+        """Generate embeddings for messages that don't have one yet.
+
+        Returns count of newly embedded messages.
+        """
+        embedder = self._get_embedder()
+        if not embedder.is_available():
+            return 0
+
+        count = 0
+        with self._lock:
+            with self._connect() as conn:
+                rows = conn.execute(
+                    """SELECT m.id, m.content FROM messages m
+                       LEFT JOIN message_embeddings e ON m.id = e.message_id
+                       WHERE e.message_id IS NULL
+                       ORDER BY m.created_at
+                       LIMIT ?""",
+                    (batch_size,),
+                ).fetchall()
+
+                if not rows:
+                    return 0
+
+                texts = [row["content"] for row in rows]
+                ids = [row["id"] for row in rows]
+                vectors = embedder.embed_batch(texts)
+                now = datetime.now(timezone.utc).isoformat()
+
+                for mid, vec in zip(ids, vectors):
+                    if vec is not None:
+                        conn.execute(
+                            """INSERT OR REPLACE INTO message_embeddings
+                               (message_id, embedding, model, created_at)
+                               VALUES (?, ?, ?, ?)""",
+                            (mid, json.dumps(vec), embedder.model, now),
+                        )
+                        count += 1
+
+        if count:
+            logger.info("Backfilled %d/%d message embeddings", count, len(rows))
+        return count
 
     # ── Read operations (no lock — WAL concurrent reads) ─────────
 
