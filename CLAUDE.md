@@ -35,6 +35,10 @@ Deterministic state machine: **Router → Skill Loader → Spec Builder → Spec
 | **Workflow Factory** | `agents/workflow_factory.py` | Cached LLM backend + 16 adapters across heartbeat runs. Lazy init on first `run_workflow()` |
 | **Heartbeat Hardening** | `agents/heartbeat_progress.py`, `agents/heartbeat_signals.py` | Progress comments at key nodes, graceful SIGTERM with partial result posting |
 | **WebSocket Client** | `agents/ws_client.py` | Push-based Paperclip events via WS. Auto-reconnect with backoff. Used by orchestrator POLL and cancellation watcher |
+| **MessageStore** | `agents/message_store.py`, `agents/message_types.py` | SQLite message bus with FTS5 + vector semantic search. Typed messages (INFO, DECISION, BLOCKER, HANDOFF, STATUS, QUESTION, COMPLETION) with TTL-based expiry |
+| **MemoryStore** | `agents/memory_store.py` | Long-term agent memory with citations, BM25 + vector search, TTL cleanup |
+| **Shared Embedder** | `agents/embedder.py` | Singleton VLLMEmbedder shared across MessageStore + MemoryStore. Graceful degradation when vLLM unavailable |
+| **Spending Tracker** | `agents/spending_tracker.py` | Per-agent LLM cost tracking with configurable budget caps |
 
 ## Execution Modes
 
@@ -109,12 +113,17 @@ cd paperclip-adapter && node --import tsx --test src/server/slack-notifier.test.
 
 ### Test Coverage
 
-~1798 tests across 19 test files covering all major subsystems:
+~2891 tests across 46 test files covering all major subsystems:
 - Heartbeat (142), workflow factory (9), lazy sandbox (4), heartbeat metrics (36), task type registry (22)
-- Skill reinforcement (49), routing (62), security (135), session store (38)
-- API key manager (39), retry/timeout (73), resource discovery (22), allocator (30)
-- Sandbox integration (50), tool system (100), LLM backends (72), messenger client (75)
-- Paperclip client (60), orchestrator (90), WebSocket client (26)
+- Skill reinforcement (49), routing (37), security (142), skill registry (48), skill sources (55)
+- API key manager (39), retry/timeout (72), resource discovery (22), allocator (31)
+- Sandbox integration (47), tool system (157), LLM backends (41), messenger client (75)
+- Paperclip client (60), orchestrator (90+19), WebSocket client (26)
+- Message store (73+34), message types (26), memory store (139), embedder (30)
+- Spending tracker (27), doctor (45), artifact store (62), bulletin board v2 (30)
+- Graph coverage (82), workflow nodes (90), daemon/router (175), misc (103+145)
+- Dynamic adapters (40), complexity triage (34), heuristic critic (25)
+- Integration (36), observability (43), scalability (23), parallel subtasks (54)
 - Adapter: notifier + reply poller (17)
 
 ### Environment Variables
@@ -128,6 +137,11 @@ See `.env.example` for all configurable values. Key ones:
 | `PAPERCLIP_AGENT_ID` | Agent identity for self-comment filtering | — |
 | `VIBE_SLACK_BOT_TOKEN` | Two-way Slack bridge bot token | — |
 | `VIBE_SLACK_REPLY_TIMEOUT` | Seconds to poll for Slack reply (0 = notify only) | `300` |
+| `MESSAGE_STORE_PATH` | SQLite path for inter-agent messages | — |
+| `VIBE_MSG_MAX_MESSAGES` | FIFO eviction cap | `5000` |
+| `VIBE_MSG_DEFAULT_TTL` | Default message TTL (seconds) | `604800` |
+| `VIBE_MSG_CLEANUP_ON_HEARTBEAT` | Run cleanup in heartbeat finally | `true` |
+| `VIBE_MSG_BACKFILL_ON_HEARTBEAT` | Run embedding backfill in heartbeat finally | `true` |
 
 ### Project Structure
 
@@ -151,6 +165,11 @@ agents/                    # Main agent pipeline
   tools/                   # Tool registry + implementations
   sandbox/                 # OpenSandbox Docker integration
   skill_*.py               # Skill lifecycle (registry, loader, generator, security, cleanup)
+  embedder.py              # Shared VLLMEmbedder + cosine_similarity singleton
+  message_store.py         # SQLite message bus (FTS5 + vector search)
+  message_types.py         # Message, MessageType, payload dataclasses, validate_metadata
+  memory_store.py          # Long-term memory with citations, BM25 + vector search
+  spending_tracker.py      # Per-agent cost tracking with budgets
   messenger_client.py      # Mattermost + Slack REST clients
   paperclip_client.py      # Paperclip REST client
   resource_discovery.py    # Hardware introspection
@@ -159,7 +178,7 @@ vibe/                   # Library layer (backends, core utilities)
   backends/                # Ollama, vLLM, llama.cpp, OpenAI, Anthropic, Google
 paperclip-adapter/         # TypeScript Paperclip adapter
   src/server/              # execute, parse, slack-notifier, slack-reply-poller
-tests/                     # ~1772 tests
+tests/                     # ~2891 tests across 46 files
 ```
 
 ## Design Decisions

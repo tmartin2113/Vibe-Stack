@@ -130,7 +130,7 @@ To skip interactive auth, set `TS_AUTHKEY` in `.env` (get one from [Tailscale ad
 python -m agents.doctor
 ```
 
-Checks hardware, LLM backends, sandbox availability, and GPU status.
+Checks hardware, LLM backends, sandbox, GPU, memory store, and message store health.
 
 ## Architecture
 
@@ -206,6 +206,22 @@ Skills are how agents acquire domain knowledge. Three-tier architecture with mul
 
 **Reinforcement**: Outcome store records (skill, score, feedback) per workflow. Skills scoring < 70 trigger self-refinement with critic feedback. RAG retrieval feeds generation with top positive + negative examples.
 
+### Inter-Agent Messaging
+
+SQLite-backed message bus for structured inter-agent communication:
+
+- **MessageStore** — typed messages (INFO, DECISION, BLOCKER, HANDOFF, STATUS, QUESTION, COMPLETION) with FTS5 full-text search and vector semantic search via vLLM embeddings
+- **MemoryStore** — long-term agent memory with citations, BM25 + vector search, TTL-based cleanup
+- **Shared Embedder** — singleton `VLLMEmbedder` shared across stores, with graceful degradation when vLLM is unavailable
+- **Heartbeat integration** — automatic cleanup of expired messages and embedding backfill during heartbeat finalization
+
+### Spending Tracker
+
+Per-agent cost tracking with configurable budgets:
+
+- **SpendingTracker** — records LLM token usage and cost per heartbeat, SQLite-backed
+- **Budget enforcement** — configurable spending caps with automatic workflow termination on budget exhaustion
+
 ### Sandboxed Execution
 
 Code execution runs in Docker containers via OpenSandbox when available:
@@ -250,6 +266,17 @@ export VIBE_SANDBOX_URL=http://opensandbox:8080
 # Quality control
 export VIBE_QUALITY_THRESHOLD=85        # Score needed to pass (default: 85)
 export VIBE_MAX_ITERATIONS=3            # Max refinement loops (default: 3)
+
+# Message Store
+export MESSAGE_STORE_PATH=/data/messages.db     # SQLite message bus (enables MessageStore)
+export VIBE_MSG_MAX_MESSAGES=5000               # FIFO eviction cap
+export VIBE_MSG_DEFAULT_TTL=604800              # 7 days default TTL (seconds)
+export VIBE_MSG_CLEANUP_ON_HEARTBEAT=true       # Run cleanup in heartbeat finally
+export VIBE_MSG_BACKFILL_ON_HEARTBEAT=true      # Run embedding backfill in heartbeat finally
+
+# Spending
+export VIBE_SPENDING_DB=/data/spending.db       # SQLite spending tracker
+export VIBE_SPENDING_BUDGET=10.00               # Per-heartbeat budget cap (USD)
 
 # Logging
 export LOG_LEVEL=INFO
@@ -300,6 +327,12 @@ Vibe/
 |   |   +-- llm_backend.py             # Unified backend wrapper
 |   |   +-- llm_retry.py              # Retry utility (backoff + jitter)
 |   |   +-- doctor.py                   # Health checks
+|   |   +-- embedder.py                # Shared VLLMEmbedder + cosine_similarity
+|   |   +-- message_store.py           # SQLite message bus (FTS5 + vector search)
+|   |   +-- message_types.py           # Message, MessageType, payload dataclasses
+|   |   +-- memory_store.py            # Long-term memory with citations + search
+|   |   +-- spending_tracker.py        # Per-agent cost tracking
+|   |   +-- ws_client.py               # WebSocket client for Paperclip push events
 |   |   +-- resource_discovery.py       # Hardware auto-discovery
 |   |   +-- resource_allocator.py       # Resource planning
 |   |   +-- tools/                      # Tool registry + implementations
@@ -321,7 +354,7 @@ Vibe/
 |   +-- sandbox/                          # OpenSandbox config + GPU Dockerfile
 |
 +-- Tests
-    +-- tests/                           # ~1772 tests
+    +-- tests/                           # ~2891 tests across 46 test files
 ```
 
 ## Testing
@@ -333,25 +366,34 @@ python -m pytest tests/ -v
 # Paperclip integration
 python -m pytest tests/test_paperclip_client.py -v    # Paperclip client (60 tests)
 python -m pytest tests/test_heartbeat.py -v            # Heartbeat mode (142 tests)
-python -m pytest tests/test_orchestrator.py -v         # Orchestrator agent (56 tests)
+python -m pytest tests/test_orchestrator.py -v         # Orchestrator agent (90 tests)
 python -m pytest tests/test_workflow_factory.py -v     # Cached factory (9 tests)
 python -m pytest tests/test_sandbox_lazy.py -v         # Lazy sandbox init (4 tests)
 python -m pytest tests/test_task_type_registry.py -v   # Task type registry (22 tests)
+python -m pytest tests/test_ws_client.py -v            # WebSocket client (26 tests)
 
 # Core systems
-python -m pytest tests/test_skill_security.py -v       # Security hardening (135 tests)
+python -m pytest tests/test_skill_security.py -v       # Security hardening (142 tests)
 python -m pytest tests/test_skill_reinforcement.py -v  # Reinforcement pipeline (49 tests)
 python -m pytest tests/test_skill_registry.py -v       # Skill registry (48 tests)
-python -m pytest tests/test_routing_layer.py -v        # Routing layer (62 tests)
-python -m pytest tests/test_tool_system.py -v          # Tool system (100 tests)
-python -m pytest tests/test_sandbox_integration.py -v  # Sandbox integration (50 tests)
-python -m pytest tests/test_retry_and_timeout.py -v    # LLM retry + timeouts (73 tests)
-python -m pytest tests/test_llm_backends.py -v         # LLM backends (72 tests)
+python -m pytest tests/test_routing_layer.py -v        # Routing layer (37 tests)
+python -m pytest tests/test_tool_system.py -v          # Tool system (157 tests)
+python -m pytest tests/test_sandbox_integration.py -v  # Sandbox integration (47 tests)
+python -m pytest tests/test_retry_and_timeout.py -v    # LLM retry + timeouts (72 tests)
+python -m pytest tests/test_llm_backends.py -v         # LLM backends (41 tests)
 python -m pytest tests/test_messenger_client.py -v     # Messenger clients (75 tests)
 python -m pytest tests/test_resource_discovery.py -v   # Hardware discovery (22 tests)
-python -m pytest tests/test_resource_allocator.py -v   # Resource allocation (30 tests)
-python -m pytest tests/test_session_store.py -v        # Session persistence (38 tests)
+python -m pytest tests/test_resource_allocator.py -v   # Resource allocation (31 tests)
 python -m pytest tests/test_api_key_manager.py -v      # API key management (39 tests)
+
+# Inter-agent messaging + storage
+python -m pytest tests/test_message_store.py -v        # Message store (73 tests)
+python -m pytest tests/test_message_store_improvements.py -v  # Backfill, validation, config (34 tests)
+python -m pytest tests/test_message_types.py -v        # Message types (26 tests)
+python -m pytest tests/test_memory_store.py -v         # Memory store (139 tests)
+python -m pytest tests/test_embedder.py -v             # Shared embedder (30 tests)
+python -m pytest tests/test_spending_tracker.py -v     # Spending tracker (27 tests)
+python -m pytest tests/test_doctor.py -v               # Doctor health checks (45 tests)
 
 # TypeScript adapter tests
 cd paperclip-adapter && node --import tsx --test src/server/*.test.ts
@@ -363,7 +405,7 @@ cd paperclip-adapter && node --import tsx --test src/server/*.test.ts
 - Docker with NVIDIA Container Toolkit (for GPU passthrough)
 - 8GB+ RAM
 - NVIDIA GPU with 4GB+ VRAM (optional, for GPU inference)
-- Python 3.14+
+- Python 3.9+
 
 **Cloud backends:** No GPU required — just an API key.
 
@@ -371,7 +413,7 @@ cd paperclip-adapter && node --import tsx --test src/server/*.test.ts
 
 **Health check:**
 ```bash
-python -m agents.doctor  # Checks hardware, backends, sandbox, GPU
+python -m agents.doctor  # Checks hardware, backends, sandbox, GPU, stores
 ```
 
 **Router selecting wrong specialist:**
@@ -393,10 +435,11 @@ python -m agents.doctor  # Checks hardware, backends, sandbox, GPU
 - **Skills**: 3-tier registry with 3 vetted sources, reinforcement learning, security hardening
 - **Sandboxing**: OpenSandbox (Docker) with GPU passthrough, subprocess fallback
 - **Tools**: Dev tools + SEO tools with runtime permission enforcement
-- **Persistence**: SQLite (sessions), JSONL (skill outcomes)
-- **Language**: Python 3.14+ (agents), TypeScript (adapter)
+- **Messaging**: SQLite MessageStore (FTS5 + vector search), MemoryStore (BM25 + citations)
+- **Persistence**: SQLite (sessions, messages, memory, spending), JSONL (skill outcomes)
+- **Language**: Python 3.9+ (agents), TypeScript (adapter)
 - **Model**: Qwen 3.5 9B (default)
-- **Testing**: ~1772 tests (Python + TypeScript)
+- **Testing**: ~2891 tests across 46 test files (Python + TypeScript)
 
 ## License
 
