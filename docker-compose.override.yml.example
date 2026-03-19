@@ -16,7 +16,25 @@ services:
     build:
       context: ${PAPERCLIP_SOURCE_DIR}
       dockerfile: Dockerfile
+    env_file: .env
+    environment:
+      - BETTER_AUTH_TRUSTED_ORIGINS=http://localhost:3100,https://${TAILSCALE_HOSTNAME:-localhost}
+    ports:
+      - "3100:3100"
+    # The embedded-postgres library passes --lc-messages=en_US.UTF-8 to initdb.
+    # Slim images don't ship that locale, so we install it before starting.
+    user: "0:0"
+    entrypoint:
+      - sh
+      - -c
+      - |
+        apt-get update -qq && apt-get install -y -qq locales > /dev/null 2>&1
+        sed -i 's/# en_US.UTF-8/en_US.UTF-8/' /etc/locale.gen
+        locale-gen en_US.UTF-8 > /dev/null 2>&1
+        chown -R node:node /paperclip
+        exec su -s /bin/sh node -c 'exec node --import ./server/node_modules/tsx/dist/loader.mjs server/dist/index.js'
     volumes:
+      - paperclip-data:/paperclip
       - ${HOME}/.claude:/paperclip/.claude
       - ${PAPERCLIP_SOURCE_DIR}/server/dist:/app/server/dist
       - ${PAPERCLIP_SOURCE_DIR}/packages/db/src:/app/packages/db/src
@@ -49,3 +67,6 @@ services:
     build:
       context: ./dev-runner
       dockerfile: Dockerfile
+
+volumes:
+  paperclip-data:

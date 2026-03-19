@@ -67,6 +67,27 @@ All orchestration state is derived from Paperclip issue state — no external st
 
 Vibe agents run as Paperclip process adapters. Paperclip handles scheduling, task assignment, and multi-agent coordination. Each agent specializes in a task type and runs in heartbeat mode.
 
+### Quick Start (Bootstrap)
+
+```bash
+# 1. Copy env and set your admin password
+cp .env.example .env
+# Edit .env → set PAPERCLIP_ADMIN_PASSWORD
+
+# 2. For browser sign-in on localhost, also set in .env:
+#    BETTER_AUTH_TRUSTED_ORIGINS=http://localhost:3100
+
+# 3. Start the stack
+docker compose up -d
+
+# 4. Bootstrap everything (user + company + agents)
+node bootstrap-all.js
+```
+
+This creates an admin user (`prime@vibe.local`), grants `instance_admin`, creates the "Vibe Stack" company, and populates the full org hierarchy (CEO, CTO, DevOps, SWE, QA, UX Designer). Sign in at `http://localhost:3100`.
+
+> **Note:** `BETTER_AUTH_TRUSTED_ORIGINS` must include your browser's origin (e.g. `http://localhost:3100`) or auth requests will be rejected. For Tailscale access, add your tailnet hostname too: `http://localhost:3100,https://vibe.your-tailnet.ts.net`.
+
 ### Docker Compose (Recommended)
 
 ```bash
