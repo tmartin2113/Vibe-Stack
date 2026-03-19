@@ -3,7 +3,7 @@
 // bootstrap-all.js — one-shot Vibe Stack bootstrap
 //
 // Creates admin user, grants instance_admin role, creates company,
-// CEO agent, and full org hierarchy. Idempotent where possible.
+// CTO agent, and full org hierarchy. Idempotent where possible.
 //
 // Usage:
 //   1. Set PAPERCLIP_ADMIN_PASSWORD in .env
@@ -165,15 +165,8 @@ function grantInstanceAdmin(userId) {
 }
 
 // ── Agent definitions ──────────────────────────────────────────
-const orgAgents = [
-  {
-    name: "CTO",
-    role: "general",
-    title: "Chief Technology Officer",
-    adapterType: "claude_local",
-    adapterConfig: { cwd: REPO_DIR, model: "claude-opus-4-6", effort: "high" },
-    permissions: { canCreateAgents: false },
-  },
+// Senior engineers — report to CTO, run on Claude
+const seniorAgents = [
   {
     name: "DevOps Engineer",
     role: "engineer",
@@ -183,9 +176,17 @@ const orgAgents = [
     permissions: { canCreateAgents: false },
   },
   {
-    name: "Software Engineer",
+    name: "Frontend Engineer",
     role: "engineer",
-    title: "Software Engineer",
+    title: "Frontend Engineer",
+    adapterType: "claude_local",
+    adapterConfig: { cwd: PROJECTS_DIR, model: "claude-sonnet-4-6", effort: "high" },
+    permissions: { canCreateAgents: false },
+  },
+  {
+    name: "Backend Engineer",
+    role: "engineer",
+    title: "Backend Engineer",
     adapterType: "claude_local",
     adapterConfig: { cwd: PROJECTS_DIR, model: "claude-sonnet-4-6", effort: "high" },
     permissions: { canCreateAgents: false },
@@ -289,28 +290,28 @@ const orgAgents = [
   const companyId = company.body.id;
   console.log("Company created:", company.body.name, `(${companyId})\n`);
 
-  // 5. Create CEO agent
-  const ceo = await request("POST", `/api/companies/${companyId}/agents`, cookie, {
-    name: "CEO",
+  // 5. Create CTO (top-level agent)
+  const cto = await request("POST", `/api/companies/${companyId}/agents`, cookie, {
+    name: "CTO",
     role: "ceo",
-    title: "Chief Executive Officer",
+    title: "Chief Technology Officer",
     adapterType: "claude_local",
-    adapterConfig: {},
+    adapterConfig: { cwd: REPO_DIR, model: "claude-opus-4-6", effort: "high" },
     systemPrompt:
-      "You are the CEO of Vibe Stack, an autonomous software development company. You break down high-level objectives into actionable tasks, delegate to specialist agents, review deliverables, and ensure quality. You have final authority on task prioritization and resource allocation.",
+      "You are the CTO of Vibe Stack, an autonomous software development company. You break down high-level objectives into actionable tasks, delegate to specialist engineers, review architecture and deliverables, and ensure quality. You have final authority on technical decisions, task prioritization, and resource allocation.",
     permissions: { canCreateAgents: true },
   });
-  if (!ceo.body.id) {
-    console.error("CEO creation failed:", ceo.status, JSON.stringify(ceo.body));
+  if (!cto.body.id) {
+    console.error("CTO creation failed:", cto.status, JSON.stringify(cto.body));
     process.exit(1);
   }
-  console.log("CEO created:", ceo.body.name, `(${ceo.body.id})`);
+  console.log("CTO created:", cto.body.name, `(${cto.body.id})`);
 
-  // 6. Create org hierarchy — all report to CEO
-  console.log("\nCreating org hierarchy...");
+  // 6. Create senior engineers — all report to CTO
+  console.log("\nCreating senior engineers...");
   const created = [];
-  for (const agent of orgAgents) {
-    agent.reportsTo = ceo.body.id;
+  for (const agent of seniorAgents) {
+    agent.managerIds = [cto.body.id];
     const result = await request("POST", `/api/companies/${companyId}/agents`, cookie, agent);
     if (result.status === 201 || result.body.id) {
       console.log(`  Created ${agent.name} (${result.body.id})`);
@@ -320,10 +321,31 @@ const orgAgents = [
     }
   }
 
-  // 7. Summary
+  // 7. Create DeerFlow assistants — one per senior engineer, running on local Qwen via vLLM
+  console.log("\nCreating DeerFlow assistants...");
+  const seniors = [...created];
+  for (const senior of seniors) {
+    const deerflow = await request("POST", `/api/companies/${companyId}/agents`, cookie, {
+      name: `DeerFlow ${senior.name} Assistant`,
+      role: "engineer",
+      title: `DeerFlow ${senior.name} Assistant`,
+      adapterType: "deerflow",
+      adapterConfig: {},
+      managerIds: [senior.id],
+      permissions: { canCreateAgents: false },
+    });
+    if (deerflow.body.id) {
+      console.log(`  Created ${deerflow.body.name} (${deerflow.body.id})`);
+      created.push({ name: deerflow.body.name, id: deerflow.body.id });
+    } else {
+      console.error(`  FAILED DeerFlow ${senior.name} Assistant:`, deerflow.status, JSON.stringify(deerflow.body));
+    }
+  }
+
+  // 8. Summary
   console.log("\n=== Bootstrap complete ===");
   console.log(`Company:  ${company.body.name} (${companyId})`);
-  console.log(`CEO:      ${ceo.body.name} (${ceo.body.id})`);
+  console.log(`CTO:      ${cto.body.name} (${cto.body.id})`);
   for (const a of created) {
     console.log(`  ${a.name}: ${a.id}`);
   }
