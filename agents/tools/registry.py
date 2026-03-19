@@ -940,401 +940,6 @@ class WebFetchTool(Tool):
             return ToolResult(success=False, output="", error=str(e))
 
 
-class FirecrawlScrapeTool(Tool):
-    """Scrape a single URL using Firecrawl and return clean markdown.
-
-    Handles JavaScript rendering, anti-bot measures, and content extraction
-    automatically.  Returns LLM-ready markdown instead of raw HTML.
-
-    Requires the ``firecrawl-py`` package and a ``FIRECRAWL_API_KEY``
-    environment variable (or key passed at init).
-    Network egress must be enabled for this tool to be registered.
-    """
-
-    def __init__(self, api_key: Optional[str] = None):
-        super().__init__(
-            name="web_scrape",
-            description=(
-                "Scrape a web page and return its content as clean markdown. "
-                "Handles JavaScript-rendered pages, anti-bot protections, and "
-                "extracts main content. Use instead of web_fetch when you need "
-                "readable page content rather than raw HTML."
-            ),
-            category=ToolCategory.WEB_API,
-        )
-        self._api_key = api_key or os.environ.get("FIRECRAWL_API_KEY", "")
-
-    def _get_parameters_schema(self) -> Dict[str, Any]:
-        return {
-            "type": "object",
-            "properties": {
-                "url": {
-                    "type": "string",
-                    "description": "The URL to scrape (http or https)",
-                },
-                "formats": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": (
-                        "Output formats: markdown, html, links, screenshot "
-                        "(default: ['markdown'])"
-                    ),
-                    "default": ["markdown"],
-                },
-                "only_main_content": {
-                    "type": "boolean",
-                    "description": (
-                        "Extract only main content, stripping nav/footer/ads "
-                        "(default: true)"
-                    ),
-                    "default": True,
-                },
-                "timeout": {
-                    "type": "integer",
-                    "description": "Timeout in seconds (default 30)",
-                    "default": 30,
-                },
-            },
-            "required": ["url"],
-        }
-
-    def execute(  # type: ignore[override]
-        self,
-        url: str,
-        formats: Optional[List[str]] = None,
-        only_main_content: bool = True,
-        timeout: int = 30,
-        **kwargs: Any,
-    ) -> ToolResult:
-        if not url or not url.strip():
-            return ToolResult(success=False, output="", error="No URL provided")
-        if not url.startswith(("http://", "https://")):
-            return ToolResult(
-                success=False, output="",
-                error="URL must start with http:// or https://",
-            )
-        if not self._api_key:
-            return ToolResult(
-                success=False, output="",
-                error="FIRECRAWL_API_KEY not set. Set via environment variable.",
-            )
-
-        try:
-            from firecrawl import FirecrawlApp  # type: ignore[import-untyped]
-        except ImportError:
-            return ToolResult(
-                success=False, output="",
-                error="firecrawl-py not installed. Install with: pip install firecrawl-py",
-            )
-
-        formats = formats or ["markdown"]
-
-        try:
-            app = FirecrawlApp(api_key=self._api_key)
-            result = app.scrape_url(url, params={
-                "formats": formats,
-                "onlyMainContent": only_main_content,
-                "timeout": timeout * 1000,  # Firecrawl uses milliseconds
-            })
-
-            # Extract content from response
-            if isinstance(result, dict):
-                # Prefer markdown, fall back to other formats
-                content = (
-                    result.get("markdown")
-                    or result.get("html")
-                    or result.get("rawHtml")
-                    or json.dumps(result, indent=2, default=str)
-                )
-                metadata_out: Dict[str, Any] = {
-                    "url": url,
-                    "formats": formats,
-                }
-                if result.get("metadata"):
-                    page_meta = result["metadata"]
-                    metadata_out["title"] = page_meta.get("title", "")
-                    metadata_out["description"] = page_meta.get("description", "")
-                    metadata_out["language"] = page_meta.get("language", "")
-                if result.get("links"):
-                    metadata_out["link_count"] = len(result["links"])
-                return ToolResult(
-                    success=True,
-                    output=content,
-                    metadata=metadata_out,
-                )
-            # Unexpected response shape
-            return ToolResult(
-                success=True,
-                output=str(result),
-                metadata={"url": url},
-            )
-
-        except Exception as e:
-            return ToolResult(
-                success=False, output="",
-                error=f"Firecrawl scrape failed: {e}",
-            )
-
-
-class FirecrawlCrawlTool(Tool):
-    """Crawl multiple pages from a starting URL using Firecrawl.
-
-    Useful for ingesting documentation sites, sitemaps, or multi-page
-    content.  Returns a combined markdown document with page separators.
-
-    Requires the ``firecrawl-py`` package and a ``FIRECRAWL_API_KEY``
-    environment variable (or key passed at init).
-    Network egress must be enabled for this tool to be registered.
-    """
-
-    def __init__(self, api_key: Optional[str] = None):
-        super().__init__(
-            name="web_crawl",
-            description=(
-                "Crawl a website starting from a URL and return content from "
-                "multiple pages as markdown. Use for ingesting documentation "
-                "sites or exploring site structure. Returns combined content "
-                "with page separators."
-            ),
-            category=ToolCategory.WEB_API,
-        )
-        self._api_key = api_key or os.environ.get("FIRECRAWL_API_KEY", "")
-
-    def _get_parameters_schema(self) -> Dict[str, Any]:
-        return {
-            "type": "object",
-            "properties": {
-                "url": {
-                    "type": "string",
-                    "description": "The starting URL to crawl from",
-                },
-                "limit": {
-                    "type": "integer",
-                    "description": "Maximum number of pages to crawl (default 10, max 50)",
-                    "default": 10,
-                },
-                "max_depth": {
-                    "type": "integer",
-                    "description": "Maximum link depth from start URL (default 2)",
-                    "default": 2,
-                },
-                "include_patterns": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": "URL glob patterns to include (e.g. ['/docs/*'])",
-                },
-                "exclude_patterns": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": "URL glob patterns to exclude (e.g. ['/blog/*'])",
-                },
-            },
-            "required": ["url"],
-        }
-
-    def execute(  # type: ignore[override]
-        self,
-        url: str,
-        limit: int = 10,
-        max_depth: int = 2,
-        include_patterns: Optional[List[str]] = None,
-        exclude_patterns: Optional[List[str]] = None,
-        **kwargs: Any,
-    ) -> ToolResult:
-        if not url or not url.strip():
-            return ToolResult(success=False, output="", error="No URL provided")
-        if not url.startswith(("http://", "https://")):
-            return ToolResult(
-                success=False, output="",
-                error="URL must start with http:// or https://",
-            )
-        if not self._api_key:
-            return ToolResult(
-                success=False, output="",
-                error="FIRECRAWL_API_KEY not set. Set via environment variable.",
-            )
-
-        # Clamp limits to prevent runaway crawls
-        limit = max(1, min(limit, 50))
-        max_depth = max(1, min(max_depth, 5))
-
-        try:
-            from firecrawl import FirecrawlApp  # type: ignore[import-untyped]
-        except ImportError:
-            return ToolResult(
-                success=False, output="",
-                error="firecrawl-py not installed. Install with: pip install firecrawl-py",
-            )
-
-        try:
-            app = FirecrawlApp(api_key=self._api_key)
-
-            crawl_params: Dict[str, Any] = {
-                "limit": limit,
-                "maxDepth": max_depth,
-                "scrapeOptions": {"formats": ["markdown"]},
-            }
-            if include_patterns:
-                crawl_params["includePaths"] = include_patterns
-            if exclude_patterns:
-                crawl_params["excludePaths"] = exclude_patterns
-
-            # crawl_url polls until complete (synchronous by default)
-            result = app.crawl_url(url, params=crawl_params)
-
-            # Parse crawl results
-            pages: List[Dict[str, Any]] = []
-            if isinstance(result, dict):
-                pages = result.get("data", [])
-            elif isinstance(result, list):
-                pages = result
-
-            if not pages:
-                return ToolResult(
-                    success=True,
-                    output="Crawl completed but returned no pages.",
-                    metadata={"url": url, "pages_found": 0},
-                )
-
-            # Combine pages into a single document with separators
-            sections: List[str] = []
-            for page in pages:
-                page_url = page.get("metadata", {}).get("sourceURL", page.get("url", "unknown"))
-                page_title = page.get("metadata", {}).get("title", "")
-                content = page.get("markdown", page.get("content", ""))
-                if not content:
-                    continue
-                header = f"# {page_title}\n> Source: {page_url}" if page_title else f"> Source: {page_url}"
-                sections.append(f"{header}\n\n{content}")
-
-            combined = "\n\n---\n\n".join(sections)
-
-            return ToolResult(
-                success=True,
-                output=combined,
-                metadata={
-                    "url": url,
-                    "pages_crawled": len(sections),
-                    "pages_total": len(pages),
-                    "limit": limit,
-                    "max_depth": max_depth,
-                },
-            )
-
-        except Exception as e:
-            return ToolResult(
-                success=False, output="",
-                error=f"Firecrawl crawl failed: {e}",
-            )
-
-
-class FirecrawlSearchTool(Tool):
-    """Search the web using Firecrawl and return scraped results.
-
-    Combines web search with automatic scraping of result pages,
-    returning clean markdown content instead of just links.
-
-    Requires the ``firecrawl-py`` package and a ``FIRECRAWL_API_KEY``
-    environment variable (or key passed at init).
-    """
-
-    def __init__(self, api_key: Optional[str] = None):
-        super().__init__(
-            name="web_search",
-            description=(
-                "Search the web and return scraped content from result pages "
-                "as markdown. More powerful than a simple search — actually "
-                "reads the pages and returns their content."
-            ),
-            category=ToolCategory.WEB_API,
-        )
-        self._api_key = api_key or os.environ.get("FIRECRAWL_API_KEY", "")
-
-    def _get_parameters_schema(self) -> Dict[str, Any]:
-        return {
-            "type": "object",
-            "properties": {
-                "query": {
-                    "type": "string",
-                    "description": "Search query",
-                },
-                "limit": {
-                    "type": "integer",
-                    "description": "Max results to return (default 5, max 10)",
-                    "default": 5,
-                },
-            },
-            "required": ["query"],
-        }
-
-    def execute(  # type: ignore[override]
-        self,
-        query: str,
-        limit: int = 5,
-        **kwargs: Any,
-    ) -> ToolResult:
-        if not query or not query.strip():
-            return ToolResult(success=False, output="", error="No query provided")
-        if not self._api_key:
-            return ToolResult(
-                success=False, output="",
-                error="FIRECRAWL_API_KEY not set. Set via environment variable.",
-            )
-
-        limit = max(1, min(limit, 10))
-
-        try:
-            from firecrawl import FirecrawlApp  # type: ignore[import-untyped]
-        except ImportError:
-            return ToolResult(
-                success=False, output="",
-                error="firecrawl-py not installed. Install with: pip install firecrawl-py",
-            )
-
-        try:
-            app = FirecrawlApp(api_key=self._api_key)
-            result = app.search(query, params={"limit": limit})
-
-            # Parse search results
-            items: List[Dict[str, Any]] = []
-            if isinstance(result, dict):
-                items = result.get("data", [])
-            elif isinstance(result, list):
-                items = result
-
-            if not items:
-                return ToolResult(
-                    success=True,
-                    output=f"No results found for: {query}",
-                    metadata={"query": query, "results": 0},
-                )
-
-            sections: List[str] = []
-            for item in items[:limit]:
-                title = item.get("metadata", {}).get("title", item.get("title", ""))
-                item_url = item.get("metadata", {}).get("sourceURL", item.get("url", ""))
-                content = item.get("markdown", item.get("content", item.get("description", "")))
-                header = f"### {title}" if title else "### (untitled)"
-                if item_url:
-                    header += f"\n> {item_url}"
-                sections.append(f"{header}\n\n{content}" if content else header)
-
-            combined = "\n\n---\n\n".join(sections)
-
-            return ToolResult(
-                success=True,
-                output=combined,
-                metadata={
-                    "query": query,
-                    "results": len(sections),
-                },
-            )
-
-        except Exception as e:
-            return ToolResult(
-                success=False, output="",
-                error=f"Firecrawl search failed: {e}",
-            )
 
 
 class MemoryStoreTool(Tool):
@@ -1670,15 +1275,40 @@ def create_default_tool_registry(
     else:
         logger.info("Tool registry: web_fetch disabled (network_egress=False)")
 
-    # --- Firecrawl tools (always-on when API key is set) ---
-    firecrawl_key = os.environ.get("FIRECRAWL_API_KEY", "")
-    if firecrawl_key:
-        registry.register(FirecrawlScrapeTool(api_key=firecrawl_key))
-        registry.register(FirecrawlCrawlTool(api_key=firecrawl_key))
-        registry.register(FirecrawlSearchTool(api_key=firecrawl_key))
-        logger.info("Tool registry: Firecrawl tools enabled (web_scrape, web_crawl, web_search)")
-    else:
-        logger.info("Tool registry: Firecrawl tools disabled (FIRECRAWL_API_KEY not set)")
+    # --- Infrastructure service tools (env-gated) ---
+    from .web_search import WebSearchTool
+    from .web_scrape import WebScrapeTool
+    from .browser_automation import BrowserAutomationTool
+    from .design import DesignTool
+    from .image_generation import ImageGenerationTool
+    from .git_forge import GitForgeTool
+    from .artifact_storage import ArtifactStorageTool
+
+    if os.environ.get("SEARXNG_URL"):
+        registry.register(WebSearchTool())
+        logger.info("Tool registry: web_search enabled (SearXNG)")
+    if os.environ.get("SPIDER_URL"):
+        registry.register(WebScrapeTool())
+        logger.info("Tool registry: web_scrape enabled (Spider)")
+    if os.environ.get("PLAYWRIGHT_WS_URL"):
+        registry.register(BrowserAutomationTool())
+        logger.info("Tool registry: browser_automation enabled (Playwright)")
+    if os.environ.get("PENPOT_API_URL"):
+        registry.register(DesignTool())
+        logger.info("Tool registry: design enabled (Penpot)")
+    if os.environ.get("COMFYUI_URL"):
+        registry.register(ImageGenerationTool())
+        logger.info("Tool registry: image_generation enabled (ComfyUI)")
+    if os.environ.get("GITEA_URL"):
+        registry.register(GitForgeTool())
+        logger.info("Tool registry: git_forge enabled (Gitea)")
+    if os.environ.get("MINIO_URL"):
+        registry.register(ArtifactStorageTool())
+        logger.info("Tool registry: artifact_storage enabled (MinIO)")
+    if os.environ.get("BULLETIN_PATH"):
+        from .bulletin_board import BulletinBoardTool
+        registry.register(BulletinBoardTool())
+        logger.info("Tool registry: bulletin_board enabled")
 
     # --- Persistent memory tools (always-on) ---
     registry.register(MemoryStoreTool())
@@ -1740,13 +1370,32 @@ def create_subprocess_tool_registry(
         registry.register(WebFetchTool())
         logger.info("Tool registry: web_fetch enabled (network_egress=True)")
 
-    # --- Firecrawl tools (always-on when API key is set) ---
-    firecrawl_key = os.environ.get("FIRECRAWL_API_KEY", "")
-    if firecrawl_key:
-        registry.register(FirecrawlScrapeTool(api_key=firecrawl_key))
-        registry.register(FirecrawlCrawlTool(api_key=firecrawl_key))
-        registry.register(FirecrawlSearchTool(api_key=firecrawl_key))
-        logger.info("Tool registry: Firecrawl tools enabled")
+    # --- Infrastructure service tools (env-gated) ---
+    from .web_search import WebSearchTool
+    from .web_scrape import WebScrapeTool
+    from .browser_automation import BrowserAutomationTool
+    from .design import DesignTool
+    from .image_generation import ImageGenerationTool
+    from .git_forge import GitForgeTool
+    from .artifact_storage import ArtifactStorageTool
+
+    if os.environ.get("SEARXNG_URL"):
+        registry.register(WebSearchTool())
+    if os.environ.get("SPIDER_URL"):
+        registry.register(WebScrapeTool())
+    if os.environ.get("PLAYWRIGHT_WS_URL"):
+        registry.register(BrowserAutomationTool())
+    if os.environ.get("PENPOT_API_URL"):
+        registry.register(DesignTool())
+    if os.environ.get("COMFYUI_URL"):
+        registry.register(ImageGenerationTool())
+    if os.environ.get("GITEA_URL"):
+        registry.register(GitForgeTool())
+    if os.environ.get("MINIO_URL"):
+        registry.register(ArtifactStorageTool())
+    if os.environ.get("BULLETIN_PATH"):
+        from .bulletin_board import BulletinBoardTool
+        registry.register(BulletinBoardTool())
 
     # --- Persistent memory tools ---
     registry.register(MemoryStoreTool())

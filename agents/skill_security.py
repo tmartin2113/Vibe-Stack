@@ -30,13 +30,19 @@ logger = logging.getLogger(__name__)
 # Safe read-only tools that any skill may use
 DEFAULT_ALLOWED_TOOLS: FrozenSet[str] = frozenset({
     "Read", "Glob", "Grep", "WebFetch", "WebSearch",
-    "web_scrape", "web_crawl", "web_search",  # Firecrawl tools (always allowed)
+    "web_search", "web_scrape",  # SearXNG + Spider (read-only, safe)
     "memory_store", "memory_recall",  # Persistent memory (always allowed)
+    "bulletin_board",  # Inter-agent bulletin board (shared scratchpad, safe)
 })
 
 # Tools that require explicit allowlisting in SKILL.md frontmatter
 RESTRICTED_TOOLS: FrozenSet[str] = frozenset({
     "Write", "Edit", "Bash", "NotebookEdit",
+    "browser_automation",  # Can interact with external sites
+    "design",              # Creates/modifies design files
+    "image_generation",    # GPU-intensive
+    "git_forge",           # Can create repos/commits
+    "artifact_storage",    # Can write/delete objects
 })
 
 # All known tool names (union of safe + restricted)

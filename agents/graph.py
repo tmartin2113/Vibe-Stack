@@ -535,6 +535,16 @@ def create_agent_graph(adapter_registry: AdapterRegistry, tool_registry: Optiona
             logger.debug(f"Memory injection skipped: {e}")
             state["memory_context"] = ""
 
+        # Append recent bulletin board entries (if configured)
+        try:
+            from .tools.bulletin_board import read_recent_entries
+            bulletin_text = read_recent_entries(limit=10)
+            if bulletin_text:
+                state["memory_context"] = state.get("memory_context", "") + bulletin_text
+                logger.info("Injected bulletin board entries into specialist context")
+        except Exception as e:
+            logger.debug(f"Bulletin injection skipped: {e}")
+
         return state
 
     workflow.add_node("inject_memory", inject_memory)
