@@ -21,7 +21,9 @@ if [[ -f "${REPO_DIR}/.env" ]]; then
   set +a
 fi
 
+# Replace Docker-internal hostnames with localhost for host-side access
 PAPERCLIP_API_URL="${PAPERCLIP_API_URL:-http://localhost:3100}"
+PAPERCLIP_API_URL="${PAPERCLIP_API_URL/http:\/\/server:/http://localhost:}"
 PAPERCLIP_API_KEY="${PAPERCLIP_API_KEY:-}"
 PAPERCLIP_COMPANY_ID="${PAPERCLIP_COMPANY_ID:-}"
 

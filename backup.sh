@@ -22,7 +22,6 @@ set -euo pipefail
 BACKUP_DIR="${1:-./backups}"
 KEEP_COUNT="${KEEP_COUNT:-7}"
 TIMESTAMP="$(date +%Y%m%d_%H%M%S)"
-COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.yml}"
 MANIFEST=""
 ERRORS=0
 
@@ -53,23 +52,23 @@ try_backup() {
 # Paperclip uses embedded-postgres inside the server container.
 # Dump via pg_dump connecting to its internal port.
 try_backup "Paperclip database" bash -c '
-  docker compose -f "'"$COMPOSE_FILE"'" exec -T server \
+  docker compose exec -T server \
     pg_dump -h 127.0.0.1 -p 54329 -U paperclip -d paperclip --no-owner --no-privileges \
     | gzip > "'"$BACKUP_DIR/${TIMESTAMP}_paperclip.sql.gz"'"
 ' && record "$BACKUP_DIR/${TIMESTAMP}_paperclip.sql.gz"
 
 # ── Penpot Postgres ────────────────────────────────────────────────
 try_backup "Penpot database" bash -c '
-  docker compose -f "'"$COMPOSE_FILE"'" exec -T penpot-postgres \
+  docker compose exec -T penpot-postgres \
     pg_dump -U penpot -d penpot --no-owner --no-privileges \
     | gzip > "'"$BACKUP_DIR/${TIMESTAMP}_penpot.sql.gz"'"
 ' && record "$BACKUP_DIR/${TIMESTAMP}_penpot.sql.gz"
 
 # ── Gitea SQLite ───────────────────────────────────────────────────
 try_backup "Gitea database" bash -c '
-  docker compose -f "'"$COMPOSE_FILE"'" exec -T gitea \
+  docker compose exec -T gitea \
     sqlite3 /data/gitea/gitea.db ".backup '"'"'/tmp/gitea-backup.db'"'"'" &&
-  docker compose -f "'"$COMPOSE_FILE"'" cp gitea:/tmp/gitea-backup.db /tmp/gitea-backup.db &&
+  docker compose cp gitea:/tmp/gitea-backup.db /tmp/gitea-backup.db &&
   gzip -c /tmp/gitea-backup.db > "'"$BACKUP_DIR/${TIMESTAMP}_gitea.db.gz"'" &&
   rm -f /tmp/gitea-backup.db
 ' && record "$BACKUP_DIR/${TIMESTAMP}_gitea.db.gz"
@@ -77,7 +76,7 @@ try_backup "Gitea database" bash -c '
 # ── MinIO Object Store ────────────────────────────────────────────
 # Backup the MinIO data volume directly via docker cp
 try_backup "MinIO data" bash -c '
-  MINIO_CID=$(docker compose -f "'"$COMPOSE_FILE"'" ps -q minio) &&
+  MINIO_CID=$(docker compose ps -q minio) &&
   docker cp "$MINIO_CID:/data" /tmp/minio-backup &&
   tar czf "'"$BACKUP_DIR/${TIMESTAMP}_minio.tar.gz"'" -C /tmp minio-backup &&
   rm -rf /tmp/minio-backup
@@ -87,7 +86,7 @@ try_backup "MinIO data" bash -c '
 # Contains: sessions.db, memory.db, spending_ledger.db, skills, etc.
 # Use sqlite3 .backup for WAL-safe copies
 try_backup "Vibe agent data" bash -c '
-  VIBE_CID=$(docker compose -f "'"$COMPOSE_FILE"'" ps -q vibe 2>/dev/null || true)
+  VIBE_CID=$(docker compose ps -q vibe 2>/dev/null || true)
   if [ -z "$VIBE_CID" ]; then
     # Agent not running — backup volume directly via a temp container
     VIBE_CID=$(docker create --rm -v vibe-data:/data alpine:3 sleep 1)
@@ -112,7 +111,7 @@ try_backup "Vibe agent data" bash -c '
 # ── Bulletin Data ─────────────────────────────────────────────────
 # Contains: BULLETIN.md, messages.db
 try_backup "Bulletin data" bash -c '
-  BULLETIN_CID=$(docker compose -f "'"$COMPOSE_FILE"'" ps -q vibe 2>/dev/null || true)
+  BULLETIN_CID=$(docker compose ps -q vibe 2>/dev/null || true)
   if [ -z "$BULLETIN_CID" ]; then
     BULLETIN_CID=$(docker create --rm -v bulletin-data:/data alpine:3 sleep 1)
     docker start "$BULLETIN_CID" >/dev/null
