@@ -6,8 +6,6 @@ services:
     group_add:
       - "125"   # host docker group GID — lets 'vibe' user run 'docker info'
     depends_on:
-      vllm:
-        condition: service_healthy
       opensandbox:
         condition: service_healthy
     ports:
@@ -40,6 +38,8 @@ services:
 
   vllm:
     image: vllm/vllm-openai:latest
+    profiles:
+      - vllm   # use 'docker compose --profile vllm up' when no host vLLM service
     ports:
       - "8000:8000"
     command:
