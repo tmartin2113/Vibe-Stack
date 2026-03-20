@@ -206,7 +206,8 @@ class TestBreakerTransitions:
         # Manually set to HALF_OPEN (simulating cooldown expiry)
         conn = tracker._connect()
         conn.execute(
-            "UPDATE circuit_breaker SET state = 'half_open' WHERE scope = 'global'"
+            "UPDATE circuit_breaker SET state = 'half_open' WHERE scope = ?",
+            (tracker.scope,)
         )
         conn.commit()
         conn.close()
@@ -286,7 +287,8 @@ class TestCooldownBackoff:
         # Manually close to re-trip (simulating half_open → closed → re-trip)
         conn = tracker._connect()
         conn.execute(
-            "UPDATE circuit_breaker SET state = 'closed' WHERE scope = 'global'"
+            "UPDATE circuit_breaker SET state = 'closed' WHERE scope = ?",
+            (tracker.scope,)
         )
         conn.commit()
         conn.close()
@@ -355,3 +357,80 @@ class TestReset:
         tracker.reset()
         status = tracker.get_status()
         assert status.breaker.state == BreakerState.CLOSED
+
+
+# ------------------------------------------------------------------
+# Per-Agent Scope Isolation
+# ------------------------------------------------------------------
+
+
+class TestPerAgentScope:
+    def test_agent_id_sets_scope(self, tmp_path):
+        db_path = str(tmp_path / "scope.db")
+        t = SpendingTracker(db_path=db_path, agent_id="agent-abc")
+        assert t.scope == "agent-abc"
+
+    def test_empty_agent_id_defaults_to_global(self, tmp_path):
+        db_path = str(tmp_path / "scope.db")
+        t = SpendingTracker(db_path=db_path)
+        assert t.scope == "global"
+
+    def test_agents_have_independent_breakers(self, tmp_path):
+        """Two agents sharing one DB — tripping one doesn't trip the other."""
+        db_path = str(tmp_path / "shared.db")
+        agent_a = SpendingTracker(
+            db_path=db_path, agent_id="eng-1",
+            max_cents_per_window=100, cooldown_seconds=60,
+        )
+        agent_b = SpendingTracker(
+            db_path=db_path, agent_id="eng-2",
+            max_cents_per_window=100, cooldown_seconds=60,
+        )
+
+        # Trip agent A's breaker
+        agent_a.record_event(status="success", cost_cents=101)
+        assert agent_a.check_circuit_breaker() is not None
+
+        # Agent B should still be clear
+        assert agent_b.check_circuit_breaker() is None
+
+    def test_agent_reset_does_not_affect_other(self, tmp_path):
+        db_path = str(tmp_path / "shared.db")
+        agent_a = SpendingTracker(
+            db_path=db_path, agent_id="eng-1",
+            max_cents_per_window=100, cooldown_seconds=60,
+        )
+        agent_b = SpendingTracker(
+            db_path=db_path, agent_id="eng-2",
+            max_cents_per_window=100, cooldown_seconds=60,
+        )
+
+        # Trip both
+        agent_a.record_event(status="success", cost_cents=101)
+        agent_b.record_event(status="success", cost_cents=101)
+
+        # Reset only agent A
+        agent_a.reset()
+        assert agent_a.check_circuit_breaker() is None
+        assert agent_b.check_circuit_breaker() is not None
+
+    def test_agent_status_scoped(self, tmp_path):
+        db_path = str(tmp_path / "shared.db")
+        agent_a = SpendingTracker(
+            db_path=db_path, agent_id="eng-1",
+            max_cents_per_window=10000, cooldown_seconds=60,
+        )
+        agent_b = SpendingTracker(
+            db_path=db_path, agent_id="eng-2",
+            max_cents_per_window=10000, cooldown_seconds=60,
+        )
+
+        agent_a.record_event(status="success", cost_cents=50)
+
+        status_a = agent_a.get_status()
+        status_b = agent_b.get_status()
+
+        # Both see the cost events (cost_events table is shared),
+        # but breaker state is per-agent
+        assert status_a.breaker.state == BreakerState.CLOSED
+        assert status_b.breaker.state == BreakerState.CLOSED

@@ -263,6 +263,22 @@ class PaperclipClient:
             0, f"Request failed after {self.max_retries + 1} attempts: {last_error}"
         )
 
+    # ── Health ──
+
+    def health_check(self) -> bool:
+        """GET /api/health — returns True if the server is reachable and healthy."""
+        try:
+            response = requests.get(
+                f"{self.api_url}/api/health",
+                headers=self._headers(),
+                timeout=5.0,
+            )
+            return response.ok
+        except (requests.exceptions.ConnectionError, requests.exceptions.Timeout):
+            return False
+        except Exception:
+            return False
+
     # ── Identity ──
 
     def get_identity(self) -> AgentInfo:

@@ -124,6 +124,67 @@ def _try_connect_ws(client: PaperclipClient):
         return None
 
 
+# Default readiness probe settings
+_READINESS_MAX_WAIT = 120  # seconds — total time to wait for server
+_READINESS_INITIAL_DELAY = 1.0  # seconds — first retry delay
+_READINESS_MAX_DELAY = 15.0  # seconds — cap on backoff delay
+
+
+def _wait_for_server(
+    config: SystemConfig,
+    max_wait: float = _READINESS_MAX_WAIT,
+    initial_delay: float = _READINESS_INITIAL_DELAY,
+    max_delay: float = _READINESS_MAX_DELAY,
+) -> bool:
+    """
+    Block until the Paperclip API is reachable, with exponential backoff.
+
+    Returns True if the server became healthy within *max_wait* seconds,
+    False if the deadline expired.  This prevents the heartbeat from
+    dying immediately when the server hasn't started yet (e.g. during
+    Docker Compose boot ordering races).
+    """
+    try:
+        client = PaperclipClient(
+            api_url=config.paperclip.api_url or None,
+            api_key=config.paperclip.api_key or os.environ.get("PAPERCLIP_API_KEY", "placeholder"),
+        )
+    except ValueError:
+        # Can't even build a client — missing API URL; let run_heartbeat
+        # report the real validation error.
+        return True
+
+    deadline = time.monotonic() + max_wait
+    delay = initial_delay
+    attempt = 0
+
+    while time.monotonic() < deadline:
+        if client.health_check():
+            if attempt > 0:
+                logger.info(
+                    "Paperclip server ready after %d probe(s)", attempt,
+                )
+            return True
+
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+
+        sleep_time = min(delay, remaining)
+        logger.info(
+            "Paperclip server not ready (probe %d). Retrying in %.0fs...",
+            attempt + 1, sleep_time,
+        )
+        time.sleep(sleep_time)
+        delay = min(delay * 2, max_delay)
+        attempt += 1
+
+    logger.error(
+        "Paperclip server not reachable after %.0fs — giving up", max_wait,
+    )
+    return False
+
+
 def run_heartbeat(config: SystemConfig) -> HeartbeatResult:
     """
     Execute one Paperclip heartbeat cycle.
@@ -181,6 +242,14 @@ def run_heartbeat(config: SystemConfig) -> HeartbeatResult:
         import uuid
         os.environ["PAPERCLIP_RUN_ID"] = str(uuid.uuid4())
         logger.info("Auto-generated PAPERCLIP_RUN_ID=%s", os.environ["PAPERCLIP_RUN_ID"])
+
+    # ── Step 0d: Wait for Paperclip server to be reachable ──
+    if not _wait_for_server(config):
+        return _finish(HeartbeatResult(
+            status="failed",
+            summary="Paperclip server not reachable after readiness probe timeout",
+            exit_code=0,  # exit 0 so Docker doesn't count this as a crash
+        ))
 
     # ── Step 1: Connect to Paperclip ──
     try:
@@ -855,6 +924,7 @@ def _get_spending_tracker(config: SystemConfig) -> "Optional[SpendingTracker]":
             cooldown_seconds=config.spending.cooldown_seconds,
             max_cooldown_seconds=config.spending.max_cooldown_seconds,
             retention_days=config.spending.retention_days,
+            agent_id=os.environ.get("PAPERCLIP_AGENT_ID", ""),
         )
     except Exception as e:
         logger.warning("Failed to initialize spending tracker (non-fatal): %s", e)

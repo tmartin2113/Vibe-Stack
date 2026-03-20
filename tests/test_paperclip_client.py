@@ -167,6 +167,41 @@ class TestHeaders:
         assert "X-Paperclip-Run-Id" not in headers
 
 
+# ── health_check Tests ──
+
+
+class TestHealthCheck:
+    @patch("agents.paperclip_client.requests.get")
+    def test_returns_true_on_200(self, mock_get, client):
+        resp = MagicMock()
+        resp.ok = True
+        mock_get.return_value = resp
+        assert client.health_check() is True
+        mock_get.assert_called_once()
+
+    @patch("agents.paperclip_client.requests.get")
+    def test_returns_false_on_500(self, mock_get, client):
+        resp = MagicMock()
+        resp.ok = False
+        mock_get.return_value = resp
+        assert client.health_check() is False
+
+    @patch("agents.paperclip_client.requests.get")
+    def test_returns_false_on_connection_error(self, mock_get, client):
+        mock_get.side_effect = requests.exceptions.ConnectionError("refused")
+        assert client.health_check() is False
+
+    @patch("agents.paperclip_client.requests.get")
+    def test_returns_false_on_timeout(self, mock_get, client):
+        mock_get.side_effect = requests.exceptions.Timeout("timed out")
+        assert client.health_check() is False
+
+    @patch("agents.paperclip_client.requests.get")
+    def test_returns_false_on_unexpected_error(self, mock_get, client):
+        mock_get.side_effect = RuntimeError("boom")
+        assert client.health_check() is False
+
+
 # ── get_identity Tests ──
 
 

@@ -86,11 +86,13 @@ class SpendingTracker:
         cooldown_seconds: int = 300,
         max_cooldown_seconds: int = 7200,
         retention_days: int = 30,
+        agent_id: str = "",
     ):
         if db_path is None:
             db_path = str(Path.home() / ".vibe" / "spending_ledger.db")
 
         self.db_path = db_path
+        self.scope = agent_id or "global"
         self.window_seconds = window_seconds
         self.max_cents_per_window = max_cents_per_window
         self.max_heartbeats_per_window = max_heartbeats_per_window
@@ -213,7 +215,8 @@ class SpendingTracker:
             conn = self._connect()
             try:
                 row = conn.execute(
-                    "SELECT * FROM circuit_breaker WHERE scope = 'global'"
+                    "SELECT * FROM circuit_breaker WHERE scope = ?",
+                    (self.scope,),
                 ).fetchone()
 
                 if row is None or row["state"] == BreakerState.CLOSED.value:
@@ -229,8 +232,8 @@ class SpendingTracker:
                         if now >= cooldown_dt:
                             # Transition to HALF_OPEN — allow probe
                             conn.execute(
-                                "UPDATE circuit_breaker SET state = ? WHERE scope = 'global'",
-                                (BreakerState.HALF_OPEN.value,),
+                                "UPDATE circuit_breaker SET state = ? WHERE scope = ?",
+                                (BreakerState.HALF_OPEN.value, self.scope),
                             )
                             conn.commit()
                             logger.info("Circuit breaker → HALF_OPEN (cooldown expired)")
@@ -267,13 +270,14 @@ class SpendingTracker:
             conn = self._connect()
             try:
                 row = conn.execute(
-                    "SELECT state FROM circuit_breaker WHERE scope = 'global'"
+                    "SELECT state FROM circuit_breaker WHERE scope = ?",
+                    (self.scope,),
                 ).fetchone()
                 if row and row["state"] == BreakerState.HALF_OPEN.value:
                     conn.execute(
                         "UPDATE circuit_breaker SET state = ?, reason = '', "
-                        "opened_at = '', cooldown_until = '' WHERE scope = 'global'",
-                        (BreakerState.CLOSED.value,),
+                        "opened_at = '', cooldown_until = '' WHERE scope = ?",
+                        (BreakerState.CLOSED.value, self.scope),
                     )
                     conn.commit()
                     logger.info("Circuit breaker → CLOSED (probe succeeded)")
@@ -345,7 +349,8 @@ class SpendingTracker:
 
         # Get current trip count for exponential backoff
         row = conn.execute(
-            "SELECT trip_count, state FROM circuit_breaker WHERE scope = 'global'"
+            "SELECT trip_count, state FROM circuit_breaker WHERE scope = ?",
+            (self.scope,),
         ).fetchone()
 
         if row and row["state"] == BreakerState.OPEN.value:
@@ -365,7 +370,7 @@ class SpendingTracker:
         conn.execute(
             """
             INSERT INTO circuit_breaker (scope, state, opened_at, reason, cooldown_until, trip_count)
-            VALUES ('global', ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?)
             ON CONFLICT(scope) DO UPDATE SET
                 state = excluded.state,
                 opened_at = excluded.opened_at,
@@ -373,7 +378,7 @@ class SpendingTracker:
                 cooldown_until = excluded.cooldown_until,
                 trip_count = excluded.trip_count
             """,
-            (BreakerState.OPEN.value, now.isoformat(), reason, cooldown_until, new_trip_count),
+            (self.scope, BreakerState.OPEN.value, now.isoformat(), reason, cooldown_until, new_trip_count),
         )
         conn.commit()
         logger.warning(
@@ -430,7 +435,8 @@ class SpendingTracker:
 
                 # Breaker state
                 breaker_row = conn.execute(
-                    "SELECT * FROM circuit_breaker WHERE scope = 'global'"
+                    "SELECT * FROM circuit_breaker WHERE scope = ?",
+                    (self.scope,),
                 ).fetchone()
 
                 if breaker_row:
@@ -470,14 +476,15 @@ class SpendingTracker:
                 conn.execute(
                     """
                     INSERT INTO circuit_breaker (scope, state, opened_at, reason, cooldown_until, trip_count)
-                    VALUES ('global', 'closed', '', '', '', 0)
+                    VALUES (?, 'closed', '', '', '', 0)
                     ON CONFLICT(scope) DO UPDATE SET
                         state = 'closed',
                         opened_at = '',
                         reason = '',
                         cooldown_until = '',
                         trip_count = 0
-                    """
+                    """,
+                    (self.scope,),
                 )
                 conn.commit()
                 logger.info("Circuit breaker reset to CLOSED")

@@ -8,8 +8,6 @@ services:
     depends_on:
       opensandbox:
         condition: service_healthy
-    ports:
-      - "8080:8080"
     environment:
       - VIBE_BACKEND_HOST=vllm
       - VIBE_BACKEND_PORT=8000

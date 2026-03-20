@@ -354,6 +354,66 @@ class TestPostFailure:
         _post_failure(client, "issue-1", "Error")
 
 
+# ── Server Readiness Probe Tests ──
+
+
+class TestWaitForServer:
+    @patch("agents.heartbeat.PaperclipClient")
+    def test_returns_true_immediately_when_healthy(self, MockClient, config):
+        MockClient.return_value.health_check.return_value = True
+        from agents.heartbeat import _wait_for_server
+        assert _wait_for_server(config, max_wait=5) is True
+        MockClient.return_value.health_check.assert_called_once()
+
+    @patch("agents.heartbeat.time.sleep")
+    @patch("agents.heartbeat.PaperclipClient")
+    def test_retries_then_succeeds(self, MockClient, mock_sleep, config):
+        MockClient.return_value.health_check.side_effect = [False, False, True]
+        from agents.heartbeat import _wait_for_server
+        assert _wait_for_server(config, max_wait=60, initial_delay=0.1) is True
+        assert MockClient.return_value.health_check.call_count == 3
+
+    @patch("agents.heartbeat.time.sleep")
+    @patch("agents.heartbeat.time.monotonic")
+    @patch("agents.heartbeat.PaperclipClient")
+    def test_returns_false_after_timeout(self, MockClient, mock_mono, mock_sleep, config):
+        MockClient.return_value.health_check.return_value = False
+        # Simulate time progressing past deadline
+        mock_mono.side_effect = [0.0, 0.0, 1.0, 3.0, 7.0, 15.0, 31.0, 121.0]
+        from agents.heartbeat import _wait_for_server
+        assert _wait_for_server(config, max_wait=120, initial_delay=1.0) is False
+
+    @patch("agents.heartbeat.PaperclipClient")
+    def test_skips_probe_when_api_url_missing(self, MockClient, config):
+        MockClient.side_effect = ValueError("PAPERCLIP_API_URL not set")
+        from agents.heartbeat import _wait_for_server
+        # When client can't be created, returns True to let run_heartbeat
+        # report the real validation error
+        assert _wait_for_server(config) is True
+
+    @patch("agents.heartbeat._wait_for_server")
+    @patch("agents.heartbeat.PaperclipClient")
+    def test_run_heartbeat_fails_gracefully_on_probe_timeout(self, MockClient, mock_wait, config):
+        mock_wait.return_value = False
+        result = run_heartbeat(config)
+        assert result.status == "failed"
+        assert result.exit_code == 0  # exit 0 — not a crash
+        assert "not reachable" in result.summary
+
+    @patch("agents.heartbeat._wait_for_server")
+    @patch("agents.heartbeat._run_workflow")
+    @patch("agents.heartbeat.PaperclipClient")
+    def test_run_heartbeat_proceeds_after_probe_success(self, MockClient, mock_workflow, mock_wait, config):
+        mock_wait.return_value = True
+        client = MockClient.return_value
+        client.get_identity.return_value = AgentInfo(
+            id="agent-1", company_id="c1", name="Bot", role="eng",
+        )
+        client.get_assignments.return_value = []  # idle
+        result = run_heartbeat(config)
+        assert result.status == "idle"
+
+
 # ── Full Heartbeat Integration Tests ──
 
 
