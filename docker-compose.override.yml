@@ -34,7 +34,7 @@ services:
         sed -i 's/# en_US.UTF-8/en_US.UTF-8/' /etc/locale.gen
         locale-gen en_US.UTF-8 > /dev/null 2>&1
         chown -R node:node /paperclip
-        exec su -s /bin/sh node -c 'exec node --import ./server/node_modules/tsx/dist/loader.mjs server/dist/index.js'
+        exec su -s /bin/sh node -c 'export HOME=/paperclip; exec node --import ./server/node_modules/tsx/dist/loader.mjs server/dist/index.js'
     volumes:
       - paperclip-data:/paperclip
       - ${HOME}/.claude:/paperclip/.claude
@@ -42,9 +42,15 @@ services:
       - ${HOME}/Projects:/home/prime/Projects
       - ${HOME}/Repos:/home/prime/Repos
       - ${HOME}/paperclip:/home/prime/paperclip
+      - ${PAPERCLIP_SOURCE_DIR}/ui/dist:/app/ui/dist
       - ${PAPERCLIP_SOURCE_DIR}/server/dist:/app/server/dist
       - ${PAPERCLIP_SOURCE_DIR}/packages/db/dist:/app/packages/db/dist
       - ${PAPERCLIP_SOURCE_DIR}/packages/shared/dist:/app/packages/shared/dist
+      - ${PAPERCLIP_SOURCE_DIR}/packages/adapters/claude-local/src:/app/packages/adapters/claude-local/src
+      - ${PAPERCLIP_SOURCE_DIR}/packages/adapters/claude-local/dist:/app/packages/adapters/claude-local/dist
+      - ${PAPERCLIP_SOURCE_DIR}/packages/adapter-utils/src:/app/packages/adapter-utils/src
+      - ${PAPERCLIP_SOURCE_DIR}/packages/adapter-utils/dist:/app/packages/adapter-utils/dist
+      - ${PAPERCLIP_SOURCE_DIR}/skills:/app/skills
 
   deerflow-langgraph:
     build:
