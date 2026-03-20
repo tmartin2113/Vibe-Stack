@@ -19,6 +19,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     sqlite3 \
     && rm -rf /var/lib/apt/lists/*
 
+# Docker CLI: needed for resource_discovery to detect Docker via 'docker info'
+# (the host Docker socket is bind-mounted into this container)
+COPY --from=docker:cli /usr/local/bin/docker /usr/local/bin/docker
+
 # Create non-root user for running the application
 RUN groupadd -r vibe && useradd -r -g vibe -m -d /home/vibe vibe
 

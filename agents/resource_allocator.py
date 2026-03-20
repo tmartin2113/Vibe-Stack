@@ -10,6 +10,7 @@ docker-compose env vars, and the /status diagnostic display.
 
 import logging
 import math
+import os
 from dataclasses import dataclass, field
 from typing import List
 
@@ -285,12 +286,19 @@ def compute_resource_plan(profile: SystemProfile) -> ResourcePlan:
     else:
         plan = _plan_single_gpu(profile)
 
-    # Docker runtime check — OpenSandbox requires Docker
+    # Docker runtime check — OpenSandbox requires Docker, subprocess does not
+    sandbox_backend = os.environ.get("VIBE_SANDBOX_BACKEND", "opensandbox")
     if not profile.docker_available:
-        raise RuntimeError(
-            "Docker is required for OpenSandbox execution. "
-            "Install Docker and ensure the daemon is running."
-        )
+        if sandbox_backend == "subprocess":
+            plan.warnings.append(
+                "Docker not available — using subprocess sandbox backend"
+            )
+        else:
+            raise RuntimeError(
+                "Docker is required for OpenSandbox execution. "
+                "Install Docker and ensure the daemon is running. "
+                "Or set VIBE_SANDBOX_BACKEND=subprocess to use the subprocess fallback."
+            )
     elif not profile.docker_gpu_runtime and profile.has_gpu:
         plan.warnings.append(
             "nvidia-container-toolkit not detected — "
