@@ -3,10 +3,13 @@
 // bootstrap-all.js — one-shot Vibe Stack bootstrap
 //
 // Creates admin user, grants instance_admin role, creates company,
-// CTO agent, and full org hierarchy. Idempotent where possible.
+// CTO agent, full org hierarchy, CTO API key, and Gitea admin user.
+// Writes PAPERCLIP_AGENT_ID, PAPERCLIP_API_KEY, and PAPERCLIP_COMPANY_ID
+// back to .env so the vibe heartbeat can connect immediately.
+// Idempotent where possible.
 //
 // Usage:
-//   1. Set PAPERCLIP_ADMIN_PASSWORD in .env
+//   1. Set PAPERCLIP_ADMIN_PASSWORD and GITEA_ADMIN_PASSWORD in .env
 //   2. docker compose up -d
 //   3. node bootstrap-all.js
 //
@@ -252,65 +255,99 @@ const seniorAgents = [
   const userId = signin.body.user?.id;
   console.log("Signed in as", signin.body.user?.name, `(${userId})\n`);
 
-  // 3. Try to create company
-  let company = await request("POST", "/api/companies", cookie, {
-    name: "Vibe Stack",
-    description: "Autonomous agent network for software development",
-  });
+  // 3. Check for existing company (idempotent)
+  const existingCompanies = await request("GET", "/api/companies", cookie);
+  let company;
+  let companyId;
+  const existing = Array.isArray(existingCompanies.body)
+    ? existingCompanies.body.find((c) => c.name === "Vibe Stack")
+    : null;
 
-  // 4. If 403 → grant instance_admin, re-auth, retry
-  if (company.status === 403) {
-    console.log("Company creation returned 403 — need instance_admin role");
-    grantInstanceAdmin(userId);
-
-    // Re-sign-in to pick up new role
-    console.log("  Re-authenticating...");
-    signin = await request("POST", "/api/auth/sign-in/email", "", {
-      email: EMAIL,
-      password: PASSWORD,
-    });
-    if (signin.status !== 200) {
-      console.error("Re-sign-in failed:", signin.status);
-      process.exit(1);
-    }
-    cookie = extractCookie(signin.setCookies);
-    console.log("  Re-authenticated.\n");
-
-    // Retry company creation
+  if (existing) {
+    company = { body: existing };
+    companyId = existing.id;
+    console.log("Company already exists:", existing.name, `(${companyId})\n`);
+  } else {
+    // Create company
     company = await request("POST", "/api/companies", cookie, {
       name: "Vibe Stack",
       description: "Autonomous agent network for software development",
     });
+
+    // 4. If 403 → grant instance_admin, re-auth, retry
+    if (company.status === 403) {
+      console.log("Company creation returned 403 — need instance_admin role");
+      grantInstanceAdmin(userId);
+
+      // Re-sign-in to pick up new role
+      console.log("  Re-authenticating...");
+      signin = await request("POST", "/api/auth/sign-in/email", "", {
+        email: EMAIL,
+        password: PASSWORD,
+      });
+      if (signin.status !== 200) {
+        console.error("Re-sign-in failed:", signin.status);
+        process.exit(1);
+      }
+      cookie = extractCookie(signin.setCookies);
+      console.log("  Re-authenticated.\n");
+
+      // Retry company creation
+      company = await request("POST", "/api/companies", cookie, {
+        name: "Vibe Stack",
+        description: "Autonomous agent network for software development",
+      });
+    }
+
+    if (!company.body.id) {
+      console.error("Company creation failed:", company.status, JSON.stringify(company.body));
+      process.exit(1);
+    }
+    companyId = company.body.id;
+    console.log("Company created:", company.body.name, `(${companyId})\n`);
   }
 
-  if (!company.body.id) {
-    console.error("Company creation failed:", company.status, JSON.stringify(company.body));
-    process.exit(1);
+  // 5. Fetch existing agents to avoid duplicates
+  const existingAgents = await request("GET", `/api/companies/${companyId}/agents`, cookie);
+  const agentsByName = {};
+  if (Array.isArray(existingAgents.body)) {
+    for (const a of existingAgents.body) {
+      agentsByName[a.name] = a;
+    }
   }
-  const companyId = company.body.id;
-  console.log("Company created:", company.body.name, `(${companyId})\n`);
 
-  // 5. Create CTO (top-level agent)
-  const cto = await request("POST", `/api/companies/${companyId}/agents`, cookie, {
-    name: "CTO",
-    role: "ceo",
-    title: "Chief Technology Officer",
-    adapterType: "claude_local",
-    adapterConfig: { cwd: REPO_DIR, model: "claude-opus-4-6", effort: "high" },
-    systemPrompt:
-      "You are the CTO of Vibe Stack, an autonomous software development company. You break down high-level objectives into actionable tasks, delegate to specialist engineers, review architecture and deliverables, and ensure quality. You have final authority on technical decisions, task prioritization, and resource allocation.",
-    permissions: { canCreateAgents: true },
-  });
-  if (!cto.body.id) {
-    console.error("CTO creation failed:", cto.status, JSON.stringify(cto.body));
-    process.exit(1);
+  // 6. Create CTO (top-level agent) — skip if exists
+  let cto;
+  if (agentsByName["CTO"]) {
+    cto = { body: agentsByName["CTO"] };
+    console.log("CTO already exists:", cto.body.name, `(${cto.body.id})`);
+  } else {
+    cto = await request("POST", `/api/companies/${companyId}/agents`, cookie, {
+      name: "CTO",
+      role: "ceo",
+      title: "Chief Technology Officer",
+      adapterType: "claude_local",
+      adapterConfig: { cwd: REPO_DIR, model: "claude-opus-4-6", effort: "high" },
+      systemPrompt:
+        "You are the CTO of Vibe Stack, an autonomous software development company. You break down high-level objectives into actionable tasks, delegate to specialist engineers, review architecture and deliverables, and ensure quality. You have final authority on technical decisions, task prioritization, and resource allocation.",
+      permissions: { canCreateAgents: true },
+    });
+    if (!cto.body.id) {
+      console.error("CTO creation failed:", cto.status, JSON.stringify(cto.body));
+      process.exit(1);
+    }
+    console.log("CTO created:", cto.body.name, `(${cto.body.id})`);
   }
-  console.log("CTO created:", cto.body.name, `(${cto.body.id})`);
 
-  // 6. Create senior engineers — all report to CTO
+  // 7. Create senior engineers — all report to CTO, skip existing
   console.log("\nCreating senior engineers...");
   const created = [];
   for (const agent of seniorAgents) {
+    if (agentsByName[agent.name]) {
+      console.log(`  ${agent.name} already exists (${agentsByName[agent.name].id})`);
+      created.push({ name: agent.name, id: agentsByName[agent.name].id });
+      continue;
+    }
     agent.managerIds = [cto.body.id];
     const result = await request("POST", `/api/companies/${companyId}/agents`, cookie, agent);
     if (result.status === 201 || result.body.id) {
@@ -321,14 +358,20 @@ const seniorAgents = [
     }
   }
 
-  // 7. Create DeerFlow assistants — one per senior engineer, running on local Qwen via vLLM
+  // 8. Create DeerFlow assistants — one per senior engineer, skip existing
   console.log("\nCreating DeerFlow assistants...");
   const seniors = [...created];
   for (const senior of seniors) {
+    const dfName = `DeerFlow ${senior.name} Assistant`;
+    if (agentsByName[dfName]) {
+      console.log(`  ${dfName} already exists (${agentsByName[dfName].id})`);
+      created.push({ name: dfName, id: agentsByName[dfName].id });
+      continue;
+    }
     const deerflow = await request("POST", `/api/companies/${companyId}/agents`, cookie, {
-      name: `DeerFlow ${senior.name} Assistant`,
+      name: dfName,
       role: "engineer",
-      title: `DeerFlow ${senior.name} Assistant`,
+      title: dfName,
       adapterType: "deerflow",
       adapterConfig: {},
       managerIds: [senior.id],
@@ -338,18 +381,117 @@ const seniorAgents = [
       console.log(`  Created ${deerflow.body.name} (${deerflow.body.id})`);
       created.push({ name: deerflow.body.name, id: deerflow.body.id });
     } else {
-      console.error(`  FAILED DeerFlow ${senior.name} Assistant:`, deerflow.status, JSON.stringify(deerflow.body));
+      console.error(`  FAILED ${dfName}:`, deerflow.status, JSON.stringify(deerflow.body));
     }
   }
 
-  // 8. Summary
+  // 9. Create CTO API key for heartbeat (skip if PAPERCLIP_API_KEY already set)
+  let apiKey = process.env.PAPERCLIP_API_KEY || "";
+  if (apiKey) {
+    console.log("\nCTO API key already in .env — skipping creation");
+  } else {
+    console.log("\nCreating CTO API key...");
+    const apiKeyRes = await request("POST", `/api/agents/${cto.body.id}/keys`, cookie, {
+      name: "heartbeat"
+    });
+    if (apiKeyRes.status === 201 && apiKeyRes.body.token) {
+      apiKey = apiKeyRes.body.token;
+      console.log(`  API key created: ${apiKey.slice(0, 12)}...`);
+    } else {
+      console.warn("  API key creation failed:", apiKeyRes.status, JSON.stringify(apiKeyRes.body));
+      console.warn("  You'll need to create one manually and set PAPERCLIP_API_KEY in .env");
+    }
+  }
+
+  // 10. Write back to .env
+  console.log("\nUpdating .env...");
+  const envFile = path.resolve(__dirname, ".env");
+  let envContent = fs.existsSync(envFile) ? fs.readFileSync(envFile, "utf-8") : "";
+
+  function setEnvVar(content, key, value) {
+    const re = new RegExp(`^${key}=.*$`, "m");
+    if (re.test(content)) {
+      return content.replace(re, `${key}=${value}`);
+    }
+    return content.trimEnd() + `\n${key}=${value}\n`;
+  }
+
+  envContent = setEnvVar(envContent, "PAPERCLIP_AGENT_ID", cto.body.id);
+  envContent = setEnvVar(envContent, "PAPERCLIP_COMPANY_ID", companyId);
+  if (apiKey) {
+    envContent = setEnvVar(envContent, "PAPERCLIP_API_KEY", apiKey);
+  }
+  fs.writeFileSync(envFile, envContent);
+  console.log("  PAPERCLIP_AGENT_ID, PAPERCLIP_COMPANY_ID" + (apiKey ? ", PAPERCLIP_API_KEY" : "") + " written to .env");
+
+  // 11. Bootstrap Gitea admin user
+  console.log("\nBootstrapping Gitea...");
+  const GITEA_USER = process.env.GITEA_ADMIN_USER || "vibe";
+  const GITEA_PASS = process.env.GITEA_ADMIN_PASSWORD;
+
+  if (!GITEA_PASS) {
+    console.warn("  GITEA_ADMIN_PASSWORD not set — skipping Gitea admin creation");
+    console.warn("  Set it in .env and re-run, or create the admin manually");
+  } else {
+    try {
+      // Find gitea container
+      const giteaContainer = execSync(
+        `docker ps --filter "label=com.docker.compose.service=gitea" --format "{{.Names}}"`,
+        { encoding: "utf-8" }
+      ).trim().split("\n")[0];
+
+      if (!giteaContainer) {
+        console.warn("  Gitea container not found — skipping");
+      } else {
+        // Check if admin already exists
+        try {
+          execSync(
+            `docker exec --user git ${giteaContainer} gitea admin user list --admin`,
+            { encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"] }
+          );
+          const userList = execSync(
+            `docker exec --user git ${giteaContainer} gitea admin user list --admin`,
+            { encoding: "utf-8" }
+          );
+          if (userList.includes(GITEA_USER)) {
+            console.log(`  Admin user '${GITEA_USER}' already exists`);
+          } else {
+            execSync(
+              `docker exec --user git ${giteaContainer} gitea admin user create ` +
+              `--admin --username ${GITEA_USER} --password '${GITEA_PASS}' ` +
+              `--email admin@vibe.local --must-change-password=false`,
+              { encoding: "utf-8", stdio: "inherit" }
+            );
+            console.log(`  Created Gitea admin user '${GITEA_USER}'`);
+          }
+        } catch (e) {
+          // user create fails if already exists — that's fine
+          if (e.message && e.message.includes("already exists")) {
+            console.log(`  Admin user '${GITEA_USER}' already exists`);
+          } else {
+            console.warn("  Gitea admin creation failed:", e.message);
+          }
+        }
+      }
+    } catch (e) {
+      console.warn("  Could not reach Gitea container:", e.message);
+    }
+  }
+
+  // 12. Summary
   console.log("\n=== Bootstrap complete ===");
   console.log(`Company:  ${company.body.name} (${companyId})`);
   console.log(`CTO:      ${cto.body.name} (${cto.body.id})`);
   for (const a of created) {
     console.log(`  ${a.name}: ${a.id}`);
   }
-  console.log(`\nSign in at http://localhost:3100 with ${EMAIL}`);
+  if (apiKey) {
+    console.log(`\nCTO API key written to .env — vibe heartbeat ready`);
+  }
+  if (GITEA_PASS) {
+    console.log(`Gitea:    http://localhost:3000 (user: ${process.env.GITEA_ADMIN_USER || "vibe"})`);
+  }
+  console.log(`Paperclip: http://localhost:3100 (user: ${EMAIL})`);
 })().catch((e) => {
   console.error("\nFatal:", e.message || e);
   process.exit(1);
