@@ -38,6 +38,7 @@ services:
     volumes:
       - paperclip-data:/paperclip
       - ${HOME}/.claude:/paperclip/.claude
+      - ${HOME}/.claude.json:/paperclip/.claude.json
       - ${HOME}/Projects:/home/prime/Projects
       - ${HOME}/Repos:/home/prime/Repos
       - ${HOME}/paperclip:/home/prime/paperclip

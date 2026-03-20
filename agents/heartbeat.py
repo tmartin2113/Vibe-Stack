@@ -176,6 +176,12 @@ def run_heartbeat(config: SystemConfig) -> HeartbeatResult:
                 exit_code=0,
             ))
 
+    # ── Step 0c: Auto-generate run ID for standalone heartbeat polling ──
+    if not os.environ.get("PAPERCLIP_RUN_ID"):
+        import uuid
+        os.environ["PAPERCLIP_RUN_ID"] = str(uuid.uuid4())
+        logger.info("Auto-generated PAPERCLIP_RUN_ID=%s", os.environ["PAPERCLIP_RUN_ID"])
+
     # ── Step 1: Connect to Paperclip ──
     try:
         client = _create_client(config)
