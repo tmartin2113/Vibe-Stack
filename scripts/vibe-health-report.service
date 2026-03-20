@@ -1,0 +1,9 @@
+[Unit]
+Description=Vibe Stack health report
+After=docker.service
+
+[Service]
+Type=oneshot
+User=prime
+WorkingDirectory=/home/prime/Repos/Vibe-Stack
+ExecStart=/home/prime/Repos/Vibe-Stack/scripts/health-report.sh

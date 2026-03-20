@@ -564,6 +564,13 @@ https://{\$TAILSCALE_HOSTNAME}:${port} {
     import tailscale_tls
     import security_headers
     import staging_csp
+    rate_limit {
+        zone staging_${port} {
+            key    {remote_host}
+            events 200
+            window 1m
+        }
+    }
     reverse_proxy 127.0.0.1:${port} {
         transport http {
             response_header_timeout 60s

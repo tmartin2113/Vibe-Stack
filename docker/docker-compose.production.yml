@@ -14,7 +14,7 @@
 x-vibe-production: &vibe-production
   image: ghcr.io/tmartin2113/vibe:${VIBE_IMAGE_TAG:-latest}
   build: !reset null
-  restart: unless-stopped
+  restart: on-failure
   deploy:
     resources:
       limits:

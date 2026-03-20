@@ -221,6 +221,54 @@ const seniorAgents = [
   await waitForHealth();
   console.log(" ready!\n");
 
+  // 1b. Patch allowedHostnames to include "server" (Docker service name)
+  console.log("Patching allowedHostnames...");
+  try {
+    const configPath = "/paperclip/instances/default/config.json";
+    const serverContainer = execSync(
+      `docker ps --filter "label=com.docker.compose.service=server" --format "{{.Names}}"`,
+      { encoding: "utf-8" }
+    ).trim().split("\n")[0];
+
+    if (serverContainer) {
+      // Read existing config, add "server" to allowedHostnames if missing
+      const patchScript = `
+        const fs = require('fs');
+        const cfgPath = '${configPath}';
+        try {
+          const cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf-8'));
+          const hosts = cfg.allowedHostnames || [];
+          let changed = false;
+          for (const h of ['server', 'localhost']) {
+            if (!hosts.includes(h)) { hosts.push(h); changed = true; }
+          }
+          if (changed) {
+            cfg.allowedHostnames = hosts;
+            fs.writeFileSync(cfgPath, JSON.stringify(cfg, null, 2));
+            console.log(JSON.stringify({ patched: true, allowedHostnames: hosts }));
+          } else {
+            console.log(JSON.stringify({ patched: false, allowedHostnames: hosts }));
+          }
+        } catch (e) {
+          if (e.code === 'ENOENT') {
+            console.log(JSON.stringify({ patched: false, reason: 'config not found yet (first run)' }));
+          } else {
+            throw e;
+          }
+        }
+      `;
+      const patchResult = execSync(
+        `docker exec -i ${serverContainer} node --input-type=commonjs`,
+        { input: patchScript, encoding: "utf-8" }
+      ).trim();
+      console.log("  Config:", patchResult);
+    } else {
+      console.warn("  Server container not found — skipping allowedHostnames patch");
+    }
+  } catch (e) {
+    console.warn("  allowedHostnames patch failed (non-fatal):", e.message);
+  }
+
   // 2. Sign in (or sign up first)
   let signin = await request("POST", "/api/auth/sign-in/email", "", {
     email: EMAIL,

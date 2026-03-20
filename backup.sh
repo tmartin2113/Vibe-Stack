@@ -1,14 +1,19 @@
 #!/usr/bin/env bash
-# backup.sh — Dump both Postgres databases and tar secrets.
-# Intended for cron: 0 3 * * * /path/to/backup.sh
+# backup.sh — Full Vibe Stack backup (all data stores).
+# Intended for systemd timer: scripts/vibe-backup.timer
 #
 # Usage:  ./backup.sh [BACKUP_DIR]
 #         BACKUP_DIR defaults to ./backups
 #
 # Produces:
 #   <BACKUP_DIR>/<timestamp>_paperclip.sql.gz
-#   <BACKUP_DIR>/<timestamp>_n8n.sql.gz
+#   <BACKUP_DIR>/<timestamp>_penpot.sql.gz
+#   <BACKUP_DIR>/<timestamp>_gitea.db.gz
+#   <BACKUP_DIR>/<timestamp>_minio.tar.gz
+#   <BACKUP_DIR>/<timestamp>_vibe-data.tar.gz
+#   <BACKUP_DIR>/<timestamp>_bulletin-data.tar.gz
 #   <BACKUP_DIR>/<timestamp>_secrets.tar.gz
+#   <BACKUP_DIR>/<timestamp>_manifest.txt
 #
 # Retention: keeps the last 7 backups (configurable via KEEP_COUNT).
 
@@ -18,36 +23,137 @@ BACKUP_DIR="${1:-./backups}"
 KEEP_COUNT="${KEEP_COUNT:-7}"
 TIMESTAMP="$(date +%Y%m%d_%H%M%S)"
 COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.yml}"
+MANIFEST=""
+ERRORS=0
 
 mkdir -p "$BACKUP_DIR"
 
 log() { echo "[backup] $(date +%H:%M:%S) $*"; }
 
-# ── Paperclip DB ─────────────────────────────────────────────────────────────
-log "Dumping paperclip database..."
-docker compose -f "$COMPOSE_FILE" exec -T db \
-  pg_dump -U paperclip -d paperclip --no-owner --no-privileges \
-  | gzip > "$BACKUP_DIR/${TIMESTAMP}_paperclip.sql.gz"
-log "  → $(du -h "$BACKUP_DIR/${TIMESTAMP}_paperclip.sql.gz" | cut -f1)"
+record() {
+  local file="$1"
+  local size checksum
+  size="$(du -h "$file" | cut -f1)"
+  checksum="$(sha256sum "$file" | cut -d' ' -f1)"
+  log "  → $size ($checksum)"
+  MANIFEST+="$(basename "$file")  $size  $checksum"$'\n'
+}
 
-# ── n8n DB ───────────────────────────────────────────────────────────────────
-# n8n postgres user is stored in a secret; read it from the local file.
-N8N_USER="$(cat ./secrets/n8n_postgres_user.txt 2>/dev/null || echo "n8n")"
-log "Dumping n8n database (user=$N8N_USER)..."
-docker compose -f "$COMPOSE_FILE" exec -T postgres-n8n \
-  pg_dump -U "$N8N_USER" -d n8n --no-owner --no-privileges \
-  | gzip > "$BACKUP_DIR/${TIMESTAMP}_n8n.sql.gz"
-log "  → $(du -h "$BACKUP_DIR/${TIMESTAMP}_n8n.sql.gz" | cut -f1)"
+try_backup() {
+  local label="$1"; shift
+  log "Backing up $label..."
+  if ! "$@"; then
+    log "  ✗ FAILED: $label"
+    ERRORS=$((ERRORS + 1))
+    return 1
+  fi
+}
 
-# ── Secrets ──────────────────────────────────────────────────────────────────
+# ── Paperclip Embedded Postgres ────────────────────────────────────
+# Paperclip uses embedded-postgres inside the server container.
+# Dump via pg_dump connecting to its internal port.
+try_backup "Paperclip database" bash -c '
+  docker compose -f "'"$COMPOSE_FILE"'" exec -T server \
+    pg_dump -h 127.0.0.1 -p 54329 -U paperclip -d paperclip --no-owner --no-privileges \
+    | gzip > "'"$BACKUP_DIR/${TIMESTAMP}_paperclip.sql.gz"'"
+' && record "$BACKUP_DIR/${TIMESTAMP}_paperclip.sql.gz"
+
+# ── Penpot Postgres ────────────────────────────────────────────────
+try_backup "Penpot database" bash -c '
+  docker compose -f "'"$COMPOSE_FILE"'" exec -T penpot-postgres \
+    pg_dump -U penpot -d penpot --no-owner --no-privileges \
+    | gzip > "'"$BACKUP_DIR/${TIMESTAMP}_penpot.sql.gz"'"
+' && record "$BACKUP_DIR/${TIMESTAMP}_penpot.sql.gz"
+
+# ── Gitea SQLite ───────────────────────────────────────────────────
+try_backup "Gitea database" bash -c '
+  docker compose -f "'"$COMPOSE_FILE"'" exec -T gitea \
+    sqlite3 /data/gitea/gitea.db ".backup '"'"'/tmp/gitea-backup.db'"'"'" &&
+  docker compose -f "'"$COMPOSE_FILE"'" cp gitea:/tmp/gitea-backup.db /tmp/gitea-backup.db &&
+  gzip -c /tmp/gitea-backup.db > "'"$BACKUP_DIR/${TIMESTAMP}_gitea.db.gz"'" &&
+  rm -f /tmp/gitea-backup.db
+' && record "$BACKUP_DIR/${TIMESTAMP}_gitea.db.gz"
+
+# ── MinIO Object Store ────────────────────────────────────────────
+# Backup the MinIO data volume directly via docker cp
+try_backup "MinIO data" bash -c '
+  MINIO_CID=$(docker compose -f "'"$COMPOSE_FILE"'" ps -q minio) &&
+  docker cp "$MINIO_CID:/data" /tmp/minio-backup &&
+  tar czf "'"$BACKUP_DIR/${TIMESTAMP}_minio.tar.gz"'" -C /tmp minio-backup &&
+  rm -rf /tmp/minio-backup
+' && record "$BACKUP_DIR/${TIMESTAMP}_minio.tar.gz"
+
+# ── Vibe Data (SQLite databases) ──────────────────────────────────
+# Contains: sessions.db, memory.db, spending_ledger.db, skills, etc.
+# Use sqlite3 .backup for WAL-safe copies
+try_backup "Vibe agent data" bash -c '
+  VIBE_CID=$(docker compose -f "'"$COMPOSE_FILE"'" ps -q vibe 2>/dev/null || true)
+  if [ -z "$VIBE_CID" ]; then
+    # Agent not running — backup volume directly via a temp container
+    VIBE_CID=$(docker create --rm -v vibe-data:/data alpine:3 sleep 1)
+    docker start "$VIBE_CID" >/dev/null
+    docker cp "$VIBE_CID:/data" /tmp/vibe-data-backup
+    docker stop "$VIBE_CID" >/dev/null 2>&1 || true
+  else
+    # Agent running — use sqlite3 .backup for WAL safety
+    for db in sessions.db memory.db spending_ledger.db; do
+      docker exec "$VIBE_CID" sh -c "
+        if [ -f /home/vibe/.vibe/$db ]; then
+          sqlite3 /home/vibe/.vibe/$db \".backup /tmp/$db\"
+        fi
+      " 2>/dev/null || true
+    done
+    docker cp "$VIBE_CID:/home/vibe/.vibe" /tmp/vibe-data-backup
+  fi
+  tar czf "'"$BACKUP_DIR/${TIMESTAMP}_vibe-data.tar.gz"'" -C /tmp vibe-data-backup
+  rm -rf /tmp/vibe-data-backup
+' && record "$BACKUP_DIR/${TIMESTAMP}_vibe-data.tar.gz"
+
+# ── Bulletin Data ─────────────────────────────────────────────────
+# Contains: BULLETIN.md, messages.db
+try_backup "Bulletin data" bash -c '
+  BULLETIN_CID=$(docker compose -f "'"$COMPOSE_FILE"'" ps -q vibe 2>/dev/null || true)
+  if [ -z "$BULLETIN_CID" ]; then
+    BULLETIN_CID=$(docker create --rm -v bulletin-data:/data alpine:3 sleep 1)
+    docker start "$BULLETIN_CID" >/dev/null
+    mkdir -p /tmp/bulletin-backup
+    docker cp "$BULLETIN_CID:/data/." /tmp/bulletin-backup/ 2>/dev/null || true
+    docker stop "$BULLETIN_CID" >/dev/null 2>&1 || true
+  else
+    # Use sqlite3 .backup for WAL safety on messages.db
+    docker exec "$BULLETIN_CID" sh -c "
+      if [ -f /shared/bulletin/messages.db ]; then
+        sqlite3 /shared/bulletin/messages.db \".backup /tmp/bulletin-messages.db\"
+      fi
+    " 2>/dev/null || true
+    mkdir -p /tmp/bulletin-backup
+    docker cp "$BULLETIN_CID:/shared/bulletin/." /tmp/bulletin-backup/ 2>/dev/null || true
+  fi
+  tar czf "'"$BACKUP_DIR/${TIMESTAMP}_bulletin-data.tar.gz"'" -C /tmp bulletin-backup
+  rm -rf /tmp/bulletin-backup
+' && record "$BACKUP_DIR/${TIMESTAMP}_bulletin-data.tar.gz"
+
+# ── Secrets ────────────────────────────────────────────────────────
 log "Archiving secrets directory..."
 tar czf "$BACKUP_DIR/${TIMESTAMP}_secrets.tar.gz" -C . secrets/
-log "  → $(du -h "$BACKUP_DIR/${TIMESTAMP}_secrets.tar.gz" | cut -f1)"
+record "$BACKUP_DIR/${TIMESTAMP}_secrets.tar.gz"
 
-# ── Retention ────────────────────────────────────────────────────────────────
+# ── Manifest ───────────────────────────────────────────────────────
+log "Writing backup manifest..."
+{
+  echo "# Vibe Stack Backup Manifest"
+  echo "# Timestamp: $TIMESTAMP"
+  echo "# Date: $(date -Iseconds)"
+  echo "#"
+  echo "# filename  size  sha256"
+  echo "$MANIFEST"
+} > "$BACKUP_DIR/${TIMESTAMP}_manifest.txt"
+
+# ── Retention ──────────────────────────────────────────────────────
 # Remove oldest backups beyond KEEP_COUNT (per suffix group).
-for suffix in paperclip.sql.gz n8n.sql.gz secrets.tar.gz; do
-  files=( $(ls -1t "$BACKUP_DIR"/*_"$suffix" 2>/dev/null) )
+for suffix in paperclip.sql.gz penpot.sql.gz gitea.db.gz minio.tar.gz \
+              vibe-data.tar.gz bulletin-data.tar.gz secrets.tar.gz manifest.txt; do
+  mapfile -t files < <(ls -1t "$BACKUP_DIR"/*_"$suffix" 2>/dev/null)
   if (( ${#files[@]} > KEEP_COUNT )); then
     for old in "${files[@]:$KEEP_COUNT}"; do
       log "Pruning old backup: $(basename "$old")"
@@ -56,5 +162,11 @@ for suffix in paperclip.sql.gz n8n.sql.gz secrets.tar.gz; do
   fi
 done
 
+# ── Summary ────────────────────────────────────────────────────────
 log "Backup complete. Files in $BACKUP_DIR:"
 ls -lh "$BACKUP_DIR"/*"$TIMESTAMP"* 2>/dev/null
+
+if (( ERRORS > 0 )); then
+  log "WARNING: $ERRORS backup(s) failed — check output above"
+  exit 1
+fi

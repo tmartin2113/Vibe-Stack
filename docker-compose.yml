@@ -2,7 +2,7 @@ services:
   vibe:
     build: .
     env_file: .env
-    restart: unless-stopped
+    restart: on-failure
     group_add:
       - "125"   # host docker group GID — lets 'vibe' user run 'docker info'
     depends_on:
