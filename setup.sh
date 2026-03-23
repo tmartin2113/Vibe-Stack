@@ -270,8 +270,8 @@ if [[ "$VLLM_SKIP" == "false" ]]; then
         MAX_NUM_SEQS=8
         EXTRA_ARGS=""
     elif (( GPU_VRAM_MB >= 24576 )); then
-        # >= 24GB (true 24GB, e.g. A5000/L4) — 27B GPTQ-Int4
-        # Note: 22GB cards (e.g. 3090) OOM — weights alone use ~21.3GB
+        # >= 24GB (e.g. A5000/L4/4090) — 27B GPTQ-Int4 (~14GB weights)
+        # Cards reporting < 24576 MiB (e.g. 3090 Ti ~23028 MiB) fall to 9B tier
         VLLM_MODEL="Qwen/Qwen3.5-27B-GPTQ-Int4"
         VLLM_MODEL_SHORT="Qwen3.5-27B-GPTQ-Int4"
         MAX_MODEL_LEN=16384
