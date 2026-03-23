@@ -2,7 +2,9 @@ services:
   vibe:
     build: .
     env_file: .env
-    restart: unless-stopped
+    profiles:
+      - vibe-standalone   # only start with: docker compose --profile vibe-standalone up
+    restart: on-failure
     group_add:
       - "125"   # host docker group GID — lets 'vibe' user run 'docker info'
     depends_on:
@@ -47,7 +49,7 @@ services:
       - "--port"
       - "8000"
       - "--max-model-len"
-      - "8192"
+      - "12288"
       - "--gpu-memory-utilization"
       - "0.92"
       - "--enable-prefix-caching"

@@ -302,19 +302,27 @@ if [[ "$VLLM_SKIP" == "false" ]]; then
 fi
 
 if [[ "$VLLM_SKIP" == "false" ]]; then
+    # Normalize short name to lowercase (DeerFlow config.yaml uses it as model key)
+    VLLM_MODEL_SHORT="$(echo "$VLLM_MODEL_SHORT" | tr '[:upper:]' '[:lower:]')"
+
     # Select tool-call and reasoning parsers based on model family.
     # Different model families need different parsers in vLLM.
     case "$VLLM_MODEL" in
         Qwen/Qwen3*|qwen/Qwen3*)
             TOOL_CALL_PARSER="qwen3_xml"
-            REASONING_PARSER_ARGS="--reasoning-parser qwen3"
+            OPTIONAL_ARGS="--reasoning-parser qwen3"
             ;;
         *)
             # Default: hermes is the most widely supported parser
             TOOL_CALL_PARSER="hermes"
-            REASONING_PARSER_ARGS=""
+            OPTIONAL_ARGS=""
             ;;
     esac
+
+    # Append tier-specific flags
+    if [[ -n "$EXTRA_ARGS" ]]; then
+        OPTIONAL_ARGS="${OPTIONAL_ARGS:+$OPTIONAL_ARGS }$EXTRA_ARGS"
+    fi
 
     success "Selected vLLM model: $VLLM_MODEL (context=$MAX_MODEL_LEN, mem=$GPU_MEM_UTIL, parser=$TOOL_CALL_PARSER)"
 
@@ -330,8 +338,7 @@ if [[ "$VLLM_SKIP" == "false" ]]; then
         -e "s|__MAX_NUM_SEQS__|${MAX_NUM_SEQS}|g" \
         -e "s|__HF_CACHE__|${HF_CACHE}|g" \
         -e "s|__TOOL_CALL_PARSER__|${TOOL_CALL_PARSER}|g" \
-        -e "s|__REASONING_PARSER_ARGS__|${REASONING_PARSER_ARGS}|g" \
-        -e "s|__EXTRA_ARGS__|${EXTRA_ARGS}|g" \
+        -e "s|__OPTIONAL_ARGS__|${OPTIONAL_ARGS}|g" \
         vllm.service > /etc/systemd/system/vllm.service
 
     # Remove trailing whitespace from empty __EXTRA_ARGS__ substitution
