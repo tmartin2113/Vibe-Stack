@@ -280,9 +280,10 @@ if [[ "$VLLM_SKIP" == "false" ]]; then
         EXTRA_ARGS="--enforce-eager"
     elif (( GPU_VRAM_MB >= 12288 )); then
         # >= 12GB — 9B FP16 (weights ~17.7GB, needs 0.92 util on 22GB cards)
+        # 16384 context needed: DeerFlow system prompt + tools exceed 8192
         VLLM_MODEL="Qwen/Qwen3.5-9B"
         VLLM_MODEL_SHORT="Qwen3.5-9B"
-        MAX_MODEL_LEN=8192
+        MAX_MODEL_LEN=16384
         GPU_MEM_UTIL=0.92
         MAX_NUM_SEQS=4
         EXTRA_ARGS="--enforce-eager"
@@ -301,7 +302,21 @@ if [[ "$VLLM_SKIP" == "false" ]]; then
 fi
 
 if [[ "$VLLM_SKIP" == "false" ]]; then
-    success "Selected vLLM model: $VLLM_MODEL (context=$MAX_MODEL_LEN, mem=$GPU_MEM_UTIL)"
+    # Select tool-call and reasoning parsers based on model family.
+    # Different model families need different parsers in vLLM.
+    case "$VLLM_MODEL" in
+        Qwen/Qwen3*|qwen/Qwen3*)
+            TOOL_CALL_PARSER="qwen3_xml"
+            REASONING_PARSER_ARGS="--reasoning-parser qwen3"
+            ;;
+        *)
+            # Default: hermes is the most widely supported parser
+            TOOL_CALL_PARSER="hermes"
+            REASONING_PARSER_ARGS=""
+            ;;
+    esac
+
+    success "Selected vLLM model: $VLLM_MODEL (context=$MAX_MODEL_LEN, mem=$GPU_MEM_UTIL, parser=$TOOL_CALL_PARSER)"
 
     # Install systemd service from template
     HF_CACHE="${SUDO_USER:+$(eval echo "~${SUDO_USER}")}/.cache/huggingface"
@@ -314,6 +329,8 @@ if [[ "$VLLM_SKIP" == "false" ]]; then
         -e "s|__GPU_MEM_UTIL__|${GPU_MEM_UTIL}|g" \
         -e "s|__MAX_NUM_SEQS__|${MAX_NUM_SEQS}|g" \
         -e "s|__HF_CACHE__|${HF_CACHE}|g" \
+        -e "s|__TOOL_CALL_PARSER__|${TOOL_CALL_PARSER}|g" \
+        -e "s|__REASONING_PARSER_ARGS__|${REASONING_PARSER_ARGS}|g" \
         -e "s|__EXTRA_ARGS__|${EXTRA_ARGS}|g" \
         vllm.service > /etc/systemd/system/vllm.service
 
@@ -331,6 +348,7 @@ if [[ "$VLLM_SKIP" == "false" ]]; then
 
     # Persist model selection to .env
     _update_env_var "VLLM_MODEL" "${VLLM_MODEL}"
+    _update_env_var "VLLM_MODEL_SHORT" "${VLLM_MODEL_SHORT}"
     success "VLLM_MODEL=${VLLM_MODEL} written to .env"
 else
     warn "vLLM will not be configured — no suitable GPU detected"

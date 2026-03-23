@@ -20,6 +20,8 @@ services:
     restart: unless-stopped
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    group_add:
+      - "125"   # host docker group GID — lets server manage DeerFlow containers
     environment:
       - BETTER_AUTH_TRUSTED_ORIGINS=http://localhost:3100,https://${TAILSCALE_HOSTNAME:-localhost}
     ports:
@@ -43,6 +45,7 @@ services:
         chown -R node:node /paperclip
         exec su -s /bin/sh node -c 'export HOME=/paperclip; exec node --import ./server/node_modules/tsx/dist/loader.mjs server/dist/index.js'
     volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
       - paperclip-data:/paperclip
       - ${HOME}/.claude:/paperclip/.claude
       - ${HOME}/.claude.json:/paperclip/.claude.json
@@ -64,6 +67,8 @@ services:
       context: ${PAPERCLIP_SOURCE_DIR}/deerflow
       dockerfile: backend/Dockerfile
     env_file: .env
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     # Re-sync deps at startup because the volume mount overwrites the
     # .venv that was created during the Docker build stage.
     command: >
@@ -79,6 +84,8 @@ services:
       context: ${PAPERCLIP_SOURCE_DIR}/deerflow
       dockerfile: backend/Dockerfile
     env_file: .env
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     command: >
       sh -c "cd backend && uv sync && uv run uvicorn
       src.gateway.app:app --host 0.0.0.0 --port 8001"

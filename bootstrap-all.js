@@ -421,7 +421,7 @@ const seniorAgents = [
       role: "engineer",
       title: dfName,
       adapterType: "deerflow",
-      adapterConfig: {},
+      adapterConfig: { model: process.env.VLLM_MODEL_SHORT || "qwen3.5-9b", skill: "deep-research" },
       managerIds: [senior.id],
       permissions: { canCreateAgents: false },
     });

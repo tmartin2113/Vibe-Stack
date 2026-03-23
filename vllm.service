@@ -5,6 +5,8 @@
 #   __MAX_MODEL_LEN__    — context window length
 #   __GPU_MEM_UTIL__     — memory utilization fraction (0.0-1.0)
 #   __MAX_NUM_SEQS__     — max concurrent sequences
+#   __TOOL_CALL_PARSER__ — vLLM tool-call parser (e.g. qwen3_xml, hermes)
+#   __REASONING_PARSER_ARGS__ — optional reasoning parser flags (e.g. --reasoning-parser qwen3)
 #   __EXTRA_ARGS__       — tier-specific flags (e.g. --enforce-eager)
 #   __HF_CACHE__         — HuggingFace cache directory
 
@@ -36,8 +38,8 @@ ExecStart=/usr/bin/docker run \
     --max-num-seqs __MAX_NUM_SEQS__ \
     --trust-remote-code \
     --enable-auto-tool-choice \
-    --tool-call-parser hermes \
-    --reasoning-parser qwen3 \
+    --tool-call-parser __TOOL_CALL_PARSER__ \
+    __REASONING_PARSER_ARGS__ \
     __EXTRA_ARGS__
 
 ExecStop=/usr/bin/docker stop vibe-vllm
