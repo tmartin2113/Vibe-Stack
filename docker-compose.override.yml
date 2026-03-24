@@ -58,6 +58,8 @@ services:
       - ${PAPERCLIP_SOURCE_DIR}/packages/shared/dist:/app/packages/shared/dist
       - ${PAPERCLIP_SOURCE_DIR}/packages/adapters/claude-local/src:/app/packages/adapters/claude-local/src
       - ${PAPERCLIP_SOURCE_DIR}/packages/adapters/claude-local/dist:/app/packages/adapters/claude-local/dist
+      - ${PAPERCLIP_SOURCE_DIR}/packages/adapters/deerflow/src:/app/packages/adapters/deerflow/src
+      - ${PAPERCLIP_SOURCE_DIR}/packages/adapters/deerflow/dist:/app/packages/adapters/deerflow/dist
       - ${PAPERCLIP_SOURCE_DIR}/packages/adapter-utils/src:/app/packages/adapter-utils/src
       - ${PAPERCLIP_SOURCE_DIR}/packages/adapter-utils/dist:/app/packages/adapter-utils/dist
       - ${PAPERCLIP_SOURCE_DIR}/skills:/app/skills

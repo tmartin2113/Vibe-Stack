@@ -280,10 +280,12 @@ if [[ "$VLLM_SKIP" == "false" ]]; then
         EXTRA_ARGS="--enforce-eager"
     elif (( GPU_VRAM_MB >= 12288 )); then
         # >= 12GB — 9B FP16 (weights ~17.7GB, needs 0.92 util on 22GB cards)
-        # 16384 context needed: DeerFlow system prompt + tools exceed 8192
+        # 32768 context: Mamba hybrid uses fixed-size state for most layers,
+        # only attention layers need KV cache (~5K tokens), so 32K validation
+        # ceiling works even though KV cache is small.
         VLLM_MODEL="Qwen/Qwen3.5-9B"
         VLLM_MODEL_SHORT="Qwen3.5-9B"
-        MAX_MODEL_LEN=16384
+        MAX_MODEL_LEN=32768
         GPU_MEM_UTIL=0.92
         MAX_NUM_SEQS=4
         EXTRA_ARGS="--enforce-eager"
