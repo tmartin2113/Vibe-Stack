@@ -279,16 +279,15 @@ if [[ "$VLLM_SKIP" == "false" ]]; then
         MAX_NUM_SEQS=4
         EXTRA_ARGS="--enforce-eager"
     elif (( GPU_VRAM_MB >= 12288 )); then
-        # >= 12GB — 9B FP16 (weights ~17.7GB, needs 0.92 util on 22GB cards)
-        # 32768 context: Mamba hybrid uses fixed-size state for most layers,
-        # only attention layers need KV cache (~5K tokens), so 32K validation
-        # ceiling works even though KV cache is small.
-        VLLM_MODEL="Qwen/Qwen3.5-9B"
-        VLLM_MODEL_SHORT="Qwen3.5-9B"
+        # >= 12GB — 9B AWQ-Int4 (weights ~5GB, leaves ~16GB+ for KV cache)
+        # AWQ quantization preserves ~97% of FP16 quality while enabling
+        # large context windows and multi-turn agentic tool use.
+        VLLM_MODEL="QuantTrio/Qwen3.5-9B-AWQ"
+        VLLM_MODEL_SHORT="Qwen3.5-9B-AWQ"
         MAX_MODEL_LEN=32768
         GPU_MEM_UTIL=0.92
-        MAX_NUM_SEQS=4
-        EXTRA_ARGS="--enforce-eager"
+        MAX_NUM_SEQS=8
+        EXTRA_ARGS="--quantization awq"
     elif (( GPU_VRAM_MB >= 8192 )); then
         # >= 8GB — 4B FP16
         VLLM_MODEL="Qwen/Qwen3.5-4B"
@@ -310,7 +309,7 @@ if [[ "$VLLM_SKIP" == "false" ]]; then
     # Select tool-call and reasoning parsers based on model family.
     # Different model families need different parsers in vLLM.
     case "$VLLM_MODEL" in
-        Qwen/Qwen3*|qwen/Qwen3*)
+        Qwen/Qwen3*|qwen/Qwen3*|*Qwen3.5*|*qwen3.5*)
             TOOL_CALL_PARSER="qwen3_xml"
             OPTIONAL_ARGS="--reasoning-parser qwen3"
             ;;
