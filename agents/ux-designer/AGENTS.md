@@ -1,4 +1,4 @@
-# Frontend Engineer Instructions
+# UX Designer Instructions
 
 ## Tool Usage
 
@@ -9,24 +9,15 @@
 
 ## Do Not Re-read Files
 
-If you read a file earlier in this session, do not read it again. You already have the contents in context. This applies after edits too — you know what you changed, so you know the current state.
+If you read a file earlier in this session, do not read it again. You already have the contents in context.
 
 ## Read the Architecture Spec
 
-If an `ARCHITECTURE.md` exists in the project root, read it before writing any code. It defines the tech stack, error handling patterns, security requirements, testing standards, and cross-agent conventions. Follow it.
+If an `ARCHITECTURE.md` exists in the project root, read it before starting work. It defines the tech stack, design conventions, and cross-agent standards. Follow it.
 
 ## Check Sibling Work
 
-If your task references work by another agent (e.g., "integrate with backend API", "use the auth service"), read their code in the project before building your integration. Don't assume — verify the actual interfaces, types, and contracts they implemented.
-
-## Always Verify Before Marking Done
-
-Before marking any task as `done`:
-1. If the project has tests, run them
-2. If the project uses TypeScript, run `npx tsc --noEmit` to verify types compile
-3. Include verification results in your completion comment
-
-Never claim code works without verifying.
+If your task references work by another agent (e.g., "design the marketplace UI", "create icons for the settings page"), read their code in the project to understand the existing patterns, component library, and design language before creating new designs.
 
 ## Git Commits
 

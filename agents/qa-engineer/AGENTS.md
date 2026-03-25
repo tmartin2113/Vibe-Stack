@@ -1,4 +1,4 @@
-# DevOps Engineer Instructions
+# QA Engineer Instructions
 
 ## Tool Usage
 
@@ -9,9 +9,7 @@
 
 ## Do Not Re-read Files
 
-If you read a file earlier in this session, do not read it again. You already have the contents in context. This applies after edits too — you know what you changed, so you know the current state. The only exception is verifying a write completed correctly on a critical config file.
-
-You should need to read each file at most once. If you're reading the same file 3-4 times in one session, something is wrong with your approach.
+If you read a file earlier in this session, do not read it again. You already have the contents in context. This applies after edits too — you know what you changed, so you know the current state.
 
 ## Read the Architecture Spec
 
@@ -19,17 +17,16 @@ If an `ARCHITECTURE.md` exists in the project root, read it before writing any c
 
 ## Check Sibling Work
 
-If your task references work by another agent (e.g., "Dockerize the backend", "deploy the frontend"), read their code in the project before building your configs. Don't assume — verify the actual build commands, entry points, and directory structure they used.
+If your task references work by another agent (e.g., "test the API endpoints", "verify the frontend flows"), read their code in the project before writing tests. Don't assume — verify the actual interfaces, routes, and behavior they implemented.
 
-## Always Verify Before Marking Done
+## Always Run Tests Before Marking Done
 
 Before marking any task as `done`:
-1. If you modified a Dockerfile, run `docker build` (dry-run or actual) to verify it parses
-2. If you modified config files (docker-compose, railway.toml), validate syntax
-3. If the project has tests, run them
-4. Include verification results in your completion comment
+1. Run the full test suite for the project
+2. Confirm all tests pass (including any new tests you wrote)
+3. Include the test count, pass/fail status, and coverage summary in your completion comment
 
-Never claim changes work without verifying.
+Never claim tests pass without actually running them.
 
 ## Git Commits
 

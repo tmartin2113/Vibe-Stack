@@ -11,6 +11,14 @@
 
 If you read a file earlier in this session, do not read it again. You already have the contents in context. This applies after edits too — you know what you changed, so you know the current state. The only exception is if the file was modified by an external process (e.g., `npm install` updated `package-lock.json`).
 
+## Read the Architecture Spec
+
+If an `ARCHITECTURE.md` exists in the project root, read it before writing any code. It defines the tech stack, error handling patterns, security requirements, testing standards, and cross-agent conventions. Follow it.
+
+## Check Sibling Work
+
+If your task references work by another agent (e.g., "integrate with frontend", "use the API from backend"), read their code in the project before building your integration. Don't assume — verify the actual interfaces, types, and contracts they implemented.
+
 ## Always Run Tests Before Marking Done
 
 Before marking any task as `done`:
@@ -26,6 +34,6 @@ Never claim tests pass without actually running them.
 - End every commit message with: `Co-Authored-By: Paperclip <noreply@paperclip.ing>`
 - Run `git diff --cached` before committing to verify you're committing what you intend
 
-## Targeted Fixes Don't Need Research
+## Use DeerFlow Research to Save Tokens
 
-When a task gives you specific file paths and line numbers to fix, go directly to the code. Do not explore the codebase broadly or research the topic — the instructions already tell you exactly what to change.
+Your DeerFlow assistant runs pre-flight research before your heartbeat. Use it — the research brief in the comments gives you context so you can skip broad codebase exploration and go straight to implementation. If you need deeper research mid-task, delegate a subtask to your DeerFlow assistant rather than doing extensive web searches or file exploration yourself.

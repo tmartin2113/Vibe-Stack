@@ -84,7 +84,9 @@ Decompose the task into subtasks and assign them to the appropriate agents.
 
 2. **Create all independent subtasks in parallel.** Use parallel tool calls for the POST requests. Do not create them sequentially.
 
-3. **Exit.** Do not checkout, poll, or wait for subtask completion.
+3. **Mark dependent subtasks as `blocked`.** If a task depends on another (e.g., frontend needs backend API), set the dependent task's status to `blocked` and note the dependency in its description. Paperclip will auto-unblock it when the blocking sibling completes. This prevents agents from building integrations against code that doesn't exist yet.
+
+4. **Exit.** Do not checkout, poll, or wait for subtask completion.
 
 #### Delegation Rules
 
