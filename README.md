@@ -298,14 +298,6 @@ export LOG_TO_FILE=true
 ```
 Vibe/
 |
-+-- Paperclip Adapter (TypeScript)
-|   +-- paperclip-adapter/
-|       +-- src/server/execute.ts       # Process adapter: spawns heartbeat
-|       +-- src/server/parse.ts         # Stdout JSON parser
-|       +-- src/server/slack-notifier.ts # Clarification DM sender
-|       +-- src/server/slack-reply-poller.ts # Reply polling
-|       +-- src/shared/config.ts        # Adapter config schema
-|
 +-- Multi-Agent System (Python)
 |   +-- agents/
 |   |   +-- main.py                     # Entry point (--heartbeat flag)
@@ -395,8 +387,6 @@ python -m pytest tests/test_embedder.py -v             # Shared embedder (30 tes
 python -m pytest tests/test_spending_tracker.py -v     # Spending tracker (27 tests)
 python -m pytest tests/test_doctor.py -v               # Doctor health checks (45 tests)
 
-# TypeScript adapter tests
-cd paperclip-adapter && node --import tsx --test src/server/*.test.ts
 ```
 
 ## System Requirements
@@ -428,7 +418,7 @@ python -m agents.doctor  # Checks hardware, backends, sandbox, GPU, stores
 ## Tech Stack
 
 - **Orchestration**: Paperclip (scheduling + task assignment) + custom state machine graph (workflow execution)
-- **Adapter**: TypeScript process adapter (`paperclip-adapter/`)
+- **Adapter**: DeerFlow LangGraph adapter (`packages/adapters/deerflow/` in paperclip fork)
 - **LLM Backends**: Ollama (default), llama.cpp, vLLM, OpenAI, Anthropic, Google
 - **Routing**: Regex + LLM hybrid matching
 - **Adapters**: Prompt-based adapters with task-specific generation configs

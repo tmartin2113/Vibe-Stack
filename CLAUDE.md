@@ -49,30 +49,9 @@ Deterministic state machine: **Router → Skill Loader → Spec Builder → Spec
 
 ## Paperclip Integration
 
-### Adapter (`paperclip-adapter/`)
+### Adapter
 
-TypeScript process adapter. Paperclip calls `execute()` which spawns the Python heartbeat as a subprocess.
-
-- `src/server/execute.ts` — main entry point. Env injection, subprocess management, result parsing, Slack bridge.
-- `src/server/slack-notifier.ts` — sends clarification DMs to humans. Returns `{channelId, messageTs}` for reply polling.
-- `src/server/slack-reply-poller.ts` — polls Slack thread for human replies. Forwards to Paperclip as issue comment.
-- `src/server/parse.ts` — extracts JSON result from heartbeat stdout.
-- `src/shared/config.ts` — adapter config shape (`VibeAdapterConfig`).
-
-### Clarification Flow (Two-Way Slack Bridge)
-
-```
-Spec builder emits clarification_needed
-  → heartbeat posts questions to Paperclip (status=blocked)
-  → adapter sends Slack DM to human (threaded)
-  → adapter polls Slack thread for reply (up to 5 min)
-  → reply forwarded to Paperclip as issue comment
-  → Paperclip wakes agent with WAKE_REASON=issue_comment_mentioned
-  → heartbeat detects resume, injects reply into workflow context
-  → workflow re-runs with clarification
-```
-
-Human can also reply directly on the Paperclip issue (bypasses Slack bridge, same resume path).
+Agents run via the **DeerFlow adapter** (`packages/adapters/deerflow/` in the paperclip fork). Paperclip streams tasks to the DeerFlow LangGraph server over HTTP/SSE; agents run as long-lived LangGraph threads rather than spawned subprocesses.
 
 ### Heartbeat (`agents/heartbeat.py`)
 
@@ -106,9 +85,6 @@ Infrastructure only: Paperclip + vLLM + OpenSandbox. The agent is NOT a long-run
 ```bash
 # Python tests
 python -m pytest tests/ -x
-
-# TypeScript adapter tests (requires tsx)
-cd paperclip-adapter && node --import tsx --test src/server/slack-notifier.test.ts
 ```
 
 ### Test Coverage
@@ -124,7 +100,6 @@ cd paperclip-adapter && node --import tsx --test src/server/slack-notifier.test.
 - Graph coverage (82), workflow nodes (90), daemon/router (175), misc (103+145)
 - Dynamic adapters (40), complexity triage (34), heuristic critic (25)
 - Integration (36), observability (43), scalability (23), parallel subtasks (54)
-- Adapter: notifier + reply poller (17)
 
 ### Environment Variables
 
@@ -135,8 +110,6 @@ See `.env.example` for all configurable values. Key ones:
 | `VIBE_SANDBOX_BACKEND` | `opensandbox` or `subprocess` | `subprocess` |
 | `PAPERCLIP_API_URL` | Paperclip control plane URL | — |
 | `PAPERCLIP_AGENT_ID` | Agent identity for self-comment filtering | — |
-| `VIBE_SLACK_BOT_TOKEN` | Two-way Slack bridge bot token | — |
-| `VIBE_SLACK_REPLY_TIMEOUT` | Seconds to poll for Slack reply (0 = notify only) | `300` |
 | `MESSAGE_STORE_PATH` | SQLite path for inter-agent messages | — |
 | `VIBE_MSG_MAX_MESSAGES` | FIFO eviction cap | `5000` |
 | `VIBE_MSG_DEFAULT_TTL` | Default message TTL (seconds) | `604800` |
@@ -176,8 +149,6 @@ agents/                    # Main agent pipeline
   resource_allocator.py    # Resource planning
 vibe/                   # Library layer (backends, core utilities)
   backends/                # Ollama, vLLM, llama.cpp, OpenAI, Anthropic, Google
-paperclip-adapter/         # TypeScript Paperclip adapter
-  src/server/              # execute, parse, slack-notifier, slack-reply-poller
 tests/                     # ~2891 tests across 46 files
 ```
 
