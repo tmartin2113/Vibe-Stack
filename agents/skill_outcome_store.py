@@ -60,9 +60,9 @@ class SkillOutcomeStore:
             max_entries: Maximum entries to keep (FIFO eviction).
         """
         if store_path is None:
+            from .config import get_skills_dir
             store_path = str(
-                Path.home() / ".local" / "share"
-                / "vibe_skills" / "outcome_store.jsonl"
+                Path(get_skills_dir()) / "outcome_store.jsonl"
             )
         self.store_path = Path(store_path)
         self.store_path.parent.mkdir(parents=True, exist_ok=True)

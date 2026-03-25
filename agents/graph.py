@@ -440,15 +440,19 @@ def create_agent_graph(adapter_registry: AdapterRegistry, tool_registry: Optiona
     # Passing None would create a fresh registry per call (Bug #1 in router.py).
     # Pass skills_config for multi-source ingestion (anthropics, obra, vercel).
     from .skill_registry import SkillRegistry
+    from .config import get_skills_dir
     skills_config = config.skills if hasattr(config, "skills") else None
     shared_skill_registry = SkillRegistry(
-        "vibe_skills", skills_config=skills_config
+        get_skills_dir(), skills_config=skills_config
     )
 
     # Shared SkillOutcomeStore — closes the reinforcement loop:
     #   skill_cleanup records outcomes -> skill_generator retrieves top-K for RAG
     from .skill_outcome_store import SkillOutcomeStore
-    shared_outcome_store = SkillOutcomeStore()
+    import os as _os
+    shared_outcome_store = SkillOutcomeStore(
+        store_path=_os.path.join(get_skills_dir(), "outcome_store.jsonl")
+    )
 
     def router_wrapper(state: AgentState) -> AgentState:
         """Wrapper to pass shared skill registry and base model to router.

@@ -11,7 +11,23 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # ── Security scan on all Dockerfiles before building ─────────────
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Scan Dockerfiles with Trivy (config)
+        uses: aquasecurity/trivy-action@0.31.0
+        with:
+          scan-type: config
+          scan-ref: .
+          severity: HIGH,CRITICAL
+          exit-code: 1
+
   ssh-relay:
+    needs: [scan]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -50,7 +66,16 @@ jobs:
           cache-to: type=gha,scope=ssh-relay,mode=max
           platforms: linux/amd64
 
+      - name: Scan image with Trivy
+        uses: aquasecurity/trivy-action@0.31.0
+        with:
+          image-ref: ghcr.io/${{ github.repository_owner }}/vibe-ssh-relay:${{ steps.meta.outputs.version }}
+          severity: CRITICAL
+          exit-code: 1
+          format: table
+
   dev-runner:
+    needs: [scan]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -89,7 +114,16 @@ jobs:
           cache-to: type=gha,scope=dev-runner,mode=max
           platforms: linux/amd64
 
+      - name: Scan image with Trivy
+        uses: aquasecurity/trivy-action@0.31.0
+        with:
+          image-ref: ghcr.io/${{ github.repository_owner }}/vibe-dev-runner:${{ steps.meta.outputs.version }}
+          severity: CRITICAL
+          exit-code: 1
+          format: table
+
   server:
+    needs: [scan]
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -109,6 +143,13 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install dependencies and run tests
+        run: |
+          corepack enable
+          pnpm install --frozen-lockfile
+          pnpm --filter @paperclipai/server build
+          npx vitest run server/src/__tests__/ --reporter=verbose
 
       - id: meta
         uses: docker/metadata-action@v6
@@ -131,7 +172,16 @@ jobs:
           cache-to: type=gha,scope=server,mode=max
           platforms: linux/amd64
 
+      - name: Scan image with Trivy
+        uses: aquasecurity/trivy-action@0.31.0
+        with:
+          image-ref: ghcr.io/${{ github.repository_owner }}/paperclip-server:${{ steps.meta.outputs.version }}
+          severity: CRITICAL
+          exit-code: 1
+          format: table
+
   deerflow:
+    needs: [scan]
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
@@ -171,3 +221,11 @@ jobs:
           cache-from: type=gha,scope=deerflow
           cache-to: type=gha,scope=deerflow,mode=max
           platforms: linux/amd64
+
+      - name: Scan image with Trivy
+        uses: aquasecurity/trivy-action@0.31.0
+        with:
+          image-ref: ghcr.io/${{ github.repository_owner }}/paperclip-deerflow:${{ steps.meta.outputs.version }}
+          severity: CRITICAL
+          exit-code: 1
+          format: table

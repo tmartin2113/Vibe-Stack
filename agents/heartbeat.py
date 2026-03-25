@@ -290,13 +290,37 @@ def run_heartbeat(config: SystemConfig) -> HeartbeatResult:
             tracker.record_event(status="idle")
         return _finish(HeartbeatResult(status="idle", summary="No tasks assigned"))
 
-    # ── Step 4: Pick work ──
-    issue = _pick_task(assignments)
-    if issue is None:
+    # ── Step 4: Pick work (with checkout fallthrough) ──
+    candidates = _rank_tasks(assignments)
+    if not candidates:
         logger.info("No actionable tasks — exiting idle")
         if tracker is not None:
             tracker.record_event(status="idle")
         return _finish(HeartbeatResult(status="idle", summary="No actionable tasks"))
+
+    issue: Optional[Issue] = None
+    checkout = None
+    for candidate in candidates:
+        logger.info("Trying task: %s (%s) [%s]", candidate.title, candidate.id, candidate.status)
+        try:
+            checkout = client.checkout_issue(candidate.id)
+        except PaperclipAPIError as e:
+            logger.warning("Checkout failed for %s — trying next: %s", candidate.id, e)
+            metrics.increment("vibe_paperclip_api_errors_total", labels={"endpoint": "checkout"})
+            continue
+
+        if not checkout.success:
+            logger.warning("Checkout conflict for %s — trying next", candidate.id)
+            continue
+
+        issue = candidate
+        break
+
+    if issue is None:
+        logger.info("All candidates failed checkout — exiting idle")
+        if tracker is not None:
+            tracker.record_event(status="idle")
+        return _finish(HeartbeatResult(status="idle", summary="No tasks available for checkout"))
 
     logger.info("Selected task: %s (%s) [%s]", issue.title, issue.id, issue.status)
     # Update log context with the selected issue
@@ -306,22 +330,6 @@ def run_heartbeat(config: SystemConfig) -> HeartbeatResult:
         run_id=os.environ.get("PAPERCLIP_RUN_ID", ""),
         task_type=_resolve_task_type(config),
     )
-
-    # ── Step 5: Checkout ──
-    try:
-        checkout = client.checkout_issue(issue.id)
-    except PaperclipAPIError as e:
-        logger.error("Checkout failed: %s", e)
-        metrics.increment("vibe_paperclip_api_errors_total", labels={"endpoint": "checkout"})
-        return _finish(HeartbeatResult(status="failed", summary=str(e), exit_code=1))
-
-    if not checkout.success:
-        logger.warning("Checkout conflict for %s — skipping", issue.id)
-        return _finish(HeartbeatResult(
-            status="idle",
-            issue_id=issue.id,
-            summary="Task checkout conflict — owned by another agent",
-        ))
 
     # ── Step 5b: Mark as in_progress so Paperclip UI reflects active work ──
     try:
@@ -686,41 +694,49 @@ def _create_client(config: SystemConfig) -> PaperclipClient:
     return client
 
 
-def _pick_task(assignments: List[Issue]) -> Optional[Issue]:
+def _rank_tasks(assignments: List[Issue]) -> List[Issue]:
     """
-    Pick the highest-priority actionable task.
+    Rank tasks by priority, returning a sorted list for fallthrough checkout.
 
     Priority order:
-    1. PAPERCLIP_TASK_ID if set and in assignments
+    1. PAPERCLIP_TASK_ID if set and in assignments (always first)
     2. in_progress tasks (resume existing work)
     3. todo tasks
-    4. Skip blocked unless wake reason indicates unblock
+    4. blocked only if explicitly woken for it
     """
     forced_task_id = os.environ.get("PAPERCLIP_TASK_ID", "").strip()
+    ranked: List[Issue] = []
+    seen_ids: set = set()
 
+    # Forced task always first
     if forced_task_id:
         for issue in assignments:
             if issue.id == forced_task_id:
-                return issue
+                ranked.append(issue)
+                seen_ids.add(issue.id)
+                break
 
     # in_progress first
     for issue in assignments:
-        if issue.status == "in_progress":
-            return issue
+        if issue.id not in seen_ids and issue.status == "in_progress":
+            ranked.append(issue)
+            seen_ids.add(issue.id)
 
     # then todo
     for issue in assignments:
-        if issue.status == "todo":
-            return issue
+        if issue.id not in seen_ids and issue.status == "todo":
+            ranked.append(issue)
+            seen_ids.add(issue.id)
 
     # blocked only if explicitly woken for it
     wake_reason = os.environ.get("PAPERCLIP_WAKE_REASON", "")
     if wake_reason in ("issue_comment_mentioned", "issue_assigned"):
         for issue in assignments:
-            if issue.status == "blocked" and issue.id == forced_task_id:
-                return issue
+            if issue.id not in seen_ids and issue.status == "blocked" and issue.id == forced_task_id:
+                ranked.append(issue)
+                seen_ids.add(issue.id)
 
-    return None
+    return ranked
 
 
 def _resolve_task_type(config: SystemConfig) -> str:

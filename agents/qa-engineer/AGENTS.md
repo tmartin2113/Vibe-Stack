@@ -18,16 +18,41 @@ If an `ARCHITECTURE.md` exists in the project root, read it before writing any c
 
 ## Check Sibling Work
 
-If your task references work by another agent (e.g., "test the API endpoints", "verify the frontend flows"), read their code in the project before writing tests. Don't assume — verify the actual interfaces, routes, and behavior they implemented.
+Before starting your task:
+1. Read comments on the **parent issue** (the CTO's task) — look for `## Handoff` comments from other agents. These tell you what was built, key files, and integration contracts to test against.
+2. Check if sibling subtasks are `done` — if so, read their code to understand actual interfaces, routes, and behavior before writing tests.
+3. If your task depends on another agent's work (e.g., "test the API endpoints"), verify their implementation exists before writing tests for it. If it doesn't exist yet, mark your task `blocked` with a comment explaining what you're waiting for.
 
-## Always Run Tests Before Marking Done
+## Completion Gate — All Must Pass Before Marking Done
 
-Before marking any task as `done`:
-1. Run the full test suite for the project
-2. Confirm all tests pass (including any new tests you wrote)
-3. Include the test count, pass/fail status, and coverage summary in your completion comment
+Before marking any task as `done`, verify ALL of the following. If any step fails, fix the issue and re-verify. Never mark `done` with a failing gate.
 
-Never claim tests pass without actually running them.
+1. **All tests pass** — run the full test suite. Every test (existing + new) must pass.
+2. **Coverage adequate** — if the project tracks coverage, verify it meets the threshold from `ARCHITECTURE.md`.
+3. **All acceptance criteria met** — re-read the task description. Every acceptance criterion must be satisfied.
+4. **Post `## Handoff` comment** — see Completion Protocol below. This is mandatory, not optional.
+
+## Completion Protocol
+
+When you finish your task, **always** post a comment on your subtask starting with `## Handoff`. This lets the CTO know your testing status and any issues found.
+
+Format:
+```
+## Handoff
+
+**What was tested:**
+- <1-3 bullet summary of test coverage>
+
+**Key test files:**
+- `path/to/test.ts` — <what it covers>
+
+**Issues found:**
+- <bugs, regressions, or quality concerns discovered during testing>
+- <or "None — all tests passing">
+
+**Test results:**
+- <total tests, pass/fail breakdown, coverage %>
+```
 
 ## Git Commits
 

@@ -27,7 +27,50 @@ PAPERCLIP_API_URL="${PAPERCLIP_API_URL/http:\/\/server:/http://localhost:}"
 PAPERCLIP_API_KEY="${PAPERCLIP_API_KEY:-}"
 PAPERCLIP_COMPANY_ID="${PAPERCLIP_COMPANY_ID:-}"
 
+# Slack alerting: set SLACK_WEBHOOK_URL to get notifications on status changes.
+# Create one at: https://api.slack.com/messaging/webhooks
+SLACK_WEBHOOK_URL="${SLACK_WEBHOOK_URL:-}"
+
 log() { echo "[health] $(date +%H:%M:%S) $*"; }
+
+# ── Slack Notification Helper ──────────────────────────────────────
+send_slack() {
+  local status="$1" prev="$2" details="$3"
+  [[ -z "$SLACK_WEBHOOK_URL" ]] && return 0
+
+  local emoji color
+  case "$status" in
+    ok)       emoji=":white_check_mark:" color="#36a64f" ;;
+    warning)  emoji=":warning:"          color="#daa520" ;;
+    degraded) emoji=":x:"               color="#cc0000" ;;
+    *)        emoji=":question:"         color="#808080" ;;
+  esac
+
+  local payload
+  payload=$(cat <<EOFSLACK
+{
+  "text": "${emoji} Vibe Stack: ${status} (was: ${prev})",
+  "attachments": [{
+    "color": "${color}",
+    "fields": [
+      {"title": "Status", "value": "${status}", "short": true},
+      {"title": "Previous", "value": "${prev}", "short": true}
+    ],
+    "text": "${details}",
+    "footer": "Vibe Stack Health Monitor",
+    "ts": $(date +%s)
+  }]
+}
+EOFSLACK
+)
+
+  curl -sf --max-time 10 \
+    -H "Content-Type: application/json" \
+    -d "$payload" \
+    "$SLACK_WEBHOOK_URL" >/dev/null 2>&1 \
+    && log "Slack notification sent" \
+    || log "WARNING: Slack notification failed (non-fatal)"
+}
 
 # ── Health Checks ─────────────────────────────────────────────────
 
@@ -94,6 +137,14 @@ if ! curl -sf --max-time 5 http://localhost:3100/api/health >/dev/null 2>&1; the
   ISSUES+=("Paperclip health check failed")
 fi
 
+# 6. Circuit breaker events (check server logs for auto-paused agents)
+log "Checking for circuit breaker events..."
+CB_EVENTS=$(cd "$REPO_DIR" && docker compose logs server --since 1h --no-log-prefix 2>/dev/null \
+  | grep -c "Circuit breaker OPEN" 2>/dev/null || echo "0")
+if (( CB_EVENTS > 0 )); then
+  WARNINGS+=("**${CB_EVENTS}** circuit breaker event(s) in last hour — agent(s) auto-paused")
+fi
+
 # ── Determine Status ──────────────────────────────────────────────
 
 if (( ${#ISSUES[@]} > 0 )); then
@@ -121,6 +172,14 @@ if [[ "$STATUS" == "$PREV_STATUS" ]]; then
 fi
 
 log "Status changed: $PREV_STATUS → $STATUS — posting to Paperclip"
+
+# Build details string for Slack
+SLACK_DETAILS=""
+for issue in "${ISSUES[@]}"; do SLACK_DETAILS+="• ${issue}\\n"; done
+for warning in "${WARNINGS[@]}"; do SLACK_DETAILS+="• ${warning}\\n"; done
+[[ "$STATUS" == "ok" ]] && SLACK_DETAILS="All systems operational."
+
+send_slack "$STATUS" "$PREV_STATUS" "$SLACK_DETAILS"
 
 # ── Build Report ──────────────────────────────────────────────────
 

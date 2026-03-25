@@ -76,6 +76,8 @@ Before creating any subtasks, define the project's technical foundation.
 
 Decompose the task into subtasks and assign them to the appropriate agents.
 
+0. **Check agent health first.** Before delegating, query `GET /api/companies/:companyId/dashboard/runs?limit=20` and check each agent's recent run history. If an agent has 3+ consecutive failures, **do not assign them new work** — note the issue in a comment and assign the subtask to a different agent or mark it `blocked` with a note for human review.
+
 1. **Create one subtask per agent**, scoped to their specialty. Each subtask description must include:
    - **What to build** — specific requirements
    - **Acceptance criteria** — what "done" looks like for this subtask
@@ -125,13 +127,20 @@ Run a structured audit of all code produced by the agents. Work through the chec
 - [ ] Build succeeds — run the build command from `ARCHITECTURE.md`
 - [ ] Tests pass — run the test command from `ARCHITECTURE.md`
 
-#### 3. Cross-Agent Consistency
+#### 3. Quality Gate Verification
 
+- [ ] Every completed subtask has a `## Handoff` comment — if any are missing, create a fix subtask: "Post ## Handoff comment summarizing your work"
+- [ ] Check the `<!-- quality-gate -->` comments on each subtask — these are auto-posted by the system with run quality scores. Flag any subtask whose last run scored below 60.
+- [ ] Query `GET /api/companies/:companyId/dashboard/runs?limit=30` — check that agents working on this project's subtasks had successful runs (no repeated failures)
+
+#### 4. Cross-Agent Consistency
+
+- [ ] Read all `## Handoff` comments from agent subtasks — verify their integration notes are consistent with each other
 - [ ] Frontend API calls match backend route contracts (URLs, methods, request/response shapes)
 - [ ] Shared types and naming conventions are consistent across agents' code
 - [ ] No duplicate or conflicting implementations
 
-#### 4. Architecture Conformance
+#### 5. Architecture Conformance
 
 - [ ] Each agent's work follows the patterns defined in `ARCHITECTURE.md`
 - [ ] Dependencies are pinned or range-locked (no `*` or `latest` versions)

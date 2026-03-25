@@ -18,16 +18,42 @@ If an `ARCHITECTURE.md` exists in the project root, read it before writing any c
 
 ## Check Sibling Work
 
-If your task references work by another agent (e.g., "integrate with backend API", "use the auth service"), read their code in the project before building your integration. Don't assume — verify the actual interfaces, types, and contracts they implemented.
+Before starting your task:
+1. Read comments on the **parent issue** (the CTO's task) — look for `## Handoff` comments from other agents. These contain integration notes, file lists, and API contracts you need.
+2. Check if sibling subtasks are `done` — if so, read their code in the project to verify actual interfaces, types, and contracts.
+3. If your task depends on another agent's work (e.g., "integrate with backend API"), verify their implementation exists before building against it. If it doesn't exist yet, mark your task `blocked` with a comment explaining what you're waiting for.
 
-## Always Verify Before Marking Done
+## Completion Gate — All Must Pass Before Marking Done
 
-Before marking any task as `done`:
-1. If the project has tests, run them
-2. If the project uses TypeScript, run `npx tsc --noEmit` to verify types compile
-3. Include verification results in your completion comment
+Before marking any task as `done`, verify ALL of the following. If any step fails, fix the issue and re-verify. Never mark `done` with a failing gate.
 
-Never claim code works without verifying.
+1. **Build passes** — run the build command from `ARCHITECTURE.md` (or `npm run build`). Must exit 0.
+2. **Type check passes** — run `npx tsc --noEmit`. Must exit 0.
+3. **Tests pass** — run the test command from `ARCHITECTURE.md` (or `npm test`). All tests must pass.
+4. **All acceptance criteria met** — re-read the task description. Every acceptance criterion must be satisfied.
+5. **Post `## Handoff` comment** — see Completion Protocol below. This is mandatory, not optional.
+
+## Completion Protocol
+
+When you finish your task, **always** post a comment on your subtask starting with `## Handoff`. This lets the CTO and sibling agents understand what you built without re-reading all your code.
+
+Format:
+```
+## Handoff
+
+**What was built:**
+- <1-3 bullet summary of deliverables>
+
+**Key files:**
+- `path/to/file.ts` — <what it does>
+
+**Integration notes for other agents:**
+- <API endpoints, types, contracts, or conventions other agents need to know>
+- <or "None — no cross-agent dependencies">
+
+**Verification results:**
+- <build status, test count, type check status>
+```
 
 ## Git Commits
 

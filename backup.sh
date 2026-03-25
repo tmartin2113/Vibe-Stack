@@ -25,6 +25,14 @@ TIMESTAMP="$(date +%Y%m%d_%H%M%S)"
 MANIFEST=""
 ERRORS=0
 
+# Encryption: set BACKUP_AGE_RECIPIENT to an age public key to encrypt backups.
+# Generate one via: age-keygen (or run scripts/secrets-init.sh)
+BACKUP_AGE_RECIPIENT="${BACKUP_AGE_RECIPIENT:-}"
+
+# Off-site replication: set BACKUP_RCLONE_REMOTE to sync backups to cloud storage.
+# Example: BACKUP_RCLONE_REMOTE=b2:vibe-stack-backups
+BACKUP_RCLONE_REMOTE="${BACKUP_RCLONE_REMOTE:-}"
+
 mkdir -p "$BACKUP_DIR"
 
 log() { echo "[backup] $(date +%H:%M:%S) $*"; }
@@ -148,10 +156,30 @@ log "Writing backup manifest..."
   echo "$MANIFEST"
 } > "$BACKUP_DIR/${TIMESTAMP}_manifest.txt"
 
+# ── Encryption ─────────────────────────────────────────────────────
+# Encrypt all backup files with age if BACKUP_AGE_RECIPIENT is set.
+if [[ -n "$BACKUP_AGE_RECIPIENT" ]] && command -v age &>/dev/null; then
+  log "Encrypting backups with age..."
+  for file in "$BACKUP_DIR"/${TIMESTAMP}_*; do
+    [[ "$file" == *.age ]] && continue  # skip already encrypted
+    [[ "$file" == *_manifest.txt ]] && continue  # manifest stays readable
+    if age -r "$BACKUP_AGE_RECIPIENT" -o "${file}.age" "$file" 2>/dev/null; then
+      rm -f "$file"
+      log "  Encrypted: $(basename "${file}.age")"
+    else
+      log "  WARNING: Failed to encrypt $(basename "$file")"
+    fi
+  done
+elif [[ -n "$BACKUP_AGE_RECIPIENT" ]]; then
+  log "WARNING: BACKUP_AGE_RECIPIENT set but 'age' not installed — backups NOT encrypted"
+fi
+
 # ── Retention ──────────────────────────────────────────────────────
 # Remove oldest backups beyond KEEP_COUNT (per suffix group).
 for suffix in paperclip.sql.gz penpot.sql.gz gitea.db.gz minio.tar.gz \
-              vibe-data.tar.gz bulletin-data.tar.gz secrets.tar.gz manifest.txt; do
+              vibe-data.tar.gz bulletin-data.tar.gz secrets.tar.gz manifest.txt \
+              paperclip.sql.gz.age penpot.sql.gz.age gitea.db.gz.age minio.tar.gz.age \
+              vibe-data.tar.gz.age bulletin-data.tar.gz.age secrets.tar.gz.age; do
   mapfile -t files < <(ls -1t "$BACKUP_DIR"/*_"$suffix" 2>/dev/null)
   if (( ${#files[@]} > KEEP_COUNT )); then
     for old in "${files[@]:$KEEP_COUNT}"; do
@@ -160,6 +188,21 @@ for suffix in paperclip.sql.gz penpot.sql.gz gitea.db.gz minio.tar.gz \
     done
   fi
 done
+
+# ── Off-site Replication ──────────────────────────────────────────
+# Sync backup directory to cloud storage via rclone.
+if [[ -n "$BACKUP_RCLONE_REMOTE" ]] && command -v rclone &>/dev/null; then
+  log "Replicating backups to $BACKUP_RCLONE_REMOTE..."
+  if rclone sync "$BACKUP_DIR" "$BACKUP_RCLONE_REMOTE" \
+    --transfers 4 --checkers 4 --log-level NOTICE 2>&1; then
+    log "  Replication complete"
+  else
+    log "  WARNING: Replication failed"
+    ERRORS=$((ERRORS + 1))
+  fi
+elif [[ -n "$BACKUP_RCLONE_REMOTE" ]]; then
+  log "WARNING: BACKUP_RCLONE_REMOTE set but 'rclone' not installed — backups NOT replicated"
+fi
 
 # ── Summary ────────────────────────────────────────────────────────
 log "Backup complete. Files in $BACKUP_DIR:"

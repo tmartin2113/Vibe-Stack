@@ -429,6 +429,138 @@ class SkillRegistry:
         logger.info(f"🔧 No existing skill found, will generate ephemeral skill")
         return ("ephemeral", None, None)
 
+    def find_skills(
+        self,
+        requirement: str,
+        max_skills: int = 3,
+        min_confidence: float = 0.35,
+    ) -> List[Tuple[str, Optional[str], Optional[Path]]]:
+        """
+        Find multiple matching skills across all tiers.
+
+        Like ``find_skill()`` but returns up to *max_skills* matches above
+        *min_confidence*, sorted by quality-weighted score.  This lets the
+        ``SkillLoaderNode`` apply progressive disclosure (primary skill gets
+        70 % context budget, secondary skills get summaries).
+
+        Remote source probing is still included: any remote match is appended
+        if the local tiers don't fill the quota.
+
+        Args:
+            requirement: Natural language description of what's needed.
+            max_skills:  Maximum number of skills to return.
+            min_confidence: Floor confidence for inclusion.
+
+        Returns:
+            List of ``(tier, skill_name, skill_path)`` tuples, ordered by
+            descending confidence.  Empty list means "generate ephemeral".
+        """
+        results: List[Tuple[float, str, str, Path]] = []  # (score, tier, name, path)
+
+        tier_dirs = {
+            "official": self.official_dir,
+            "local": self.local_dir,
+            "temp": self.temp_dir,
+        }
+        thresholds = {
+            "official": self.OFFICIAL_CONFIDENCE_THRESHOLD,
+            "local": self.LOCAL_CONFIDENCE_THRESHOLD,
+            "temp": self.TEMP_CONFIDENCE_THRESHOLD,
+        }
+
+        for tier_name, tier_dir in tier_dirs.items():
+            threshold = max(thresholds[tier_name], min_confidence)
+            for match in self._search_tier_all(requirement, tier_name, threshold):
+                results.append((
+                    match["confidence"],
+                    tier_name,
+                    match["name"],
+                    tier_dir / match["name"],
+                ))
+
+        # Remote sources — append if quota not filled
+        if self._enable_remote and len(results) < max_skills:
+            seen_names = {r[2] for r in results}
+            for source in self._skills_config.sources:
+                if not source.enabled:
+                    continue
+                remote_result = self._find_remote_skill(requirement, source)
+                if remote_result:
+                    skill_name, skill_path = remote_result
+                    if skill_name not in seen_names:
+                        results.append((0.5, "official", skill_name, skill_path))
+                        seen_names.add(skill_name)
+                if len(results) >= max_skills:
+                    break
+
+        # Sort by score descending, take top N
+        results.sort(key=lambda r: r[0], reverse=True)
+        top = results[:max_skills]
+
+        if top:
+            for score, tier, name, _ in top:
+                logger.info(
+                    f"🔍 find_skills match: {name} (tier={tier}, confidence={score:.2f})"
+                )
+
+        return [(tier, name, path) for _, tier, name, path in top]
+
+    def _search_tier_all(
+        self,
+        requirement: str,
+        tier: str,
+        min_confidence: float = 0.35,
+    ) -> List[Dict[str, Any]]:
+        """
+        Return *all* matches above *min_confidence* in a single tier.
+
+        Same scoring logic as ``_search_tier()`` but collects every match
+        rather than only the best one.
+
+        Args:
+            requirement: Natural language description.
+            tier: ``"official"``, ``"local"``, or ``"temp"``.
+            min_confidence: Minimum quality-weighted score.
+
+        Returns:
+            List of dicts with ``"name"``, ``"confidence"``, ``"data"``.
+        """
+        tier_skills = self.index["tiers"][tier]["skills"]
+        if not tier_skills:
+            return []
+
+        requirement_lower = requirement.lower()
+        matches: List[Dict[str, Any]] = []
+
+        for skill_name, skill_data in tier_skills.items():
+            match_confidence = self._calculate_match_confidence(
+                requirement_lower,
+                skill_data.get("description", "").lower(),
+                skill_data.get("task_types", []),
+            )
+
+            avg_score = skill_data.get("avg_score", 0.0)
+            usage_count = skill_data.get("usage_count", 0)
+
+            if usage_count > 0 and avg_score > 0:
+                quality_factor = avg_score / 100.0
+                usage_bonus = min(math.log2(usage_count + 1) / 10.0, 0.1)
+            else:
+                quality_factor = 0.5
+                usage_bonus = 0.0
+
+            weighted_score = (match_confidence * 0.7) + (quality_factor * 0.3) + usage_bonus
+
+            if weighted_score >= min_confidence:
+                matches.append({
+                    "name": skill_name,
+                    "confidence": min(weighted_score, 1.0),
+                    "data": skill_data,
+                })
+
+        matches.sort(key=lambda m: m["confidence"], reverse=True)
+        return matches
+
     def _search_tier(self, requirement: str, tier: str) -> Optional[Dict[str, Any]]:
         """
         Search for matching skills in a specific tier.

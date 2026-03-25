@@ -18,7 +18,29 @@ If an `ARCHITECTURE.md` exists in the project root, read it before starting work
 
 ## Check Sibling Work
 
-If your task references work by another agent (e.g., "design the marketplace UI", "create icons for the settings page"), read their code in the project to understand the existing patterns, component library, and design language before creating new designs.
+Before starting your task:
+1. Read comments on the **parent issue** (the CTO's task) — look for `## Handoff` comments from other agents. These contain component names, design tokens, and layout decisions you need.
+2. Check if sibling subtasks are `done` — if so, read their code to understand existing patterns, component library, and design language.
+3. If your task depends on another agent's work (e.g., "design the marketplace UI"), verify their implementation exists before building on it. If it doesn't exist yet, mark your task `blocked` with a comment explaining what you're waiting for.
+
+## Completion Protocol
+
+When you finish your task, **always** post a comment on your subtask starting with `## Handoff`.
+
+Format:
+```
+## Handoff
+
+**What was designed:**
+- <1-3 bullet summary of deliverables>
+
+**Key files:**
+- `path/to/component.tsx` — <what it does>
+
+**Integration notes for other agents:**
+- <design tokens, component APIs, layout conventions other agents should follow>
+- <or "None — no cross-agent dependencies">
+```
 
 ## Git Commits
 

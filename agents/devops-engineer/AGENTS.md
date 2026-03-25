@@ -20,17 +20,42 @@ If an `ARCHITECTURE.md` exists in the project root, read it before writing any c
 
 ## Check Sibling Work
 
-If your task references work by another agent (e.g., "Dockerize the backend", "deploy the frontend"), read their code in the project before building your configs. Don't assume — verify the actual build commands, entry points, and directory structure they used.
+Before starting your task:
+1. Read comments on the **parent issue** (the CTO's task) — look for `## Handoff` comments from other agents. These contain build commands, entry points, and directory structures you need.
+2. Check if sibling subtasks are `done` — if so, read their code in the project to verify actual build commands, entry points, and directory structure.
+3. If your task depends on another agent's work (e.g., "Dockerize the backend"), verify their implementation exists before building configs for it. If it doesn't exist yet, mark your task `blocked` with a comment explaining what you're waiting for.
 
-## Always Verify Before Marking Done
+## Completion Gate — All Must Pass Before Marking Done
 
-Before marking any task as `done`:
-1. If you modified a Dockerfile, run `docker build` (dry-run or actual) to verify it parses
-2. If you modified config files (docker-compose, railway.toml), validate syntax
-3. If the project has tests, run them
-4. Include verification results in your completion comment
+Before marking any task as `done`, verify ALL of the following. If any step fails, fix the issue and re-verify. Never mark `done` with a failing gate.
 
-Never claim changes work without verifying.
+1. **Config validates** — if you modified a Dockerfile, run `docker build` to verify it parses. For docker-compose/YAML, validate syntax.
+2. **Build passes** — run the project's build command from `ARCHITECTURE.md`. Must exit 0.
+3. **Tests pass** — if the project has tests, run them. All must pass.
+4. **All acceptance criteria met** — re-read the task description. Every acceptance criterion must be satisfied.
+5. **Post `## Handoff` comment** — see Completion Protocol below. This is mandatory, not optional.
+
+## Completion Protocol
+
+When you finish your task, **always** post a comment on your subtask starting with `## Handoff`. This lets the CTO and sibling agents understand what you built.
+
+Format:
+```
+## Handoff
+
+**What was built:**
+- <1-3 bullet summary of deliverables>
+
+**Key files:**
+- `path/to/file` — <what it does>
+
+**Integration notes for other agents:**
+- <ports, env vars, build commands, or deployment info other agents need>
+- <or "None — no cross-agent dependencies">
+
+**Verification results:**
+- <Dockerfile parse, config validation, test results>
+```
 
 ## Git Commits
 

@@ -27,7 +27,7 @@ from agents.heartbeat import (
     _format_success_comment,
     _install_sigterm_handler,
     _make_progress_callback,
-    _pick_task,
+    _rank_tasks,
     _post_cancelled,
     _post_sigterm_partial,
     _PROGRESS_NODES,
@@ -147,44 +147,44 @@ class TestHeartbeatResult:
         assert result.exit_code == 0
 
 
-# ── _pick_task Tests ──
+# ── _rank_tasks Tests ──
 
 
 class TestPickTask:
     def test_prefers_in_progress(self, sample_issue, sample_issue_in_progress):
-        result = _pick_task([sample_issue, sample_issue_in_progress])
-        assert result.id == "issue-2"  # in_progress
+        result = _rank_tasks([sample_issue, sample_issue_in_progress])
+        assert result[0].id == "issue-2"  # in_progress first
 
     def test_picks_todo_when_no_in_progress(self, sample_issue):
-        result = _pick_task([sample_issue])
-        assert result.id == "issue-1"
+        result = _rank_tasks([sample_issue])
+        assert result[0].id == "issue-1"
 
     def test_respects_paperclip_task_id(self, sample_issue, sample_issue_in_progress, monkeypatch):
         monkeypatch.setenv("PAPERCLIP_TASK_ID", "issue-1")
-        result = _pick_task([sample_issue, sample_issue_in_progress])
-        assert result.id == "issue-1"  # forced by env
+        result = _rank_tasks([sample_issue, sample_issue_in_progress])
+        assert result[0].id == "issue-1"  # forced by env
 
-    def test_returns_none_when_empty(self):
-        result = _pick_task([])
-        assert result is None
+    def test_returns_empty_when_empty(self):
+        result = _rank_tasks([])
+        assert result == []
 
     def test_skips_blocked_by_default(self):
         blocked = Issue(id="b1", title="Blocked", status="blocked")
-        result = _pick_task([blocked])
-        assert result is None
+        result = _rank_tasks([blocked])
+        assert result == []
 
     def test_picks_blocked_when_woken_for_it(self, monkeypatch):
         monkeypatch.setenv("PAPERCLIP_TASK_ID", "b1")
         monkeypatch.setenv("PAPERCLIP_WAKE_REASON", "issue_comment_mentioned")
         blocked = Issue(id="b1", title="Blocked", status="blocked")
-        result = _pick_task([blocked])
-        assert result.id == "b1"
+        result = _rank_tasks([blocked])
+        assert result[0].id == "b1"
 
     def test_forced_task_id_not_in_assignments(self, sample_issue, monkeypatch):
         monkeypatch.setenv("PAPERCLIP_TASK_ID", "nonexistent")
-        result = _pick_task([sample_issue])
+        result = _rank_tasks([sample_issue])
         # Falls through to normal priority: picks the todo
-        assert result.id == "issue-1"
+        assert result[0].id == "issue-1"
 
 
 # ── _resolve_task_type Tests ──
@@ -475,7 +475,8 @@ class TestRunHeartbeat:
 
         result = run_heartbeat(config)
         assert result.status == "idle"
-        assert "conflict" in result.summary.lower()
+        # conflict causes fallthrough to next task; with no more tasks, returns generic idle
+        assert result.summary is not None
 
     @patch("agents.heartbeat._run_workflow")
     @patch("agents.heartbeat.PaperclipClient")

@@ -258,7 +258,8 @@ class RouterNode:
         # Use provided skill registry or create new one
         # IMPORTANT: Always pass a shared registry to avoid Bug #1
         if skill_registry is None:
-            self.skill_registry = SkillRegistry("vibe_skills")
+            from .config import get_skills_dir
+            self.skill_registry = SkillRegistry(get_skills_dir())
         else:
             self.skill_registry = skill_registry
 
@@ -924,18 +925,28 @@ class RouterNode:
                     "sub_task_id": sub_task["id"]
                 })
         else:
-            # Single-specialist: check for one skill
-            # Use just task_type for matching (Bug #2 fix)
-            # Including full specification dilutes keyword matching
+            # Single-specialist: discover multiple skills for progressive disclosure.
+            # find_skills() returns up to N matches across all tiers, sorted by
+            # quality-weighted score.  The SkillLoaderNode already handles multiple
+            # skills (primary=70% context, secondary=summaries).
             requirement = task_type
-            tier, skill_name, skill_path = self.skill_registry.find_skill(requirement)
+            matches = self.skill_registry.find_skills(requirement)
 
-            discovered_skills = [{
-                "tier": tier,
-                "skill_name": skill_name,
-                "skill_path": str(skill_path) if skill_path else None,
-                "task_type": task_type
-            }]
+            if matches:
+                discovered_skills = [{
+                    "tier": tier,
+                    "skill_name": skill_name,
+                    "skill_path": str(skill_path) if skill_path else None,
+                    "task_type": task_type
+                } for tier, skill_name, skill_path in matches]
+            else:
+                # Fallback: ephemeral generation
+                discovered_skills = [{
+                    "tier": "ephemeral",
+                    "skill_name": None,
+                    "skill_path": None,
+                    "task_type": task_type
+                }]
 
         # Update state with discovered skills
         state["discovered_skills"] = discovered_skills

@@ -1,0 +1,13 @@
+# SOPS configuration for Vibe Stack secrets encryption.
+# Usage:
+#   1. Run: scripts/secrets-init.sh        (one-time: generates age keypair)
+#   2. Run: sops -e -i .env                (encrypt .env in place)
+#   3. Run: sops -d .env > .env.decrypted  (decrypt for deployment)
+#
+# The age key lives at ~/.config/sops/age/keys.txt (never committed).
+
+creation_rules:
+  - path_regex: \.env$
+    age: ""  # Populated by scripts/secrets-init.sh with your public key
+  - path_regex: secrets/.*
+    age: ""

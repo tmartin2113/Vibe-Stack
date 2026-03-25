@@ -43,8 +43,8 @@ COPY --chown=vibe:vibe scripts/ scripts/
 # Install the vibe package itself (non-editable for production)
 RUN pip install --no-cache-dir .
 
-# Create data directory for vibe user
-RUN mkdir -p /home/vibe/.vibe && chown -R vibe:vibe /home/vibe/.vibe
+# Create data directory for vibe user (includes skills dir for SkillRegistry)
+RUN mkdir -p /home/vibe/.vibe/skills && chown -R vibe:vibe /home/vibe/.vibe
 
 # Switch to non-root user
 USER vibe

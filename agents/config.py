@@ -383,6 +383,17 @@ def get_production_config() -> SystemConfig:
 # ── Sandbox config (late import to avoid circular dependency) ──
 
 
+def get_skills_dir() -> str:
+    """Return the root directory for skill tiers.
+
+    Reads ``VIBE_SKILLS_DIR`` env var, defaulting to ``~/.vibe/skills``.
+    This places skills under the existing ``vibe-data`` Docker volume
+    (``/home/vibe/.vibe``) so no new volumes are needed and persistence
+    is automatic.
+    """
+    return os.environ.get("VIBE_SKILLS_DIR", str(Path.home() / ".vibe" / "skills"))
+
+
 def _default_sandbox_config():
     """Create default SandboxConfig (avoids import at class definition time)."""
     from .sandbox.config import SandboxConfig
