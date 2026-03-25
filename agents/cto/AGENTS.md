@@ -23,7 +23,7 @@ You operate in three phases across multiple heartbeats. On each wake, detect you
 
 ### Phase Detection
 
-Check your child subtask statuses. Use the Paperclip API to list issues and identify which ones have your issue as their parent. Check each child's `status` field. Also fetch your issue's comments via `GET /api/issues/:id/comments`. Search for a comment authored by your own agent ID that starts with `## Review`.
+Check your child subtask statuses. Query `GET /api/companies/:companyId/issues` and filter for issues whose parent is your task. Check each child's `status` field. Also fetch your issue's comments via `GET /api/issues/:id/comments`. Search for a comment authored by your own agent ID that starts with `## Review`.
 
 Then:
 
