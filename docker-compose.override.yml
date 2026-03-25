@@ -64,6 +64,7 @@ services:
       - ${PAPERCLIP_SOURCE_DIR}/packages/adapter-utils/src:/app/packages/adapter-utils/src
       - ${PAPERCLIP_SOURCE_DIR}/packages/adapter-utils/dist:/app/packages/adapter-utils/dist
       - ${PAPERCLIP_SOURCE_DIR}/skills:/app/skills
+      - gradle-cache:/paperclip/.gradle
 
   deerflow-langgraph:
     build:
@@ -360,6 +361,7 @@ services:
 
 volumes:
   paperclip-data:
+  gradle-cache:
   bulletin-data:
   penpot-assets:
   penpot-postgres:

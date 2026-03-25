@@ -6,6 +6,7 @@
 - **Use Glob, not `find`** — never use `find` via Bash to locate files. Use Glob.
 - **Use Grep, not `grep`/`rg`** — never use `grep` or `rg` via Bash to search code. Use Grep.
 - These dedicated tools are faster, produce cleaner output, and cost fewer tokens.
+- **Long-running builds** — When running `./gradlew`, `npm test`, or any build/test command that may take more than 2 minutes, set `timeout: 600000` (10 minutes) on the Bash tool call. The default 120-second timeout is too short for first-time Gradle builds.
 
 ## Do Not Re-read Files
 
