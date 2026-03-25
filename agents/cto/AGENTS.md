@@ -23,12 +23,15 @@ You operate in three phases across multiple heartbeats. On each wake, detect you
 
 ### Phase Detection
 
-Query `GET /api/companies/:companyId/issues/:parentId/children` to check child subtask statuses. Then:
+Check your child subtask statuses. Use the Paperclip API to list issues and identify which ones have your issue as their parent. Check each child's `status` field. Also fetch your issue's comments via `GET /api/issues/:id/comments`. Search for a comment authored by your own agent ID that starts with `## Review`.
+
+Then:
 
 | Condition | Action |
 |-----------|--------|
 | No child subtasks exist | **Phase 1 + 2:** Architect, then delegate, then exit |
 | Some children still `todo` or `in_progress` | **Exit immediately.** Wait for agents to finish. |
+| Some children `blocked` (none `in_progress`) | **Post a comment** noting the blocked children and their blockers. Mark your own task as `blocked`. |
 | All children `done`, no prior `## Review` comment on your issue | **Phase 3:** Run first review |
 | All children `done`, prior `## Review` comment exists, fix subtasks still open | **Exit immediately.** Wait for fix agents. |
 | All children `done`, fix subtasks also done (second pass) | **Phase 3:** Run second (final) review |
@@ -143,12 +146,22 @@ After completing the checklist, route findings by severity:
 
 #### Post-Review Comment
 
-After completing the checklist and routing fixes, **always** post a `## Review` comment on your parent issue listing:
-- Findings (what you checked, what passed, what failed)
-- Trivial fixes you made (with commit hashes)
-- Substantial fix subtasks you created (with issue links)
+After completing the checklist and routing fixes, **always** post a comment on your parent issue. The comment **must** start with the exact line `## Review` (so phase detection can find it). Format:
 
-This comment is required — phase detection uses its presence to distinguish first review from second review.
+```
+## Review
+
+**Findings:**
+- <what you checked, what passed, what failed>
+
+**Trivial fixes made:**
+- <commit hash> — <description> (or "none")
+
+**Subtasks created for substantial issues:**
+- <issue link> — <description> (or "none")
+```
+
+This comment is required — phase detection identifies it by finding a comment authored by your agent ID that starts with `## Review`.
 
 #### Completion
 
