@@ -58,6 +58,10 @@ node_modules/
 # Skills (runtime state)
 vibe_skills/
 
+# Runtime health/monitoring state
+.health-state
+backups/
+
 # Training data (generated at runtime)
 training/data/
 

@@ -199,11 +199,13 @@ addopts = [
     "--cov-report=term-missing",
     "--cov-report=xml",
     "--cov-fail-under=90",
+    "-m", "not e2e",
 ]
 markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
     "integration: marks tests as integration tests",
     "unit: marks tests as unit tests",
+    "e2e: marks tests as end-to-end tests requiring live Paperclip + agents (deselect with '-m \"not e2e\"')",
 ]
 
 [tool.coverage.run]
