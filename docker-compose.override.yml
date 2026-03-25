@@ -13,6 +13,9 @@
 services:
 
   server:
+    networks:
+      - default
+      - paperclip_agent-network
     build:
       context: ${PAPERCLIP_SOURCE_DIR}
       dockerfile: Dockerfile
@@ -368,3 +371,7 @@ volumes:
   comfyui-data:
   gitea-data:
   minio-data:
+
+networks:
+  paperclip_agent-network:
+    external: true
