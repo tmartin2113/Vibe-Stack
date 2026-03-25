@@ -11,6 +11,21 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # ── Python test suite with coverage gate ─────────────────────────
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+      - name: Install dependencies
+        run: pip install -e ".[agents,tools,dev]"
+      - name: Run tests
+        run: python -m pytest tests/ -q --tb=short
+
   # ── Security scan on all Dockerfiles before building ─────────────
   scan:
     runs-on: ubuntu-latest
@@ -27,7 +42,7 @@ jobs:
           exit-code: 1
 
   ssh-relay:
-    needs: [scan]
+    needs: [scan, test]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -75,7 +90,7 @@ jobs:
           format: table
 
   dev-runner:
-    needs: [scan]
+    needs: [scan, test]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -123,7 +138,7 @@ jobs:
           format: table
 
   server:
-    needs: [scan]
+    needs: [scan, test]
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -181,7 +196,7 @@ jobs:
           format: table
 
   deerflow:
-    needs: [scan]
+    needs: [scan, test]
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
