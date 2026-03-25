@@ -49,6 +49,7 @@ services:
       - paperclip-data:/paperclip
       - ${HOME}/.claude:/paperclip/.claude
       - ${HOME}/.claude.json:/paperclip/.claude.json
+      - ${HOME}/.gitconfig:/paperclip/.gitconfig:ro
       - ${HOME}/Projects:/home/prime/Projects
       - ${HOME}/Repos:/home/prime/Repos
       - ${HOME}/paperclip:/home/prime/paperclip
