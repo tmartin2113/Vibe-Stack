@@ -154,6 +154,14 @@ class SkillRegistry:
         # cleared by clear_workspace() at end of each task. Never written to disk.
         self._workspace_skills: Dict[str, Dict[str, Any]] = {}
 
+        # Local indexed sources: large local skill repos (e.g. openclaw) that are
+        # too big to bulk-register. Each entry is:
+        #   {"name": str, "index_path": Path, "skills_path": Path, "trust_level": str}
+        # Their index.json is searched on demand; matching skills are copied to temp/.
+        self._local_indexed_sources: List[Dict[str, Any]] = []
+        self._local_index_caches: Dict[str, Dict[str, Any]] = {}  # source_name -> index dict
+        self._init_local_indexed_sources()
+
         logger.info(f"✅ SkillRegistry initialized with {len(self._all_skills())} skills")
 
     def _load_index(self) -> Dict[str, Any]:
@@ -516,6 +524,171 @@ class SkillRegistry:
         matches.sort(key=lambda m: m["confidence"], reverse=True)
         return matches
 
+    # ── Local Indexed Sources (e.g. openclaw — too big to bulk-register) ──────
+
+    def _init_local_indexed_sources(self) -> None:
+        """
+        Auto-register local indexed skill repos from environment variables.
+
+        VIBE_OPENCLAW_PATH — path to openclaw-skills repo root.
+            If set and the directory exists, openclaw is added as a
+            local indexed source searched after the three main tiers.
+
+        Disabled when VIBE_DISABLE_REMOTE_SKILLS=1 (same flag used in tests)
+        so the test suite is not affected by the local environment.
+
+        Additional sources can be added at runtime via
+        add_local_indexed_source().
+        """
+        if not self._enable_remote:
+            return
+
+        openclaw_path = os.environ.get("VIBE_OPENCLAW_PATH", "").strip()
+        if openclaw_path:
+            self.add_local_indexed_source(
+                name="openclaw",
+                source_dir=Path(openclaw_path),
+                trust_level="standard",
+            )
+
+    def add_local_indexed_source(
+        self,
+        name: str,
+        source_dir: Path,
+        trust_level: str = "standard",
+        skills_subdir: str = "skills",
+        index_filename: str = "index.json",
+    ) -> bool:
+        """
+        Register a large local skill repo for on-demand targeted search.
+
+        The repo must have:
+          {source_dir}/{index_filename}     — flat index: {skill_name: {tags, description}}
+          {source_dir}/{skills_subdir}/{skill_name}/SKILL.md
+
+        When a match is found, the skill is copied to temp/ so subsequent
+        tasks find it without re-scanning the source.
+
+        Args:
+            name:          Logical source name (used for deduplication).
+            source_dir:    Root directory of the skill repo.
+            trust_level:   "high", "standard", or "restricted".
+            skills_subdir: Subdirectory containing skill dirs (default: "skills").
+            index_filename: Name of the flat index file (default: "index.json").
+
+        Returns:
+            True if the source was registered, False if path invalid.
+        """
+        source_dir = Path(source_dir)
+        index_path = source_dir / index_filename
+        skills_path = source_dir / skills_subdir
+
+        if not index_path.exists() or not skills_path.is_dir():
+            logger.warning(
+                f"Local indexed source '{name}' skipped: "
+                f"index or skills dir not found at {source_dir}"
+            )
+            return False
+
+        # Deduplicate
+        if any(s["name"] == name for s in self._local_indexed_sources):
+            return True
+
+        self._local_indexed_sources.append({
+            "name": name,
+            "index_path": index_path,
+            "skills_path": skills_path,
+            "trust_level": trust_level,
+        })
+        logger.info(f"📚 Local indexed source registered: {name} ({source_dir})")
+        return True
+
+    def _load_local_index(self, source: Dict[str, Any]) -> Dict[str, Any]:
+        """Lazy-load and cache the index.json for a local indexed source."""
+        name = source["name"]
+        if name not in self._local_index_caches:
+            try:
+                raw = Path(source["index_path"]).read_text(encoding="utf-8", errors="replace")
+                self._local_index_caches[name] = json.loads(raw)
+            except Exception as exc:
+                logger.warning(f"Failed to load index for '{name}': {exc}")
+                self._local_index_caches[name] = {}
+        return self._local_index_caches[name]
+
+    def _search_local_indexed_source(
+        self,
+        requirement: str,
+        source: Dict[str, Any],
+        min_confidence: float = 0.35,
+    ) -> Optional[Tuple[str, Path]]:
+        """
+        Search one local indexed source for the best match.
+
+        If a match is found above min_confidence, copies the skill to
+        temp/ and registers it so subsequent tasks find it without
+        re-scanning.
+
+        Returns:
+            (skill_name, skill_path) tuple on success, or None.
+        """
+        index = self._load_local_index(source)
+        if not index:
+            return None
+
+        req_lower = requirement.lower()
+        best_name: Optional[str] = None
+        best_score: float = 0.0
+
+        for skill_name, skill_data in index.items():
+            desc = skill_data.get("description", "")
+            tags = skill_data.get("tags", [])
+            confidence = self._calculate_match_confidence(req_lower, desc.lower(), tags)
+            if confidence > best_score:
+                best_score = confidence
+                best_name = skill_name
+
+        if not best_name or best_score < min_confidence:
+            return None
+
+        # Load and register the matched skill into temp/ for reuse
+        skill_src = source["skills_path"] / best_name
+        if not skill_src.is_dir() or not (skill_src / "SKILL.md").exists():
+            return None
+
+        logger.info(
+            f"🔍 Local source '{source['name']}': matched '{best_name}' "
+            f"(confidence: {best_score:.2f})"
+        )
+
+        # If already in temp, return it directly
+        if best_name in self.index["tiers"]["temp"]["skills"]:
+            return (best_name, self.temp_dir / best_name)
+
+        # Copy to temp/ and register
+        dest = self.temp_dir / best_name
+        try:
+            if dest.exists():
+                shutil.rmtree(dest)
+            shutil.copytree(skill_src, dest)
+        except OSError as exc:
+            logger.warning(f"Failed to copy '{best_name}' to temp/: {exc}")
+            return None
+
+        try:
+            self.register_skill(
+                name=best_name,
+                description=index[best_name].get("description", best_name),
+                tier="temp",
+                task_types=index[best_name].get("tags", []),
+                skill_path=dest,
+            )
+        except Exception as exc:
+            logger.warning(f"Failed to register '{best_name}' from local source: {exc}")
+            shutil.rmtree(dest, ignore_errors=True)
+            return None
+
+        return (best_name, dest)
+
     def find_skill(self, requirement: str) -> Tuple[str, Optional[str], Optional[Path]]:
         """
         Find best matching skill across all tiers.
@@ -564,6 +737,13 @@ class SkillRegistry:
             skill_path = self.temp_dir / skill_name
             logger.info(f"♻️ Found retained temp skill: {skill_name} (confidence: {temp_match['confidence']:.2f})")
             return ("temp", skill_name, skill_path)
+
+        # Tier 2.75: Local indexed sources (e.g. openclaw — searched by index, fetched on demand)
+        for local_source in self._local_indexed_sources:
+            result = self._search_local_indexed_source(requirement, local_source)
+            if result:
+                skill_name, skill_path = result
+                return ("temp", skill_name, skill_path)
 
         # Tier 3: Probe remote sources in priority order
         if self._enable_remote:
@@ -636,6 +816,21 @@ class SkillRegistry:
                     match["name"],
                     tier_dir / match["name"],
                 ))
+
+        # Local indexed sources — append if quota not filled
+        if len(results) < max_skills and self._local_indexed_sources:
+            seen_names = {r[2] for r in results}
+            for local_source in self._local_indexed_sources:
+                if len(results) >= max_skills:
+                    break
+                result = self._search_local_indexed_source(
+                    requirement, local_source, min_confidence
+                )
+                if result:
+                    skill_name, skill_path = result
+                    if skill_name not in seen_names:
+                        results.append((0.4, "temp", skill_name, skill_path))
+                        seen_names.add(skill_name)
 
         # Remote sources — append if quota not filled
         if self._enable_remote and len(results) < max_skills:

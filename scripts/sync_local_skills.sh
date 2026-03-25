@@ -7,7 +7,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-SOURCES_DIR="/home/prime/Repos/skill-sources"
+SOURCES_DIR="$PROJECT_ROOT/skill-sources"
 DEST_DIR="$PROJECT_ROOT/vibe_skills/official"
 LOG_FILE="$PROJECT_ROOT/logs/skill-sync.log"
 
@@ -19,7 +19,9 @@ log() {
     echo "$msg" >> "$LOG_FILE"
 }
 
-# Source repos and their skill paths
+# Source repos and their skill paths.
+# openclaw-skills (5000+ skills) is handled separately — see note below.
+# voltagent-skills has no SKILL.md files — skip.
 declare -A REPOS=(
     ["anthropics-skills"]="skills"
     ["obra-superpowers"]="skills"
