@@ -57,6 +57,9 @@ class AgentState(TypedDict, total=False):
     skill_quality_scores: Dict[str, int]  # Quality scores for each skill (0-100)
     loaded_skills: List[Dict[str, Any]]  # Loaded skill content (SKILL.md)
     skills_cleaned_up: bool  # Cleanup complete marker
+    # Workspace tier: project-specific skills, cleared after each task
+    workspace_dir: Optional[str]       # Project repo being worked on (scanned for skills/)
+    skill_repo_dirs: List[str]         # Additional repos to scan for skills
 
     # ===== MULTI-SPECIALIST TASK DECOMPOSITION =====
     requires_decomposition: bool  # Does task require multiple specialists?

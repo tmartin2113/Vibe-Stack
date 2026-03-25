@@ -315,7 +315,7 @@ class SkillCleanupNode:
 
     def _evict_stale_skills(self):
         """
-        Evict stale skills using TTL-based retention.
+        Evict stale skills using TTL-based retention, then clear workspace.
 
         Temp skills are retained for 7 days after last use — this
         preserves novel generated skills across sessions so they can
@@ -325,8 +325,12 @@ class SkillCleanupNode:
         always be re-fetched from the GitHub repository on demand.
 
         Skills promoted to local tier are permanent and unaffected.
+
+        Workspace skills are cleared unconditionally — they are
+        project-scoped and reloaded fresh on each task.
         """
         self.skill_registry.cleanup_temp()
+        self.skill_registry.clear_workspace()
 
 
 def cleanup_skills(

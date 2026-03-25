@@ -9,6 +9,7 @@ the primary skill gets full content while secondary skills are
 summarized as name+description to conserve context budget.
 """
 
+import os
 import subprocess
 from pathlib import Path
 from typing import Dict, List, Any, Optional
@@ -48,6 +49,11 @@ class SkillLoaderNode:
         Returns:
             Updated state with loaded_skills containing skill content
         """
+        # Scan workspace and any connected skill repos before loading.
+        # This populates the workspace tier so find_skill() can match against
+        # project-specific skills on this run.
+        self._scan_skill_sources(state)
+
         discovered_skills = state.get("discovered_skills", [])
 
         if not discovered_skills:
@@ -219,8 +225,49 @@ class SkillLoaderNode:
 
         return formatted
 
+    def _scan_skill_sources(self, state: AgentState) -> None:
+        """
+        Scan all workspace and connected skill repo directories.
+
+        Sources (in priority order):
+          1. state["workspace_dir"]   — the project the agent is working on
+          2. state["skill_repo_dirs"] — explicitly configured skill repos
+          3. VIBE_SKILL_REPOS env var — colon-separated list of extra paths
+        """
+        scanned: List[str] = []
+
+        dirs_to_scan: List[str] = []
+
+        # 1. Current task's project directory
+        workspace = state.get("workspace_dir", "")
+        if workspace:
+            dirs_to_scan.append(workspace)
+
+        # 2. Explicitly configured skill repos (set by orchestrator or task)
+        for repo_dir in state.get("skill_repo_dirs", []):
+            if repo_dir and repo_dir not in dirs_to_scan:
+                dirs_to_scan.append(repo_dir)
+
+        # 3. Environment-variable overrides (useful for always-on shared repos)
+        env_repos = os.environ.get("VIBE_SKILL_REPOS", "")
+        for path in env_repos.split(":"):
+            path = path.strip()
+            if path and path not in dirs_to_scan:
+                dirs_to_scan.append(path)
+
+        for dir_path in dirs_to_scan:
+            count = self.skill_registry.scan_workspace(Path(dir_path))
+            if count:
+                scanned.append(f"{dir_path} ({count})")
+
+        if scanned:
+            logger.info(f"🗂️  Workspace skills loaded from: {', '.join(scanned)}")
+
     def _get_skill_index_data(self, skill_name: str) -> Dict[str, Any]:
         """Get index data for a skill, including source provenance."""
+        # Workspace tier — use standard defaults (validated at registration time)
+        if skill_name in self.skill_registry._workspace_skills:
+            return {"trust_level": "standard", "default_allowed_tools": ""}
         for tier in ("official", "local", "temp"):
             tier_skills = self.skill_registry.index.get(
                 "tiers", {}

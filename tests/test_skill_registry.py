@@ -679,3 +679,143 @@ Body
 
         custom_types = registry.get_all_custom_task_types()
         assert "infrastructure_as_code" in custom_types
+
+
+# ── Workspace Tier Tests ────────────────────────────────────────────────────
+
+def _make_workspace_skill(directory: Path, name: str, description: str, task_types: str = "general") -> Path:
+    """Write a SKILL.md file into a skills/ subdirectory under directory."""
+    skill_dir = directory / name
+    skill_dir.mkdir(parents=True, exist_ok=True)
+    (skill_dir / "SKILL.md").write_text(
+        f"---\nname: {name}\ndescription: {description}\ntask-types: {task_types}\nallowed-tools: Read\n---\n\nBody.\n"
+    )
+    return skill_dir
+
+
+class TestWorkspaceTier:
+    """Tests for the workspace (project-specific, in-memory) skill tier."""
+
+    def test_scan_workspace_loads_skills_from_skills_subdir(self, registry, tmp_path):
+        """Skills in {workspace}/skills/ are discovered and loaded."""
+        skills_root = tmp_path / "skills"
+        skills_root.mkdir()
+        _make_workspace_skill(skills_root, "django-patterns", "Django REST framework patterns", "api_development")
+
+        count = registry.scan_workspace(tmp_path)
+        assert count == 1
+        assert "django-patterns" in registry._workspace_skills
+
+    def test_scan_workspace_loads_from_claude_skills_subdir(self, registry, tmp_path):
+        """Skills in {workspace}/.claude/skills/ are discovered."""
+        skills_root = tmp_path / ".claude" / "skills"
+        skills_root.mkdir(parents=True)
+        _make_workspace_skill(skills_root, "react-query-skill", "React Query data fetching patterns", "frontend")
+
+        count = registry.scan_workspace(tmp_path)
+        assert count == 1
+        assert "react-query-skill" in registry._workspace_skills
+
+    def test_scan_workspace_nonexistent_dir_returns_zero(self, registry, tmp_path):
+        """scan_workspace on a missing path returns 0 without error."""
+        assert registry.scan_workspace(tmp_path / "does-not-exist") == 0
+
+    def test_scan_workspace_skips_invalid_skill_files(self, registry, tmp_path):
+        """Files without required frontmatter are silently skipped."""
+        skills_root = tmp_path / "skills"
+        skills_root.mkdir()
+        # File with no frontmatter
+        (skills_root / "not-a-skill.md").write_text("just some text\n")
+        # Subdirectory with no SKILL.md
+        (skills_root / "empty-dir").mkdir()
+
+        assert registry.scan_workspace(tmp_path) == 0
+
+    def test_find_skill_returns_workspace_first(self, registry, tmp_path, skills_dir):
+        """Workspace tier takes priority over official/local/temp tiers."""
+        # Register a persistent skill
+        _create_skill(skills_dir, "local", "generic-api-skill", "API development helper", ["api_development"])
+        registry.register_skill("generic-api-skill", "API development helper", "local", ["api_development"],
+                                 skills_dir / "local" / "generic-api-skill")
+
+        # Register a workspace skill with the same task type
+        skills_root = tmp_path / "skills"
+        skills_root.mkdir()
+        _make_workspace_skill(skills_root, "project-api-patterns", "Project-specific API patterns", "api_development")
+        registry.scan_workspace(tmp_path)
+
+        tier, name, _path = registry.find_skill("api development patterns")
+        assert tier == "workspace"
+        assert name == "project-api-patterns"
+
+    def test_load_skill_returns_workspace_content(self, registry, tmp_path):
+        """load_skill returns in-memory content for workspace skills."""
+        skills_root = tmp_path / "skills"
+        skills_root.mkdir()
+        _make_workspace_skill(skills_root, "ws-skill", "Workspace skill for testing", "general")
+        registry.scan_workspace(tmp_path)
+
+        content = registry.load_skill("ws-skill")
+        assert content is not None
+        assert "Workspace skill for testing" in content
+
+    def test_clear_workspace_removes_all_workspace_skills(self, registry, tmp_path):
+        """clear_workspace empties the workspace tier."""
+        skills_root = tmp_path / "skills"
+        skills_root.mkdir()
+        _make_workspace_skill(skills_root, "temp-skill-a", "Temp skill A", "general")
+        _make_workspace_skill(skills_root, "temp-skill-b", "Temp skill B", "general")
+        registry.scan_workspace(tmp_path)
+        assert len(registry._workspace_skills) == 2
+
+        cleared = registry.clear_workspace()
+        assert cleared == 2
+        assert len(registry._workspace_skills) == 0
+
+    def test_cleared_workspace_skill_not_found(self, registry, tmp_path):
+        """After clear_workspace, skills from that workspace are no longer discoverable."""
+        skills_root = tmp_path / "skills"
+        skills_root.mkdir()
+        _make_workspace_skill(skills_root, "gone-skill", "Will be cleared", "general")
+        registry.scan_workspace(tmp_path)
+        registry.clear_workspace()
+
+        assert registry.load_skill("gone-skill") is None
+
+    def test_find_skills_includes_workspace(self, registry, tmp_path):
+        """find_skills includes workspace matches when available."""
+        skills_root = tmp_path / "skills"
+        skills_root.mkdir()
+        _make_workspace_skill(skills_root, "ws-multi-skill", "Multi skill workspace", "code_generation")
+        registry.scan_workspace(tmp_path)
+
+        results = registry.find_skills("code generation workspace", max_skills=3)
+        tiers = [r[0] for r in results]
+        assert "workspace" in tiers
+
+    def test_scan_multiple_workspace_dirs_accumulates_skills(self, registry, tmp_path):
+        """Scanning multiple directories accumulates skills from all."""
+        repo_a = tmp_path / "repo-a"
+        repo_b = tmp_path / "repo-b"
+        (repo_a / "skills").mkdir(parents=True)
+        (repo_b / "skills").mkdir(parents=True)
+        _make_workspace_skill(repo_a / "skills", "skill-from-a", "Skill from repo A", "backend")
+        _make_workspace_skill(repo_b / "skills", "skill-from-b", "Skill from repo B", "frontend")
+
+        registry.scan_workspace(repo_a)
+        registry.scan_workspace(repo_b)
+
+        assert "skill-from-a" in registry._workspace_skills
+        assert "skill-from-b" in registry._workspace_skills
+        assert len(registry._workspace_skills) == 2
+
+    def test_get_stats_includes_workspace_count(self, registry, tmp_path):
+        """get_stats reports workspace skill count."""
+        skills_root = tmp_path / "skills"
+        skills_root.mkdir()
+        _make_workspace_skill(skills_root, "stat-skill", "Stat skill", "general")
+        registry.scan_workspace(tmp_path)
+
+        stats = registry.get_stats()
+        assert "workspace" in stats["by_tier"]
+        assert stats["by_tier"]["workspace"]["count"] == 1

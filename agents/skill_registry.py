@@ -150,6 +150,10 @@ class SkillRegistry:
                 not in ("1", "true", "yes")
         )
 
+        # Workspace tier: in-memory, per-task. Populated by scan_workspace(),
+        # cleared by clear_workspace() at end of each task. Never written to disk.
+        self._workspace_skills: Dict[str, Dict[str, Any]] = {}
+
         logger.info(f"✅ SkillRegistry initialized with {len(self._all_skills())} skills")
 
     def _load_index(self) -> Dict[str, Any]:
@@ -370,6 +374,148 @@ class SkillRegistry:
                         custom_types[task_type] = desc
         return custom_types
 
+    # ── Workspace Tier (per-task, in-memory) ───────────────────────────────────
+
+    def scan_workspace(self, workspace_dir: Path) -> int:
+        """
+        Scan a project directory for task-scoped skills.
+
+        Looks in these subdirectories (all optional):
+          {workspace_dir}/skills/
+          {workspace_dir}/.claude/skills/
+          {workspace_dir}/docs/skills/
+          {workspace_dir}/.skills/
+
+        Each subdirectory containing a SKILL.md is loaded as a workspace
+        skill. Standalone *.md files with valid frontmatter are also accepted.
+
+        Workspace skills are held in memory only — never written to
+        vibe_skills/ — and cleared at the end of each task via
+        clear_workspace().
+
+        Args:
+            workspace_dir: Root of the project repo being worked on.
+
+        Returns:
+            Number of skills successfully loaded.
+        """
+        workspace_dir = Path(workspace_dir)
+        if not workspace_dir.is_dir():
+            return 0
+
+        search_dirs = [
+            workspace_dir / "skills",
+            workspace_dir / ".claude" / "skills",
+            workspace_dir / "docs" / "skills",
+            workspace_dir / ".skills",
+        ]
+
+        loaded = 0
+        for search_dir in search_dirs:
+            if not search_dir.is_dir():
+                continue
+
+            # Convention 1: subdirectory with SKILL.md (matches tier layout)
+            for entry in sorted(search_dir.iterdir()):
+                if entry.is_dir():
+                    skill_file = entry / "SKILL.md"
+                    if skill_file.exists():
+                        loaded += self._register_workspace_skill(skill_file)
+
+            # Convention 2: standalone *.md files with frontmatter
+            for skill_file in sorted(search_dir.glob("*.md")):
+                loaded += self._register_workspace_skill(skill_file)
+
+        if loaded:
+            logger.info(f"🗂️  Loaded {loaded} workspace skill(s) from {workspace_dir}")
+        return loaded
+
+    def _register_workspace_skill(self, skill_file: Path) -> int:
+        """Parse and register one workspace skill file. Returns 1 on success."""
+        try:
+            content = skill_file.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return 0
+
+        meta = self._parse_frontmatter(content)
+        skill_name = meta.get("name", "").strip()
+        description = meta.get("description", "").strip()
+        if not skill_name or not description:
+            return 0
+
+        try:
+            self.security.validate_skill_name(skill_name)
+        except Exception:
+            logger.warning(f"Workspace skill rejected (invalid name): {skill_file}")
+            return 0
+
+        try:
+            self.security.validate_skill_content(content, skill_name)
+        except Exception as exc:
+            logger.warning(f"Workspace skill rejected (security): {skill_file}: {exc}")
+            return 0
+
+        raw_task_types = meta.get("task-types", meta.get("task_types", "")).strip()
+        task_types = [t.strip() for t in raw_task_types.split(",") if t.strip()]
+
+        self._workspace_skills[skill_name] = {
+            "description": description,
+            "task_types": task_types,
+            "content": content,
+            "path": str(skill_file),
+            "usage_count": 0,
+            "avg_score": 0.0,
+        }
+        logger.debug(f"  🗂️  Workspace skill registered: {skill_name}")
+        return 1
+
+    def clear_workspace(self) -> int:
+        """
+        Remove all workspace skills from memory.
+
+        Called at the end of each task by SkillCleanupNode. Workspace
+        skills are never persisted to disk so this is a pure memory op.
+
+        Returns:
+            Number of skills removed.
+        """
+        count = len(self._workspace_skills)
+        self._workspace_skills.clear()
+        if count:
+            logger.info(f"🗂️  Cleared {count} workspace skill(s)")
+        return count
+
+    def _search_workspace(self, requirement: str) -> Optional[Dict[str, Any]]:
+        """Return the best workspace skill match, or None."""
+        matches = self._search_workspace_all(requirement)
+        return matches[0] if matches else None
+
+    def _search_workspace_all(
+        self,
+        requirement: str,
+        min_confidence: float = 0.35,
+    ) -> List[Dict[str, Any]]:
+        """Return all workspace skill matches above min_confidence, sorted by confidence."""
+        if not self._workspace_skills:
+            return []
+
+        req_lower = requirement.lower()
+        matches = []
+        for skill_name, skill_data in self._workspace_skills.items():
+            confidence = self._calculate_match_confidence(
+                req_lower,
+                skill_data.get("description", "").lower(),
+                skill_data.get("task_types", []),
+            )
+            if confidence >= min_confidence:
+                matches.append({
+                    "name": skill_name,
+                    "confidence": min(confidence, 1.0),
+                    "data": skill_data,
+                })
+        matches.sort(key=lambda m: m["confidence"], reverse=True)
+        return matches
+
     def find_skill(self, requirement: str) -> Tuple[str, Optional[str], Optional[Path]]:
         """
         Find best matching skill across all tiers.
@@ -388,6 +534,13 @@ class SkillRegistry:
             Tuple of (tier, skill_name, skill_path)
             - If tier is "ephemeral", skill_name and skill_path are None
         """
+        # Tier 0: Workspace (project-specific, highest priority, in-memory)
+        ws_match = self._search_workspace(requirement)
+        if ws_match and ws_match["confidence"] >= self.LOCAL_CONFIDENCE_THRESHOLD:
+            skill_name = ws_match["name"]
+            logger.info(f"🗂️  Found workspace skill: {skill_name} (confidence: {ws_match['confidence']:.2f})")
+            return ("workspace", skill_name, None)
+
         # Tier 1: Check official skills (already cached locally)
         official_match = self._search_tier(requirement, "official")
         if official_match and official_match["confidence"] >= self.OFFICIAL_CONFIDENCE_THRESHOLD:
@@ -455,7 +608,13 @@ class SkillRegistry:
             List of ``(tier, skill_name, skill_path)`` tuples, ordered by
             descending confidence.  Empty list means "generate ephemeral".
         """
-        results: List[Tuple[float, str, str, Path]] = []  # (score, tier, name, path)
+        results: List[Tuple[float, str, str, Optional[Path]]] = []  # (score, tier, name, path)
+
+        # Tier 0: workspace skills (project-specific, highest priority)
+        ws_threshold = max(self.LOCAL_CONFIDENCE_THRESHOLD, min_confidence)
+        for match in self._search_workspace_all(requirement, ws_threshold):
+            # Small tiebreaker so workspace beats same-confidence persistent skills
+            results.append((min(match["confidence"] + 0.05, 1.0), "workspace", match["name"], None))
 
         tier_dirs = {
             "official": self.official_dir,
@@ -927,6 +1086,10 @@ class SkillRegistry:
         Returns:
             Skill content as string, or None if not found
         """
+        # Workspace skills are cached in memory — return immediately (no file I/O)
+        if skill_name in self._workspace_skills:
+            return self._workspace_skills[skill_name]["content"]
+
         # Find which tier the skill is in
         tier = None
         for t in ["official", "local", "temp"]:
@@ -1597,6 +1760,11 @@ class SkillRegistry:
             "total_skills": 0,
             "by_tier": {}
         }
+
+        # Workspace tier (in-memory, task-scoped)
+        ws_count = len(self._workspace_skills)
+        stats["by_tier"]["workspace"] = {"count": ws_count, "total_usage": 0, "avg_score": 0.0}
+        stats["total_skills"] += ws_count
 
         for tier in ["official", "local", "temp"]:
             tier_skills = self.index["tiers"][tier]["skills"]
