@@ -341,6 +341,7 @@ def run_heartbeat(config: SystemConfig) -> HeartbeatResult:
     try:
         return _finish(_execute_checked_out_task(
             config, client, issue, tracker=tracker, ws_client=ws_client,
+            identity=identity,
         ))
     finally:
         if ws_client is not None:
@@ -379,6 +380,7 @@ def _execute_checked_out_task(
     issue: Issue,
     tracker: "Optional[SpendingTracker]" = None,
     ws_client=None,
+    identity=None,
 ) -> HeartbeatResult:
     """Execute the workflow for a checked-out task. Caller must release checkout."""
     # ── Step 6: Build context ──
@@ -584,16 +586,22 @@ def _execute_checked_out_task(
 
     # ── Step 10b: Record spending event and evaluate circuit breaker ──
     if tracker is not None:
+        output_tokens = usage.get("output_tokens", 0)
+        gen_duration_ms = int(workflow_duration * 1000)
+        tps = output_tokens / workflow_duration if workflow_duration > 0 and output_tokens > 0 else 0.0
         tracker.record_event(
             status=result_status,
             cost_cents=cost_cents,
             agent_id=os.environ.get("PAPERCLIP_AGENT_ID", ""),
+            agent_name=identity.name if identity else "",
             run_id=os.environ.get("PAPERCLIP_RUN_ID", ""),
             issue_id=issue.id,
             provider=config.model.backend,
             model=config.model.model_name,
             input_tokens=usage.get("input_tokens", 0),
-            output_tokens=usage.get("output_tokens", 0),
+            output_tokens=output_tokens,
+            tokens_per_second=round(tps, 2),
+            generation_duration_ms=gen_duration_ms,
         )
 
     return HeartbeatResult(

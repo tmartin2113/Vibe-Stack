@@ -138,10 +138,13 @@ class VLLMBackend(BackendBase):
             # Get token usage
             usage = result.get("usage", {})
             tokens = usage.get("completion_tokens", estimate_tokens(content))
+            prompt_tokens = usage.get("prompt_tokens", estimate_tokens(prompt))
 
             return {
                 "text": content,
                 "tokens_used": tokens,
+                "prompt_tokens": prompt_tokens,
+                "completion_tokens": tokens,
                 "time_ms": elapsed_ms,
                 "finish_reason": choices[0].get("finish_reason", "stop")
             }
@@ -220,10 +223,13 @@ class VLLMBackend(BackendBase):
 
             usage = result.get("usage", {})
             tokens = usage.get("completion_tokens", estimate_tokens(content))
+            prompt_tokens = usage.get("prompt_tokens", estimate_tokens(str(messages)))
 
             return {
                 "text": content,
                 "tokens_used": tokens,
+                "prompt_tokens": prompt_tokens,
+                "completion_tokens": tokens,
                 "time_ms": elapsed_ms,
                 "finish_reason": choices[0].get("finish_reason", "stop")
             }

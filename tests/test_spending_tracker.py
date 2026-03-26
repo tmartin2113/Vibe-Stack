@@ -434,3 +434,33 @@ class TestPerAgentScope:
         # but breaker state is per-agent
         assert status_a.breaker.state == BreakerState.CLOSED
         assert status_b.breaker.state == BreakerState.CLOSED
+
+
+# ------------------------------------------------------------------
+# Tokens Per Second Tracking
+# ------------------------------------------------------------------
+
+
+def test_tokens_per_second_column_exists(tmp_path):
+    """spending_ledger should have tokens_per_second and generation_duration_ms columns."""
+    from agents.spending_tracker import SpendingTracker
+    import sqlite3
+
+    db = str(tmp_path / "test.db")
+    tracker = SpendingTracker(db_path=db)
+    conn = sqlite3.connect(db)
+    conn.row_factory = sqlite3.Row
+    # Check column exists by inserting with it
+    tracker.record_event(
+        status="success",
+        agent_name="test-agent",
+        input_tokens=100,
+        output_tokens=50,
+        tokens_per_second=25.0,
+        generation_duration_ms=2000,
+    )
+    row = conn.execute("SELECT tokens_per_second, generation_duration_ms, agent_name FROM cost_events ORDER BY id DESC LIMIT 1").fetchone()
+    assert row["tokens_per_second"] == 25.0
+    assert row["generation_duration_ms"] == 2000
+    assert row["agent_name"] == "test-agent"
+    conn.close()

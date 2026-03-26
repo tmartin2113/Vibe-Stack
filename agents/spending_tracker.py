@@ -125,7 +125,9 @@ class SpendingTracker:
                     input_tokens  INTEGER NOT NULL DEFAULT 0,
                     output_tokens INTEGER NOT NULL DEFAULT 0,
                     cost_cents  INTEGER NOT NULL DEFAULT 0,
-                    status      TEXT NOT NULL DEFAULT ''
+                    status      TEXT NOT NULL DEFAULT '',
+                    tokens_per_second REAL NOT NULL DEFAULT 0,
+                    generation_duration_ms INTEGER NOT NULL DEFAULT 0
                 );
 
                 CREATE INDEX IF NOT EXISTS idx_cost_events_timestamp
@@ -142,6 +144,13 @@ class SpendingTracker:
                     trip_count    INTEGER NOT NULL DEFAULT 0
                 );
             """)
+            # Migrate existing DBs: add columns if missing
+            try:
+                conn.execute("SELECT tokens_per_second FROM cost_events LIMIT 0")
+            except sqlite3.OperationalError:
+                conn.execute("ALTER TABLE cost_events ADD COLUMN tokens_per_second REAL NOT NULL DEFAULT 0")
+                conn.execute("ALTER TABLE cost_events ADD COLUMN generation_duration_ms INTEGER NOT NULL DEFAULT 0")
+                conn.commit()
             conn.commit()
         finally:
             conn.close()
@@ -169,6 +178,8 @@ class SpendingTracker:
         model: str = "",
         input_tokens: int = 0,
         output_tokens: int = 0,
+        tokens_per_second: float = 0.0,
+        generation_duration_ms: int = 0,
     ) -> None:
         """Record a cost event and evaluate circuit breaker thresholds."""
         now = _utcnow_iso()
@@ -180,12 +191,12 @@ class SpendingTracker:
                     INSERT INTO cost_events (
                         timestamp, agent_id, agent_name, run_id, issue_id,
                         provider, model, input_tokens, output_tokens,
-                        cost_cents, status
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        cost_cents, status, tokens_per_second, generation_duration_ms
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (now, agent_id, agent_name, run_id, issue_id,
                      provider, model, input_tokens, output_tokens,
-                     cost_cents, status),
+                     cost_cents, status, tokens_per_second, generation_duration_ms),
                 )
                 conn.commit()
 
