@@ -6,6 +6,7 @@ Uses /v1/chat/completions for structured messages (preserving system prompts)
 and /v1/completions as a fallback for raw text prompts.
 """
 
+import os
 import time
 import json
 import logging
@@ -17,6 +18,9 @@ from vibe.backends.base import BackendBase
 def estimate_tokens(text: str) -> int:
     """Estimate token count (~4 chars per token)."""
     return len(text) // 4
+
+_MAX_MODEL_LEN = int(os.environ.get("VLLM_MAX_MODEL_LEN", "32768"))
+_MIN_OUTPUT_TOKENS = 256
 
 logger = logging.getLogger(__name__)
 
@@ -202,6 +206,48 @@ class VLLMBackend(BackendBase):
 
             if chat_template_kwargs:
                 payload["chat_template_kwargs"] = chat_template_kwargs
+
+            # Pre-flight context truncation: drop oldest non-system messages
+            # if estimated input + max_tokens would exceed model context window.
+            effective_max_tokens = payload.get("max_tokens", 2000)
+            total_est = sum(estimate_tokens(m.get("content", "")) for m in messages)
+
+            if total_est + effective_max_tokens > _MAX_MODEL_LEN:
+                budget = _MAX_MODEL_LEN - effective_max_tokens
+                if budget < _MIN_OUTPUT_TOKENS:
+                    # Reduce max_tokens to leave room
+                    effective_max_tokens = max(_MIN_OUTPUT_TOKENS, _MAX_MODEL_LEN - total_est)
+                    payload["max_tokens"] = effective_max_tokens
+                    budget = _MAX_MODEL_LEN - effective_max_tokens
+
+                # Preserve system (first) and latest user (last) messages
+                if len(messages) > 2:
+                    system_msgs = [m for m in messages[:1] if m.get("role") == "system"]
+                    latest_msg = messages[-1]
+                    middle_msgs = messages[len(system_msgs):-1]
+
+                    reserved = sum(estimate_tokens(m.get("content", "")) for m in system_msgs)
+                    reserved += estimate_tokens(latest_msg.get("content", ""))
+                    remaining_budget = budget - reserved
+
+                    # Keep as many recent middle messages as fit
+                    kept_middle = []
+                    for m in reversed(middle_msgs):
+                        m_tokens = estimate_tokens(m.get("content", ""))
+                        if remaining_budget >= m_tokens:
+                            kept_middle.insert(0, m)
+                            remaining_budget -= m_tokens
+                        # else: drop this message
+
+                    original_count = len(messages)
+                    messages = system_msgs + kept_middle + [latest_msg]
+                    payload["messages"] = messages
+                    logger.warning(
+                        "Context truncation: %d→%d messages (est %d→%d tokens, budget %d)",
+                        original_count, len(messages), total_est,
+                        sum(estimate_tokens(m.get("content", "")) for m in messages),
+                        budget,
+                    )
 
             response = requests.post(
                 self.chat_completion_url,

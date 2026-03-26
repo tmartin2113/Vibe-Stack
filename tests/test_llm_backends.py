@@ -500,6 +500,37 @@ class TestCreateBackendFromConfig:
 class TestResponseTiming:
 
     @patch("vibe.backends.vllm.requests.post")
+    def test_vllm_truncates_oversized_context(self, mock_post):
+        """generate_chat should truncate messages when they exceed max_model_len."""
+        from vibe.backends.vllm import estimate_tokens
+
+        backend = VLLMBackend(host="localhost", port=8000, model="test")
+
+        # Build messages that exceed 32768 tokens (at ~4 chars/token = 131072 chars)
+        system_msg = {"role": "system", "content": "System prompt " * 100}  # ~200 tokens
+        big_msg = {"role": "user", "content": "x" * 140000}  # ~35000 tokens
+        latest_msg = {"role": "user", "content": "Latest question"}
+
+        messages = [system_msg, big_msg, latest_msg]
+
+        mock_post.return_value = _mock_response(200, {
+            "choices": [{"message": {"content": "response"}, "finish_reason": "stop"}],
+            "usage": {"prompt_tokens": 100, "completion_tokens": 10},
+        })
+
+        result = backend.generate_chat(messages, max_tokens=4096)
+        assert result["text"] == "response"
+
+        # The middle message should have been truncated
+        sent_messages = mock_post.call_args[1]["json"]["messages"]
+        assert sent_messages[0]["role"] == "system"  # System preserved
+        assert sent_messages[-1]["content"] == "Latest question"  # Latest preserved
+
+        # Total estimated tokens should be under 32768
+        total = sum(estimate_tokens(m["content"]) for m in sent_messages)
+        assert total + 4096 <= 32768, f"Total {total} + max_tokens 4096 exceeds 32768"
+
+    @patch("vibe.backends.vllm.requests.post")
     def test_vllm_time_ms_is_non_negative(self, mock_post):
         mock_post.return_value = _mock_response(200, {
             "choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}],
