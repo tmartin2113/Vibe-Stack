@@ -264,55 +264,97 @@ REASONING:
 
         # Extract SCORES section (safe)
         scores_section = self._safe_split_before(evaluation, "REASONING:", "")
-        if scores_section:
-            # Parse scores
-            for line in scores_section.split('\n'):
-                for dimension in scores.keys():
-                    if dimension.lower() in line.lower():
-                        # Try format: "Dimension: 78/100" or "Dimension: 78"
-                        match = re.search(r'(\d+)\s*(?:/\s*100)?', line)
-                        if match:
-                            value = int(match.group(1))
-                            # Clamp to valid range
-                            scores[dimension] = max(0, min(100, value))
-                            parsed_count += 1
 
-        # Fallback: if no SCORES section found, scan the entire output for score patterns
+        # Flexible dimension matching: accepts "Dim: 72", "Dim - 72",
+        # "Dim = 72", "Dim Score: 72", "DIM 72", "Dim: 72/100"
+        dim_pattern = re.compile(
+            r'(?:^|[\n]).*?'  # line start
+            r'({dims})'  # dimension name
+            r'(?:\s+score)?'  # optional " Score"
+            r'\s*[:=\-]\s*'  # separator
+            r'(\d+)'  # the score
+            r'[^\S\n]*(?:/\s*100|%)?'  # optional "/100" or "%" (no newline consumption)
+            .format(dims='|'.join(re.escape(d) for d in scores.keys())),
+            re.IGNORECASE,
+        )
+
+        # Also match bare "DIMENSION 72" (no separator)
+        bare_pattern = re.compile(
+            r'(?:^|[\n])\s*'
+            r'({dims})'
+            r'\s+'
+            r'(\d+)'
+            r'[^\S\n]*(?:/\s*100|%)?'  # optional "/100" or "%" (no newline consumption)
+            .format(dims='|'.join(re.escape(d) for d in scores.keys())),
+            re.IGNORECASE,
+        )
+
+        def _extract_from(text: str) -> int:
+            nonlocal parsed_count
+            count = 0
+            for match in dim_pattern.finditer(text):
+                dim = match.group(1).lower()
+                value = max(0, min(100, int(match.group(2))))
+                if dim in scores:
+                    scores[dim] = value
+                    count += 1
+            if count == 0:
+                for match in bare_pattern.finditer(text):
+                    dim = match.group(1).lower()
+                    value = max(0, min(100, int(match.group(2))))
+                    if dim in scores:
+                        scores[dim] = value
+                        count += 1
+            parsed_count += count
+            return count
+
+        # Strategy 1: parse from SCORES section
+        if scores_section:
+            _extract_from(scores_section)
+
+        # Strategy 2: if nothing from SCORES section, scan entire output
+        if parsed_count == 0:
+            _extract_from(evaluation)
+
+        # Strategy 3: find any line with "overall" or "score" and a number
         if parsed_count == 0:
             for line in evaluation.split('\n'):
-                for dimension in scores.keys():
-                    if dimension.lower() in line.lower():
-                        match = re.search(r'(\d+)\s*(?:/\s*100)?', line)
-                        if match:
-                            value = int(match.group(1))
-                            scores[dimension] = max(0, min(100, value))
-                            parsed_count += 1
+                line_lower = line.lower()
+                if 'overall' in line_lower or 'score' in line_lower:
+                    match = re.search(r'(\d+)\s*(?:/\s*100|%)?', line)
+                    if match:
+                        value = int(match.group(1))
+                        if 0 <= value <= 100:
+                            scores["overall"] = value
+                            parsed_count = 1
+                            break
 
-        # If we still couldn't parse any scores, try to find an overall score anywhere
+        # Strategy 4: last resort — find any "N/100" pattern
         if parsed_count == 0:
-            # Last resort: find any "N/100" pattern
             all_scores = re.findall(r'(\d+)\s*/\s*100', evaluation)
             if all_scores:
-                # Use the last one as overall (critics tend to put overall last)
                 scores["overall"] = max(0, min(100, int(all_scores[-1])))
                 parsed_count = 1
                 logger.warning(
-                    f"Critic output didn't follow expected format. "
-                    f"Extracted fallback overall score: {scores['overall']}/100"
+                    "Critic output didn't follow expected format. "
+                    "Extracted fallback overall score: %d/100",
+                    scores["overall"],
                 )
 
         if parsed_count == 0:
             logger.warning(
-                f"Failed to parse any scores from critic output. "
-                f"Defaulting all dimensions to {default_score}/100. "
-                f"Raw output: {evaluation[:200]}..."
+                "Failed to parse any scores from critic output. "
+                "Defaulting all dimensions to %d/100. "
+                "Raw output: %s...",
+                default_score, evaluation[:200],
             )
         elif parsed_count < len(scores):
             defaulted = [d for d, v in scores.items() if v == default_score]
             if defaulted:
                 logger.warning(
-                    f"Partial critic parse: {parsed_count}/{len(scores)} dimensions extracted. "
-                    f"Dimensions defaulting to {default_score}: {defaulted}"
+                    "Partial critic parse: %d/%d dimensions extracted. "
+                    "Dimensions defaulting to %d: %s",
+                    parsed_count, len(scores), default_score, defaulted,
                 )
 
         return scores, feedback

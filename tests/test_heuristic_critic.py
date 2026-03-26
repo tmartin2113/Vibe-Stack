@@ -256,3 +256,55 @@ class TestShouldUseLlmCritic:
         del state["heuristic_critic_passed"]
         result = should_use_llm_critic(state)
         assert result == "critic_output"
+
+
+# ── CriticNodesMixin._parse_critic_output flexibility tests ──
+
+from agents.critic_nodes import CriticNodesMixin
+
+
+class FakeCritic(CriticNodesMixin):
+    """Minimal concrete class for testing the mixin."""
+
+    def _safe_split_after(self, text, delimiter, default):
+        parts = text.split(delimiter, 1)
+        return parts[1].strip() if len(parts) > 1 else default
+
+    def _safe_split_before(self, text, delimiter, default):
+        parts = text.split(delimiter, 1)
+        return parts[0].strip() if len(parts) > 1 else default
+
+
+class TestCriticParsingFlexibility:
+    def setup_method(self):
+        self.critic = FakeCritic()
+
+    def test_parse_overall_score_with_label(self):
+        """Should parse 'Overall Score: 72' format."""
+        text = "SCORES:\nCompleteness: 80\nOverall Score: 72\n\nREASONING:\nGood work"
+        scores, _ = self.critic._parse_critic_output(text)
+        assert scores["overall"] == 72
+
+    def test_parse_dash_separator(self):
+        """Should parse 'Overall - 85' format."""
+        text = "SCORES:\nOverall - 85\n\nREASONING:\nNice"
+        scores, _ = self.critic._parse_critic_output(text)
+        assert scores["overall"] == 85
+
+    def test_parse_equals_separator(self):
+        """Should parse 'Overall = 90' format."""
+        text = "SCORES:\nOverall = 90\n\nREASONING:\nGreat"
+        scores, _ = self.critic._parse_critic_output(text)
+        assert scores["overall"] == 90
+
+    def test_parse_all_caps(self):
+        """Should parse 'OVERALL 78' format."""
+        text = "SCORES:\nOVERALL 78\n\nREASONING:\nOk"
+        scores, _ = self.critic._parse_critic_output(text)
+        assert scores["overall"] == 78
+
+    def test_parse_score_keyword_fallback(self):
+        """When no SCORES section, should find 'score' keyword with number."""
+        text = "The overall score is 65 out of 100.\n\nThe work needs improvement."
+        scores, _ = self.critic._parse_critic_output(text)
+        assert scores["overall"] == 65
