@@ -958,6 +958,15 @@ def _artifact_cache_maintenance() -> None:
         expired = store.cleanup_expired()
         if expired:
             logger.info("Heartbeat cache cleanup: removed %d expired artifacts", expired)
+        # Also enforce LRU cap (separate from TTL expiry)
+        conn = store._connect()
+        try:
+            evicted = store._evict_if_needed(conn)
+            conn.commit()
+            if evicted:
+                logger.info("Heartbeat cache eviction: removed %d over-limit artifacts", evicted)
+        finally:
+            conn.close()
     except Exception as e:
         logger.debug("Artifact cache maintenance skipped: %s", e)
 

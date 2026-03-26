@@ -2140,3 +2140,4 @@ def test_heartbeat_calls_artifact_cache_cleanup(monkeypatch, tmp_path):
     _artifact_cache_maintenance()
 
     assert cleanup_called, "cleanup_expired should be called"
+    assert evict_called, "_evict_if_needed should be called"
