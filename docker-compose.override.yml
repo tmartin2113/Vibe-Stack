@@ -27,6 +27,13 @@ services:
       - "125"   # host docker group GID — lets server manage DeerFlow containers
     environment:
       - BETTER_AUTH_TRUSTED_ORIGINS=http://localhost:3100,https://${TAILSCALE_HOSTNAME:-localhost}
+      - SEARXNG_URL=http://searxng:8080
+      - GITEA_URL=http://gitea:3000
+      - GITEA_TOKEN=${GITEA_TOKEN:-}
+      - PLAYWRIGHT_WS_URL=ws://playwright:3003
+      - MINIO_URL=http://minio:9000
+      - MINIO_ACCESS_KEY=${MINIO_ROOT_USER:-vibe}
+      - MINIO_SECRET_KEY=${MINIO_ROOT_PASSWORD:-changeme123}
     ports:
       - "3100:3100"
     healthcheck:
@@ -76,6 +83,15 @@ services:
     env_file: .env
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    environment:
+      - SEARXNG_URL=http://searxng:8080
+      - GITEA_URL=http://gitea:3000
+      - GITEA_TOKEN=${GITEA_TOKEN:-}
+      - PLAYWRIGHT_WS_URL=ws://playwright:3003
+      - MINIO_URL=http://minio:9000
+      - MINIO_ACCESS_KEY=${MINIO_ROOT_USER:-vibe}
+      - MINIO_SECRET_KEY=${MINIO_ROOT_PASSWORD:-changeme123}
+      - UVICORN_WORKERS=3
     # Re-sync deps at startup because the volume mount overwrites the
     # .venv that was created during the Docker build stage.
     command: >
@@ -93,6 +109,14 @@ services:
     env_file: .env
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    environment:
+      - SEARXNG_URL=http://searxng:8080
+      - GITEA_URL=http://gitea:3000
+      - GITEA_TOKEN=${GITEA_TOKEN:-}
+      - PLAYWRIGHT_WS_URL=ws://playwright:3003
+      - MINIO_URL=http://minio:9000
+      - MINIO_ACCESS_KEY=${MINIO_ROOT_USER:-vibe}
+      - MINIO_SECRET_KEY=${MINIO_ROOT_PASSWORD:-changeme123}
     command: >
       sh -c "cd backend && uv sync && uv run uvicorn
       src.gateway.app:app --host 0.0.0.0 --port 8001"
