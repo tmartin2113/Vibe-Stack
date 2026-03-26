@@ -185,6 +185,21 @@ def _decompose_and_delegate(
     # Limit subtasks
     sub_tasks = sub_tasks[:max_children]
 
+    # Dedup: check if parent already has children with matching titles
+    try:
+        existing_children = client.get_children(issue.id)
+    except PaperclipAPIError:
+        existing_children = []
+    if existing_children:
+        sub_tasks = _filter_duplicate_subtasks(sub_tasks, existing_children, issue.title)
+        if not sub_tasks:
+            logger.info("All proposed subtasks already exist as children — skipping decomposition")
+            return HeartbeatResult(
+                status="success",
+                issue_id=issue.id,
+                summary="All subtasks already exist (dedup)",
+            )
+
     # Discover available agents
     try:
         agents = client.list_agents()
@@ -933,6 +948,39 @@ _TASK_TYPE_KEYWORDS: Dict[str, List[str]] = {
     "database": ["database_operations"],
     "review": ["code_review"],
 }
+
+
+def _normalize_subtask_title(title: str) -> str:
+    """Normalize a subtask title for dedup comparison.
+
+    Lowercases and strips whitespace. Keeps the task-type prefix
+    (e.g. '[code_generation]') so that different task types for the
+    same parent are not treated as duplicates.
+    """
+    return title.lower().strip()
+
+
+def _filter_duplicate_subtasks(
+    proposed: List[Dict[str, Any]],
+    existing_children: List[Issue],
+    parent_title: str,
+) -> List[Dict[str, Any]]:
+    """Filter out proposed subtasks whose generated title would match an existing child."""
+    existing_titles = set()
+    for child in existing_children:
+        existing_titles.add(_normalize_subtask_title(child.title))
+
+    filtered = []
+    for sub_task in proposed:
+        task_type = sub_task.get("task_type", "general")
+        would_be_title = f"[{task_type}] {parent_title}"
+        normalized = _normalize_subtask_title(would_be_title)
+        if normalized in existing_titles:
+            logger.warning("Skipping duplicate subtask: %s (matches existing child)", would_be_title)
+            continue
+        filtered.append(sub_task)
+
+    return filtered
 
 
 def _match_agent(

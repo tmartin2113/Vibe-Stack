@@ -1511,3 +1511,30 @@ class TestAggregateIdempotency:
         assert result.status == "success"
         assert "idempotent" not in result.summary.lower()
         mock_client.update_issue.assert_called_once()
+
+
+# ── Dedup Tests ──
+
+
+def test_decompose_skips_duplicate_titles(monkeypatch):
+    """DECOMPOSE should skip subtasks whose titles match existing children."""
+    from agents.orchestrator import _normalize_subtask_title, _filter_duplicate_subtasks
+    from agents.paperclip_client import Issue
+
+    existing_children = [
+        Issue(id="c1", title="[code_generation] Build API", status="in_progress",
+              description="", ancestors=[], goal_id=""),
+        Issue(id="c2", title="[test_generation] Build API", status="todo",
+              description="", ancestors=[], goal_id=""),
+    ]
+
+    proposed = [
+        {"task_type": "code_generation", "specification": "build api"},
+        {"task_type": "security_audit", "specification": "audit api"},
+        {"task_type": "test_generation", "specification": "test api"},  # duplicate
+    ]
+
+    filtered = _filter_duplicate_subtasks(proposed, existing_children, "Build API")
+    # code_generation matches c1, test_generation matches c2
+    assert len(filtered) == 1
+    assert filtered[0]["task_type"] == "security_audit"
