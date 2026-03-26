@@ -3,7 +3,7 @@ Tests for infrastructure service tools (replaced Firecrawl).
 
 Covers:
 - WebSearchTool (SearXNG): query validation, result parsing, env gating
-- WebScrapeTool (Spider): URL validation, content extraction, env gating
+- WebScrapeTool (Playwright): URL validation, content extraction, env gating
 - Registry wiring: tools registered when env vars set, absent otherwise
 - Security: tool names in DEFAULT_ALLOWED_TOOLS / RESTRICTED_TOOLS
 """
@@ -86,46 +86,46 @@ class TestWebSearchTool:
 
 
 # ============================================================
-# WebScrapeTool (Spider)
+# WebScrapeTool (Playwright)
 # ============================================================
 
 
 class TestWebScrapeTool:
-    """Tests for the web_scrape tool (Spider-backed)."""
+    """Tests for the web_scrape tool (Playwright-backed)."""
 
     def test_name_and_category(self):
-        tool = WebScrapeTool(base_url="http://spider:3002")
+        tool = WebScrapeTool(ws_url="ws://playwright:3003")
         assert tool.name == "web_scrape"
         assert tool.category == ToolCategory.WEB_API
 
     def test_schema_has_required_url(self):
-        tool = WebScrapeTool(base_url="http://spider:3002")
+        tool = WebScrapeTool(ws_url="ws://playwright:3003")
         schema = tool._get_parameters_schema()
         assert "url" in schema["properties"]
         assert "url" in schema["required"]
 
     def test_empty_url_rejected(self):
-        tool = WebScrapeTool(base_url="http://spider:3002")
+        tool = WebScrapeTool(ws_url="ws://playwright:3003")
         result = tool.execute(url="")
         assert not result.success
         assert "No URL" in result.error
 
     def test_non_http_url_rejected(self):
-        tool = WebScrapeTool(base_url="http://spider:3002")
+        tool = WebScrapeTool(ws_url="ws://playwright:3003")
         result = tool.execute(url="ftp://example.com")
         assert not result.success
         assert "http" in result.error.lower()
 
-    def test_missing_base_url(self):
-        tool = WebScrapeTool(base_url="")
+    def test_missing_ws_url(self):
+        tool = WebScrapeTool(ws_url="")
         result = tool.execute(url="https://example.com")
         assert not result.success
-        assert "SPIDER_URL" in result.error
+        assert "PLAYWRIGHT_WS_URL" in result.error
 
-    def test_base_url_from_env(self):
-        with patch.dict(os.environ, {"SPIDER_URL": "http://spider:3002"}):
+    def test_ws_url_from_env(self):
+        with patch.dict(os.environ, {"PLAYWRIGHT_WS_URL": "ws://playwright:3003"}):
             tool = WebScrapeTool()
-            assert tool._base_url == "http://spider:3002"
+            assert tool._ws_url == "ws://playwright:3003"
 
 
 # ============================================================
@@ -310,7 +310,7 @@ class TestInfraRegistryWiring:
 
     def _clean_env(self):
         """Remove all infrastructure service env vars."""
-        for key in ["SEARXNG_URL", "SPIDER_URL", "PLAYWRIGHT_WS_URL",
+        for key in ["SEARXNG_URL", "PLAYWRIGHT_WS_URL",
                      "PENPOT_API_URL", "COMFYUI_URL", "GITEA_URL", "MINIO_URL",
                      "FIRECRAWL_API_KEY"]:
             os.environ.pop(key, None)
@@ -332,15 +332,14 @@ class TestInfraRegistryWiring:
             registry = create_default_tool_registry(sandbox_pool=MagicMock(), network_egress=False)
             assert registry.get("web_search") is not None
 
-    def test_spider_registered_when_env_set(self):
-        with patch.dict(os.environ, {"SPIDER_URL": "http://spider:3002"}):
+    def test_web_scrape_registered_when_playwright_set(self):
+        with patch.dict(os.environ, {"PLAYWRIGHT_WS_URL": "ws://playwright:3003"}):
             registry = create_default_tool_registry(sandbox_pool=MagicMock(), network_egress=False)
             assert registry.get("web_scrape") is not None
 
     def test_all_tools_registered(self):
         env = {
             "SEARXNG_URL": "http://searxng:8080",
-            "SPIDER_URL": "http://spider:3002",
             "PLAYWRIGHT_WS_URL": "ws://playwright:3003",
             "PENPOT_API_URL": "http://penpot:6060",
             "COMFYUI_URL": "http://comfyui:8188",
@@ -356,7 +355,7 @@ class TestInfraRegistryWiring:
     def test_tool_count_with_infra(self):
         """Registry should have 7 more tools when all infra env vars are set."""
         with patch.dict(os.environ, {}, clear=False):
-            for key in ["SEARXNG_URL", "SPIDER_URL", "PLAYWRIGHT_WS_URL",
+            for key in ["SEARXNG_URL", "PLAYWRIGHT_WS_URL",
                          "PENPOT_API_URL", "COMFYUI_URL", "GITEA_URL", "MINIO_URL",
                          "FIRECRAWL_API_KEY"]:
                 os.environ.pop(key, None)
@@ -365,7 +364,6 @@ class TestInfraRegistryWiring:
 
         env = {
             "SEARXNG_URL": "http://searxng:8080",
-            "SPIDER_URL": "http://spider:3002",
             "PLAYWRIGHT_WS_URL": "ws://playwright:3003",
             "PENPOT_API_URL": "http://penpot:6060",
             "COMFYUI_URL": "http://comfyui:8188",
@@ -827,90 +825,57 @@ class TestWebSearchExecution:
 
 
 # ============================================================
-# WebScrapeTool execute() — mocked HTTP
+# WebScrapeTool execute() — mocked subprocess
 # ============================================================
 
 
-import urllib.error
+import subprocess as _subprocess_mod
 
 
 class TestWebScrapeExecution:
-    """Tests for WebScrapeTool.execute() with mocked HTTP responses."""
+    """Tests for WebScrapeTool.execute() with mocked Playwright subprocess."""
 
-    def _mock_response(self, body: bytes):
-        mock_resp = MagicMock()
-        mock_resp.read.return_value = body
-        mock_resp.__enter__ = MagicMock(return_value=mock_resp)
-        mock_resp.__exit__ = MagicMock(return_value=False)
-        return mock_resp
+    def _mock_completed(self, content, metadata=None, returncode=0):
+        output = json.dumps({
+            "content": content,
+            "metadata": metadata or {"url": "http://example.com", "title": "Test", "format": "markdown", "length": len(content), "status": 200},
+        })
+        return MagicMock(returncode=returncode, stdout=output, stderr="")
 
-    def test_successful_scrape_list_response(self):
-        tool = WebScrapeTool(base_url="http://spider:3002")
-        payload = [{"content": "# Hello World\nSome text", "url": "http://example.com"}]
-        mock_resp = self._mock_response(json.dumps(payload).encode())
-        with patch("urllib.request.urlopen", return_value=mock_resp):
+    def test_successful_scrape(self):
+        tool = WebScrapeTool(ws_url="ws://playwright:3003")
+        mock_result = self._mock_completed("# Hello World\nSome text", {
+            "url": "http://example.com", "title": "Test", "format": "markdown",
+            "length": 23, "status": 200,
+        })
+        with patch("subprocess.run", return_value=mock_result):
             result = tool.execute(url="http://example.com")
             assert result.success
             assert "Hello World" in result.output
             assert result.metadata["url"] == "http://example.com"
-            assert result.metadata["length"] == len("# Hello World\nSome text")
 
-    def test_successful_scrape_dict_response(self):
-        tool = WebScrapeTool(base_url="http://spider:3002")
-        payload = {"content": "Page content here", "url": "http://example.com/page"}
-        mock_resp = self._mock_response(json.dumps(payload).encode())
-        with patch("urllib.request.urlopen", return_value=mock_resp):
-            result = tool.execute(url="http://example.com/page")
-            assert result.success
-            assert "Page content here" in result.output
-            assert result.metadata["url"] == "http://example.com/page"
-
-    def test_dict_response_markdown_fallback(self):
-        tool = WebScrapeTool(base_url="http://spider:3002")
-        payload = {"markdown": "Markdown fallback content", "url": "http://example.com"}
-        mock_resp = self._mock_response(json.dumps(payload).encode())
-        with patch("urllib.request.urlopen", return_value=mock_resp):
-            result = tool.execute(url="http://example.com")
-            assert result.success
-            assert "Markdown fallback content" in result.output
-
-    def test_empty_content_response(self):
-        tool = WebScrapeTool(base_url="http://spider:3002")
-        payload = [{"content": "", "url": "http://example.com"}]
-        mock_resp = self._mock_response(json.dumps(payload).encode())
-        with patch("urllib.request.urlopen", return_value=mock_resp):
-            result = tool.execute(url="http://example.com")
-            assert result.success
-            assert "no content" in result.output.lower()
-
-    def test_http_error(self):
-        tool = WebScrapeTool(base_url="http://spider:3002")
-        with patch("urllib.request.urlopen", side_effect=urllib.error.URLError("Connection refused")):
+    def test_subprocess_failure(self):
+        tool = WebScrapeTool(ws_url="ws://playwright:3003")
+        mock_result = MagicMock(returncode=1, stdout="", stderr="Connection refused")
+        with patch("subprocess.run", return_value=mock_result):
             result = tool.execute(url="http://example.com")
             assert not result.success
-            assert "Spider scrape failed" in result.error
+            assert "Connection refused" in result.error
 
-    def test_api_key_header_addition(self):
-        tool = WebScrapeTool(base_url="http://spider:3002")
-        payload = [{"content": "Authenticated content", "url": "http://example.com"}]
-        mock_resp = self._mock_response(json.dumps(payload).encode())
-        with patch.dict(os.environ, {"SPIDER_API_KEY": "test-key-123"}):
-            with patch("urllib.request.urlopen", return_value=mock_resp) as mock_urlopen:
-                result = tool.execute(url="http://example.com")
-                assert result.success
-                # Verify the request had the Authorization header
-                call_args = mock_urlopen.call_args
-                req_obj = call_args[0][0]
-                assert req_obj.get_header("Authorization") == "Bearer test-key-123"
+    def test_timeout(self):
+        tool = WebScrapeTool(ws_url="ws://playwright:3003")
+        with patch("subprocess.run", side_effect=_subprocess_mod.TimeoutExpired("cmd", 30)):
+            result = tool.execute(url="http://example.com", timeout=30)
+            assert not result.success
+            assert "timed out" in result.error
 
-    def test_non_list_non_dict_response(self):
-        tool = WebScrapeTool(base_url="http://spider:3002")
-        payload = "just a string"
-        mock_resp = self._mock_response(json.dumps(payload).encode())
-        with patch("urllib.request.urlopen", return_value=mock_resp):
+    def test_non_json_stdout(self):
+        tool = WebScrapeTool(ws_url="ws://playwright:3003")
+        mock_result = MagicMock(returncode=0, stdout="plain text output", stderr="")
+        with patch("subprocess.run", return_value=mock_result):
             result = tool.execute(url="http://example.com")
             assert result.success
-            assert "just a string" in result.output
+            assert "plain text output" in result.output
 
 
 # ============================================================

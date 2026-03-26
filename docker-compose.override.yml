@@ -152,15 +152,6 @@ services:
       timeout: 5s
       retries: 3
 
-  spider:
-    image: spiderai/spider:latest
-    restart: unless-stopped
-    profiles:
-      - spider   # No public Docker image — use Spider.cloud SaaS API instead
-    ports:
-      - "3002:3002"
-    environment:
-      - SPIDER_WORKER_COUNT=${SPIDER_WORKER_COUNT:-4}
 
   playwright:
     image: mcr.microsoft.com/playwright:v1.52.0-noble
@@ -321,7 +312,6 @@ services:
     environment:
       - PAPERCLIP_AGENT_ID=${PAPERCLIP_AGENT_ID_ENG_1}
       - SEARXNG_URL=http://searxng:8080
-      - SPIDER_URL=http://spider:3002
       - PLAYWRIGHT_WS_URL=ws://playwright:3003
       - PENPOT_API_URL=http://penpot-backend:6060
       - COMFYUI_URL=http://comfyui:8188
@@ -342,7 +332,6 @@ services:
     environment:
       - PAPERCLIP_AGENT_ID=${PAPERCLIP_AGENT_ID_ENG_2}
       - SEARXNG_URL=http://searxng:8080
-      - SPIDER_URL=http://spider:3002
       - PLAYWRIGHT_WS_URL=ws://playwright:3003
       - PENPOT_API_URL=http://penpot-backend:6060
       - COMFYUI_URL=http://comfyui:8188
@@ -363,7 +352,6 @@ services:
     environment:
       - PAPERCLIP_AGENT_ID=${PAPERCLIP_AGENT_ID_ENG_3}
       - SEARXNG_URL=http://searxng:8080
-      - SPIDER_URL=http://spider:3002
       - PLAYWRIGHT_WS_URL=ws://playwright:3003
       - PENPOT_API_URL=http://penpot-backend:6060
       - COMFYUI_URL=http://comfyui:8188
@@ -379,12 +367,12 @@ services:
       - bulletin-data:/shared/bulletin
     environment:
       - SEARXNG_URL=http://searxng:8080
-      - SPIDER_URL=http://spider:3002
       - PLAYWRIGHT_WS_URL=ws://playwright:3003
       - PENPOT_API_URL=http://penpot-backend:6060
       - COMFYUI_URL=http://comfyui:8188
       - GITEA_URL=http://gitea:3000
       - MINIO_URL=http://minio:9000
+      - DATABASE_URL=postgres://paperclip:paperclip@db:5432/paperclip
 
 volumes:
   paperclip-data:

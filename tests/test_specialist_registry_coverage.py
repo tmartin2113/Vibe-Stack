@@ -581,7 +581,7 @@ class TestCreateSubprocessToolRegistry:
         """Lines 1356-1430: create subprocess registry with no env vars."""
         env_clean = {
             k: v for k, v in os.environ.items()
-            if k not in ("SEARXNG_URL", "SPIDER_URL", "PLAYWRIGHT_WS_URL",
+            if k not in ("SEARXNG_URL", "PLAYWRIGHT_WS_URL",
                          "PENPOT_API_URL", "COMFYUI_URL", "GITEA_URL",
                          "MINIO_URL", "BULLETIN_PATH")
         }
@@ -612,7 +612,7 @@ class TestCreateSubprocessToolRegistry:
         """Web fetch tool is registered when network_egress=True."""
         env_clean = {
             k: v for k, v in os.environ.items()
-            if k not in ("SEARXNG_URL", "SPIDER_URL", "PLAYWRIGHT_WS_URL",
+            if k not in ("SEARXNG_URL", "PLAYWRIGHT_WS_URL",
                          "PENPOT_API_URL", "COMFYUI_URL", "GITEA_URL",
                          "MINIO_URL", "BULLETIN_PATH")
         }
@@ -624,7 +624,7 @@ class TestCreateSubprocessToolRegistry:
         """SEARXNG_URL env var enables web_search tool."""
         env = {
             k: v for k, v in os.environ.items()
-            if k not in ("SPIDER_URL", "PLAYWRIGHT_WS_URL",
+            if k not in ("PLAYWRIGHT_WS_URL",
                          "PENPOT_API_URL", "COMFYUI_URL", "GITEA_URL",
                          "MINIO_URL", "BULLETIN_PATH")
         }
@@ -633,37 +633,25 @@ class TestCreateSubprocessToolRegistry:
             registry = create_subprocess_tool_registry()
         assert "web_search" in registry.list_tools()
 
-    def test_with_spider_env(self):
-        """SPIDER_URL env var enables web_scrape tool."""
-        env = {
-            k: v for k, v in os.environ.items()
-            if k not in ("SEARXNG_URL", "PLAYWRIGHT_WS_URL",
-                         "PENPOT_API_URL", "COMFYUI_URL", "GITEA_URL",
-                         "MINIO_URL", "BULLETIN_PATH")
-        }
-        env["SPIDER_URL"] = "http://spider:8080"
-        with patch.dict(os.environ, env, clear=True):
-            registry = create_subprocess_tool_registry()
-        assert "web_scrape" in registry.list_tools()
-
     def test_with_playwright_env(self):
-        """PLAYWRIGHT_WS_URL env var enables browser_automation tool."""
+        """PLAYWRIGHT_WS_URL env var enables web_scrape and browser_automation tools."""
         env = {
             k: v for k, v in os.environ.items()
-            if k not in ("SEARXNG_URL", "SPIDER_URL",
+            if k not in ("SEARXNG_URL",
                          "PENPOT_API_URL", "COMFYUI_URL", "GITEA_URL",
                          "MINIO_URL", "BULLETIN_PATH")
         }
         env["PLAYWRIGHT_WS_URL"] = "ws://pw:1234"
         with patch.dict(os.environ, env, clear=True):
             registry = create_subprocess_tool_registry()
+        assert "web_scrape" in registry.list_tools()
         assert "browser_automation" in registry.list_tools()
 
     def test_with_penpot_env(self):
         """PENPOT_API_URL env var enables design tool."""
         env = {
             k: v for k, v in os.environ.items()
-            if k not in ("SEARXNG_URL", "SPIDER_URL", "PLAYWRIGHT_WS_URL",
+            if k not in ("SEARXNG_URL", "PLAYWRIGHT_WS_URL",
                          "COMFYUI_URL", "GITEA_URL",
                          "MINIO_URL", "BULLETIN_PATH")
         }
@@ -676,7 +664,7 @@ class TestCreateSubprocessToolRegistry:
         """COMFYUI_URL env var enables image_generation tool."""
         env = {
             k: v for k, v in os.environ.items()
-            if k not in ("SEARXNG_URL", "SPIDER_URL", "PLAYWRIGHT_WS_URL",
+            if k not in ("SEARXNG_URL", "PLAYWRIGHT_WS_URL",
                          "PENPOT_API_URL", "GITEA_URL",
                          "MINIO_URL", "BULLETIN_PATH")
         }
@@ -689,7 +677,7 @@ class TestCreateSubprocessToolRegistry:
         """GITEA_URL env var enables git_forge tool."""
         env = {
             k: v for k, v in os.environ.items()
-            if k not in ("SEARXNG_URL", "SPIDER_URL", "PLAYWRIGHT_WS_URL",
+            if k not in ("SEARXNG_URL", "PLAYWRIGHT_WS_URL",
                          "PENPOT_API_URL", "COMFYUI_URL",
                          "MINIO_URL", "BULLETIN_PATH")
         }
@@ -702,7 +690,7 @@ class TestCreateSubprocessToolRegistry:
         """MINIO_URL env var enables artifact_storage tool."""
         env = {
             k: v for k, v in os.environ.items()
-            if k not in ("SEARXNG_URL", "SPIDER_URL", "PLAYWRIGHT_WS_URL",
+            if k not in ("SEARXNG_URL", "PLAYWRIGHT_WS_URL",
                          "PENPOT_API_URL", "COMFYUI_URL", "GITEA_URL",
                          "BULLETIN_PATH")
         }
@@ -715,7 +703,7 @@ class TestCreateSubprocessToolRegistry:
         """BULLETIN_PATH env var enables bulletin_board tool."""
         env = {
             k: v for k, v in os.environ.items()
-            if k not in ("SEARXNG_URL", "SPIDER_URL", "PLAYWRIGHT_WS_URL",
+            if k not in ("SEARXNG_URL", "PLAYWRIGHT_WS_URL",
                          "PENPOT_API_URL", "COMFYUI_URL", "GITEA_URL",
                          "MINIO_URL")
         }
@@ -728,7 +716,7 @@ class TestCreateSubprocessToolRegistry:
         """allowed_file_dirs parameter is forwarded."""
         env_clean = {
             k: v for k, v in os.environ.items()
-            if k not in ("SEARXNG_URL", "SPIDER_URL", "PLAYWRIGHT_WS_URL",
+            if k not in ("SEARXNG_URL", "PLAYWRIGHT_WS_URL",
                          "PENPOT_API_URL", "COMFYUI_URL", "GITEA_URL",
                          "MINIO_URL", "BULLETIN_PATH")
         }
@@ -1648,7 +1636,7 @@ class TestCreateDefaultToolRegistry:
 
         env_clean = {
             k: v for k, v in os.environ.items()
-            if k not in ("SEARXNG_URL", "SPIDER_URL", "PLAYWRIGHT_WS_URL",
+            if k not in ("SEARXNG_URL", "PLAYWRIGHT_WS_URL",
                          "PENPOT_API_URL", "COMFYUI_URL", "GITEA_URL",
                          "MINIO_URL", "BULLETIN_PATH")
         }
@@ -1691,7 +1679,7 @@ class TestCreateDefaultToolRegistry:
 
         env_clean = {
             k: v for k, v in os.environ.items()
-            if k not in ("SEARXNG_URL", "SPIDER_URL", "PLAYWRIGHT_WS_URL",
+            if k not in ("SEARXNG_URL", "PLAYWRIGHT_WS_URL",
                          "PENPOT_API_URL", "COMFYUI_URL", "GITEA_URL",
                          "MINIO_URL", "BULLETIN_PATH")
         }
