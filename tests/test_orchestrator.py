@@ -1538,3 +1538,37 @@ def test_decompose_skips_duplicate_titles(monkeypatch):
     # code_generation matches c1, test_generation matches c2
     assert len(filtered) == 1
     assert filtered[0]["task_type"] == "security_audit"
+
+
+def test_rebalance_reassigns_from_backlogged_to_idle():
+    """_rebalance_children should reassign pending tasks from overloaded agents to idle ones."""
+    from agents.orchestrator import _rebalance_children
+    from agents.paperclip_client import Issue, AgentInfo
+
+    children = [
+        # Agent A: 1 done, 3 pending = backlogged
+        Issue(id="c1", title="[code] T1", status="done", description="", ancestors=[], goal_id="", assignee_agent_id="agent-a"),
+        Issue(id="c2", title="[code] T2", status="todo", description="", ancestors=[], goal_id="", assignee_agent_id="agent-a"),
+        Issue(id="c3", title="[code] T3", status="todo", description="", ancestors=[], goal_id="", assignee_agent_id="agent-a"),
+        Issue(id="c4", title="[code] T4", status="todo", description="", ancestors=[], goal_id="", assignee_agent_id="agent-a"),
+        # Agent B: 1 done, 0 pending = idle
+        Issue(id="c5", title="[test] T5", status="done", description="", ancestors=[], goal_id="", assignee_agent_id="agent-b"),
+    ]
+
+    agents = [
+        AgentInfo(id="agent-a", name="UX Engineer", company_id="co-1", role="engineer", title="UX Engineer", status="active"),
+        AgentInfo(id="agent-b", name="Backend Engineer", company_id="co-1", role="engineer", title="Backend Engineer", status="active"),
+    ]
+
+    reassigned = []
+
+    class MockClient:
+        def update_issue(self, issue_id, **kwargs):
+            reassigned.append((issue_id, kwargs))
+
+        def add_comment(self, issue_id, body):
+            pass
+
+    result = _rebalance_children(MockClient(), children, agents)
+    assert result >= 1, "Should reassign at least 1 task"
+    assert any(r[1].get("assignee_agent_id") == "agent-b" for r in reassigned)

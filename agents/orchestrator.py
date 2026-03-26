@@ -440,6 +440,16 @@ def _poll_children_once(
             # todo, in_progress, backlog
             pending_count += 1
 
+    # Rebalance: if some agents are backlogged and others are idle,
+    # reassign pending work to idle agents.
+    if pending_count > 0 and done_count > 0:
+        try:
+            agents = client.list_agents()
+        except Exception:
+            agents = []
+        if agents:
+            _rebalance_children(client, children, agents)
+
     if permanently_failed:
         # If some children succeeded, aggregate partial results rather than
         # blocking everything. Only fully block if NO children succeeded.
@@ -981,6 +991,80 @@ def _filter_duplicate_subtasks(
         filtered.append(sub_task)
 
     return filtered
+
+
+_MAX_REBALANCE_PER_CYCLE = 2
+_BACKLOG_THRESHOLD = 3  # An agent is backlogged if it has >= this many pending tasks
+
+
+def _rebalance_children(
+    client,
+    children: List[Issue],
+    agents: List,  # AgentInfo or similar
+) -> int:
+    """
+    Reassign pending subtasks from backlogged agents to idle ones.
+
+    A backlogged agent has >= _BACKLOG_THRESHOLD pending (todo) tasks.
+    An idle agent has all assigned tasks completed (status='done').
+
+    Returns the number of tasks reassigned.
+    """
+    # Build per-agent task counts
+    agent_pending: Dict[str, List[Issue]] = {}
+    agent_done: Dict[str, int] = {}
+
+    for child in children:
+        aid = getattr(child, "assignee_agent_id", None) or ""
+        if not aid:
+            continue
+        if child.status in ("todo",):  # Only reassign todo, not in_progress
+            agent_pending.setdefault(aid, []).append(child)
+        elif child.status == "done":
+            agent_done[aid] = agent_done.get(aid, 0) + 1
+
+    # Find backlogged and idle agents
+    backlogged = {aid: tasks for aid, tasks in agent_pending.items()
+                  if len(tasks) >= _BACKLOG_THRESHOLD}
+
+    all_agent_ids = {getattr(c, "assignee_agent_id", "") for c in children} - {""}
+    idle_agents = [aid for aid in all_agent_ids
+                   if aid not in agent_pending and agent_done.get(aid, 0) > 0]
+
+    if not backlogged or not idle_agents:
+        return 0
+
+    reassigned = 0
+    idle_idx = 0
+
+    for overloaded_id, pending_tasks in backlogged.items():
+        for task in pending_tasks:
+            if reassigned >= _MAX_REBALANCE_PER_CYCLE:
+                break
+            if idle_idx >= len(idle_agents):
+                break
+
+            target_id = idle_agents[idle_idx]
+            try:
+                client.update_issue(task.id, assignee_agent_id=target_id)
+                client.add_comment(
+                    task.id,
+                    f"<!-- rebalanced-from:{overloaded_id} --> "
+                    f"Rebalanced from overloaded agent to idle agent.",
+                )
+                reassigned += 1
+                logger.info(
+                    "Rebalanced %s from %s to %s",
+                    task.id, overloaded_id, target_id,
+                )
+            except Exception as e:
+                logger.warning("Failed to rebalance %s: %s", task.id, e)
+
+            idle_idx += 1
+
+    if reassigned:
+        logger.info("Rebalanced %d tasks across agents", reassigned)
+    return reassigned
 
 
 def _match_agent(
