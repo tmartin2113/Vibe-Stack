@@ -624,12 +624,17 @@ class TestDefaultRegistry:
         assert "codebase_search" in tools
         assert "git_operations" in tools
         assert "data_parser" in tools
-        assert len(tools) == 12
+        assert "dependency_scanner" in tools
+        assert "container_inspect" in tools
+        assert "lighthouse_seo" in tools
+        assert "page_analyzer" in tools
+        assert "seo_checklist" in tools
+        assert len(tools) == 17
 
     def test_default_tools_have_schemas(self):
         reg = create_default_tool_registry(sandbox_pool=MagicMock())
         schemas = reg.get_all_schemas()
-        assert len(schemas) == 12
+        assert len(schemas) == 17
         names = {s["name"] for s in schemas}
         assert "python_executor" in names
         assert "shell_executor" in names
@@ -1433,11 +1438,11 @@ class TestWebFetchRegistryGating:
 
     def test_tool_count_without_egress(self):
         reg = create_default_tool_registry(sandbox_pool=MagicMock())
-        assert len(reg.list_tools()) == 12
+        assert len(reg.list_tools()) == 17
 
     def test_tool_count_with_egress(self):
         reg = create_default_tool_registry(sandbox_pool=MagicMock(), network_egress=True)
-        assert len(reg.list_tools()) == 13
+        assert len(reg.list_tools()) == 18
 
     def test_sandboxed_web_fetch_when_pool_and_egress(self):
         from agents.sandbox.tools import SandboxedWebFetchTool

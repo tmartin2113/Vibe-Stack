@@ -732,6 +732,93 @@ class FileWriter(Tool):
 
 # ===== Tool Registry =====
 
+# ── Role-based tool filtering ─────────────────────────────────────────
+# Maps agent roles to the tool names they should have access to.
+# Tools not listed for a role are hidden from that role's registry view.
+# 'None' (or unlisted roles) means no filtering — all tools visible.
+
+ROLE_TOOL_SETS: Dict[str, Optional[frozenset]] = {
+    # CTO sees everything — no filter
+    "cto": None,
+
+    "frontend_engineer": frozenset({
+        # Code execution & analysis
+        "python_executor", "pytest_runner", "shell_executor",
+        "static_code_analyzer", "codebase_search_tool", "git_operations_tool", "data_parser_tool",
+        # Web & browser
+        "web_fetch", "web_search", "web_scrape", "browser_automation",
+        # Design & visual
+        "design", "image_generation",
+        # SEO
+        "lighthouse_seo", "page_analyzer", "seo_checklist",
+        # Infrastructure
+        "git_forge", "artifact_storage", "bulletin_board",
+        # File ops & memory
+        "file_reader", "file_writer", "memory_store", "memory_recall",
+    }),
+
+    "backend_engineer": frozenset({
+        # Code execution & analysis
+        "python_executor", "pytest_runner", "bandit_scanner", "shell_executor",
+        "static_code_analyzer", "codebase_search_tool", "git_operations_tool", "data_parser_tool",
+        # Web
+        "web_fetch", "web_search", "web_scrape",
+        # Database
+        "database",
+        # Security
+        "dependency_scanner",
+        # Infrastructure
+        "container_inspect", "git_forge", "artifact_storage", "bulletin_board",
+        # File ops & memory
+        "file_reader", "file_writer", "memory_store", "memory_recall",
+    }),
+
+    "qa_engineer": frozenset({
+        # Code execution & testing
+        "python_executor", "pytest_runner", "shell_executor",
+        "static_code_analyzer", "codebase_search_tool", "git_operations_tool", "data_parser_tool",
+        # Web & browser (for E2E testing)
+        "web_fetch", "web_search", "web_scrape", "browser_automation",
+        # Security
+        "bandit_scanner", "dependency_scanner",
+        # SEO (for quality checks)
+        "lighthouse_seo", "page_analyzer", "seo_checklist",
+        # Infrastructure
+        "container_inspect", "git_forge", "artifact_storage", "bulletin_board",
+        # File ops & memory
+        "file_reader", "file_writer", "memory_store", "memory_recall",
+    }),
+
+    "ux_engineer": frozenset({
+        # Browser & design
+        "web_fetch", "web_search", "web_scrape", "browser_automation",
+        "design", "image_generation",
+        # SEO (UX-relevant)
+        "lighthouse_seo", "page_analyzer", "seo_checklist",
+        # Light code support
+        "shell_executor", "codebase_search_tool", "static_code_analyzer",
+        # Infrastructure
+        "git_forge", "artifact_storage", "bulletin_board",
+        # File ops & memory
+        "file_reader", "file_writer", "memory_store", "memory_recall",
+    }),
+
+    "security_engineer": frozenset({
+        # Code execution & analysis
+        "python_executor", "pytest_runner", "bandit_scanner", "shell_executor",
+        "static_code_analyzer", "codebase_search_tool", "git_operations_tool", "data_parser_tool",
+        # Security-specific
+        "dependency_scanner",
+        # Web (for security testing)
+        "web_fetch", "web_search", "web_scrape", "browser_automation",
+        # Infrastructure
+        "container_inspect", "git_forge", "artifact_storage", "bulletin_board",
+        # File ops & memory
+        "file_reader", "file_writer", "memory_store", "memory_recall",
+    }),
+}
+
+
 class ToolRegistry:
     """
     Central registry for managing tools.
@@ -758,6 +845,30 @@ class ToolRegistry:
     def get_tools_by_category(self, category: ToolCategory) -> List[Tool]:
         """Get all tools in a category"""
         return [t for t in self.tools.values() if t.category == category]
+
+    def filter_for_role(self, role: str) -> "ToolRegistry":
+        """Return a new ToolRegistry containing only tools allowed for *role*.
+
+        Role names are normalized: lowercased, spaces replaced with underscores.
+        Unknown roles or roles mapped to ``None`` get an unfiltered copy.
+        """
+        normalized = role.strip().lower().replace(" ", "_")
+        allowed = ROLE_TOOL_SETS.get(normalized)
+        if allowed is None:
+            # No filtering — clone with all tools
+            filtered = ToolRegistry()
+            filtered.tools = dict(self.tools)
+            return filtered
+
+        filtered = ToolRegistry()
+        for name, tool in self.tools.items():
+            if name in allowed:
+                filtered.tools[name] = tool
+        logger.info(
+            f"Filtered tools for role '{normalized}': "
+            f"{len(filtered.tools)}/{len(self.tools)} tools"
+        )
+        return filtered
 
     def execute_tool(self, name: str, **kwargs) -> ToolResult:
         """Execute a tool by name"""
@@ -1224,6 +1335,40 @@ _DATA_PARSER_SCHEMA: Dict[str, Any] = {
     "required": ["data"],
 }
 
+_LIGHTHOUSE_SEO_SCHEMA: Dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "url": {"type": "string", "description": "URL to audit for SEO"},
+        "categories": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "Lighthouse categories to run (default: ['seo', 'performance', 'accessibility'])",
+        },
+    },
+    "required": ["url"],
+}
+
+_PAGE_ANALYZER_SCHEMA: Dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "url": {"type": "string", "description": "URL to analyze for SEO content quality"},
+    },
+    "required": ["url"],
+}
+
+_SEO_CHECKLIST_SCHEMA: Dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "url": {"type": "string", "description": "URL to validate against SEO best practices"},
+        "checks": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "Specific checks to run (default: all). Options: meta, headers, content, technical",
+        },
+    },
+    "required": ["url"],
+}
+
 
 def create_default_tool_registry(
     sandbox_pool: "SandboxPoolManager",
@@ -1287,10 +1432,9 @@ def create_default_tool_registry(
     if os.environ.get("SEARXNG_URL"):
         registry.register(WebSearchTool())
         logger.info("Tool registry: web_search enabled (SearXNG)")
-    if os.environ.get("SPIDER_URL"):
-        registry.register(WebScrapeTool())
-        logger.info("Tool registry: web_scrape enabled (Spider)")
     if os.environ.get("PLAYWRIGHT_WS_URL"):
+        registry.register(WebScrapeTool())
+        logger.info("Tool registry: web_scrape enabled (Playwright)")
         registry.register(BrowserAutomationTool())
         logger.info("Tool registry: browser_automation enabled (Playwright)")
     if os.environ.get("PENPOT_API_URL"):
@@ -1309,6 +1453,10 @@ def create_default_tool_registry(
         from .bulletin_board import BulletinBoardTool
         registry.register(BulletinBoardTool())
         logger.info("Tool registry: bulletin_board enabled")
+    if os.environ.get("DATABASE_URL"):
+        from .database import DatabaseTool
+        registry.register(DatabaseTool())
+        logger.info("Tool registry: database enabled")
 
     # --- Persistent memory tools (always-on) ---
     registry.register(MemoryStoreTool())
@@ -1317,6 +1465,29 @@ def create_default_tool_registry(
     # --- File operation tools (always local) ---
     registry.register(FileReader(allowed_dirs=resolved_dirs))
     registry.register(FileWriter(allowed_dirs=resolved_dirs))
+
+    # --- Dependency vulnerability scanner (always-on) ---
+    from .dependency_scanner import DependencyScannerTool
+    registry.register(DependencyScannerTool())
+    logger.info("Tool registry: dependency_scanner enabled")
+
+    # --- Container inspection (always-on, fails gracefully without Docker socket) ---
+    from .container_inspect import ContainerInspectTool
+    registry.register(ContainerInspectTool())
+    logger.info("Tool registry: container_inspect enabled")
+
+    # --- SEO tools (always-on, use Playwright/Lighthouse if available) ---
+    from .seo_tools import LighthouseSEOTool, PageAnalyzerTool, SEOChecklistTool
+    registry.register(DevToolWrapper(
+        LighthouseSEOTool(), ToolCategory.WEB_API, _LIGHTHOUSE_SEO_SCHEMA,
+    ))
+    registry.register(DevToolWrapper(
+        PageAnalyzerTool(), ToolCategory.WEB_API, _PAGE_ANALYZER_SCHEMA,
+    ))
+    registry.register(DevToolWrapper(
+        SEOChecklistTool(), ToolCategory.SPECIALIZED, _SEO_CHECKLIST_SCHEMA,
+    ))
+    logger.info("Tool registry: SEO tools enabled (lighthouse_seo, page_analyzer, seo_checklist)")
 
     # --- Extended dev tools (in-process, no sandboxing needed) ---
     from .dev_tools import (
@@ -1381,9 +1552,8 @@ def create_subprocess_tool_registry(
 
     if os.environ.get("SEARXNG_URL"):
         registry.register(WebSearchTool())
-    if os.environ.get("SPIDER_URL"):
-        registry.register(WebScrapeTool())
     if os.environ.get("PLAYWRIGHT_WS_URL"):
+        registry.register(WebScrapeTool())
         registry.register(BrowserAutomationTool())
     if os.environ.get("PENPOT_API_URL"):
         registry.register(DesignTool())
@@ -1396,6 +1566,9 @@ def create_subprocess_tool_registry(
     if os.environ.get("MESSAGE_STORE_PATH") or os.environ.get("BULLETIN_PATH"):
         from .bulletin_board import BulletinBoardTool
         registry.register(BulletinBoardTool())
+    if os.environ.get("DATABASE_URL"):
+        from .database import DatabaseTool
+        registry.register(DatabaseTool())
 
     # --- Persistent memory tools ---
     registry.register(MemoryStoreTool())
@@ -1404,6 +1577,26 @@ def create_subprocess_tool_registry(
     # --- File operation tools ---
     registry.register(FileReader(allowed_dirs=resolved_dirs))
     registry.register(FileWriter(allowed_dirs=resolved_dirs))
+
+    # --- Dependency vulnerability scanner ---
+    from .dependency_scanner import DependencyScannerTool
+    registry.register(DependencyScannerTool())
+
+    # --- Container inspection ---
+    from .container_inspect import ContainerInspectTool
+    registry.register(ContainerInspectTool())
+
+    # --- SEO tools ---
+    from .seo_tools import LighthouseSEOTool, PageAnalyzerTool, SEOChecklistTool
+    registry.register(DevToolWrapper(
+        LighthouseSEOTool(), ToolCategory.WEB_API, _LIGHTHOUSE_SEO_SCHEMA,
+    ))
+    registry.register(DevToolWrapper(
+        PageAnalyzerTool(), ToolCategory.WEB_API, _PAGE_ANALYZER_SCHEMA,
+    ))
+    registry.register(DevToolWrapper(
+        SEOChecklistTool(), ToolCategory.SPECIALIZED, _SEO_CHECKLIST_SCHEMA,
+    ))
 
     # --- Extended dev tools (in-process) ---
     from .dev_tools import (

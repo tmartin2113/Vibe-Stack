@@ -11,8 +11,11 @@ Available tool categories:
 - Infrastructure Tools: WebSearch, WebScrape, BrowserAutomation, Design, ImageGeneration, GitForge, ArtifactStorage
 """
 
-from .registry import ToolRegistry, create_default_tool_registry, Tool, ToolResult, ToolCategory
+from .registry import ToolRegistry, create_default_tool_registry, Tool, ToolResult, ToolCategory, ROLE_TOOL_SETS
 from .seo_tools import LighthouseSEOTool, PageAnalyzerTool, SEOChecklistTool
+from .dependency_scanner import DependencyScannerTool
+from .database import DatabaseTool
+from .container_inspect import ContainerInspectTool
 from .dev_tools import (
     StaticCodeAnalyzer,
     TestRunnerTool,
@@ -36,6 +39,7 @@ __all__ = [
     'Tool',
     'ToolResult',
     'ToolCategory',
+    'ROLE_TOOL_SETS',
     # SEO Tools
     'LighthouseSEOTool',
     'PageAnalyzerTool',
@@ -55,4 +59,7 @@ __all__ = [
     'GitForgeTool',
     'ArtifactStorageTool',
     'BulletinBoardTool',
+    'DependencyScannerTool',
+    'DatabaseTool',
+    'ContainerInspectTool',
 ]

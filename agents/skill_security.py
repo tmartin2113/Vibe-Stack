@@ -30,7 +30,10 @@ logger = logging.getLogger(__name__)
 # Safe read-only tools that any skill may use
 DEFAULT_ALLOWED_TOOLS: FrozenSet[str] = frozenset({
     "Read", "Glob", "Grep", "WebFetch", "WebSearch",
-    "web_search", "web_scrape",  # SearXNG + Spider (read-only, safe)
+    "web_search", "web_scrape",  # SearXNG + Playwright (read-only, safe)
+    "dependency_scanner",  # Read-only CVE scanning (pip-audit / npm audit)
+    "container_inspect",   # Read-only Docker container status/logs/health
+    "lighthouse_seo", "page_analyzer", "seo_checklist",  # SEO analysis (read-only)
     "memory_store", "memory_recall",  # Persistent memory (always allowed)
     "bulletin_board",  # Inter-agent bulletin board (shared scratchpad, safe)
 })
@@ -39,6 +42,7 @@ DEFAULT_ALLOWED_TOOLS: FrozenSet[str] = frozenset({
 RESTRICTED_TOOLS: FrozenSet[str] = frozenset({
     "Write", "Edit", "Bash", "NotebookEdit",
     "browser_automation",  # Can interact with external sites
+    "database",            # Can query/modify databases
     "design",              # Creates/modifies design files
     "image_generation",    # GPU-intensive
     "git_forge",           # Can create repos/commits
