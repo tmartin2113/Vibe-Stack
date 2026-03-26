@@ -169,6 +169,13 @@ function grantInstanceAdmin(userId) {
 
 // ── Agent definitions ──────────────────────────────────────────
 // Senior engineers — report to CTO, run on Claude
+const ENGINEER_DELEGATION_PROMPT =
+  "You have a DeerFlow assistant (Haiku-tier, local Qwen 3.5 9B) that reports to you. " +
+  "Query the roster with GET /api/companies/{companyId}/agents to find them. " +
+  "Delegate research, summarization, analysis, documentation, and simple code scaffolding to your assistant — they run fast and free on a local GPU. " +
+  "Keep complex implementation, architecture, debugging, and code review for yourself. " +
+  "Create subtasks via POST /api/companies/{companyId}/issues with parentId and assigneeAgentId set to your assistant's id.";
+
 const seniorAgents = [
   {
     name: "DevOps Engineer",
@@ -176,6 +183,7 @@ const seniorAgents = [
     title: "DevOps Engineer",
     adapterType: "claude_local",
     adapterConfig: { cwd: REPO_DIR, model: "claude-sonnet-4-6", effort: "high" },
+    systemPrompt: "You are the DevOps Engineer for Vibe Stack. You own infrastructure, CI/CD, Docker, networking, and deployment. " + ENGINEER_DELEGATION_PROMPT,
     permissions: { canCreateAgents: false },
   },
   {
@@ -184,6 +192,7 @@ const seniorAgents = [
     title: "Frontend Engineer",
     adapterType: "claude_local",
     adapterConfig: { cwd: PROJECTS_DIR, model: "claude-sonnet-4-6", effort: "high" },
+    systemPrompt: "You are the Frontend Engineer for Vibe Stack. You own UI/UX implementation, React/Next.js, CSS, and client-side architecture. " + ENGINEER_DELEGATION_PROMPT,
     permissions: { canCreateAgents: false },
   },
   {
@@ -192,6 +201,7 @@ const seniorAgents = [
     title: "Backend Engineer",
     adapterType: "claude_local",
     adapterConfig: { cwd: PROJECTS_DIR, model: "claude-sonnet-4-6", effort: "high" },
+    systemPrompt: "You are the Backend Engineer for Vibe Stack. You own APIs, databases, server-side logic, and backend architecture. " + ENGINEER_DELEGATION_PROMPT,
     permissions: { canCreateAgents: false },
   },
   {
@@ -200,6 +210,7 @@ const seniorAgents = [
     title: "QA Engineer",
     adapterType: "claude_local",
     adapterConfig: { cwd: PROJECTS_DIR, model: "claude-sonnet-4-6", effort: "high" },
+    systemPrompt: "You are the QA Engineer for Vibe Stack. You own testing strategy, test automation, quality gates, and bug triage. " + ENGINEER_DELEGATION_PROMPT,
     permissions: { canCreateAgents: false },
   },
   {
@@ -208,6 +219,7 @@ const seniorAgents = [
     title: "UX Designer",
     adapterType: "claude_local",
     adapterConfig: { cwd: PROJECTS_DIR, model: "claude-sonnet-4-6", effort: "high" },
+    systemPrompt: "You are the UX Designer for Vibe Stack. You own user experience, design systems, wireframes, and usability. " + ENGINEER_DELEGATION_PROMPT,
     permissions: { canCreateAgents: false },
   },
 ];
@@ -377,7 +389,7 @@ const seniorAgents = [
       adapterType: "claude_local",
       adapterConfig: { cwd: REPO_DIR, model: "claude-opus-4-6", effort: "high" },
       systemPrompt:
-        "You are the CTO of Vibe Stack, an autonomous software development company. You break down high-level objectives into actionable tasks, delegate to specialist engineers, review architecture and deliverables, and ensure quality. You have final authority on technical decisions, task prioritization, and resource allocation.",
+        "You are the CTO of Vibe Stack, an autonomous software development company. You break down high-level objectives into actionable tasks, delegate to specialist engineers, review architecture and deliverables, and ensure quality. You have final authority on technical decisions, task prioritization, and resource allocation.\n\n## Delegation Strategy\n\nEach senior engineer has a DeerFlow assistant (Haiku-tier, local Qwen 3.5 9B). Before delegating, query the roster: GET /api/companies/{companyId}/agents.\n\n**DeerFlow assistants** — delegate: research, summarization, analysis, documentation, boilerplate generation, data gathering, simple code scaffolding. They run fast and free on a local GPU.\n\n**Claude engineers** (Sonnet-tier) — reserve for: complex multi-file implementation, architecture decisions, nuanced code review, debugging, and tasks requiring deep contextual reasoning.\n\nAlways delegate to the cheapest tier that can succeed. When in doubt, start with the DeerFlow assistant — the senior engineer can escalate if needed.",
       permissions: { canCreateAgents: true },
     });
     if (!cto.body.id) {
@@ -385,6 +397,24 @@ const seniorAgents = [
       process.exit(1);
     }
     console.log("CTO created:", cto.body.name, `(${cto.body.id})`);
+  }
+
+  // Verify CTO has tasks:assign permission
+  console.log("\nVerifying CTO permissions...");
+  const permsCheck = await request("GET", `/api/agents/${cto.body.id}`, cookie);
+  const accessState = permsCheck.body?.accessState || {};
+  if (!accessState.canAssignTasks) {
+    console.log("  CTO missing tasks:assign — granting explicitly...");
+    const patchRes = await request("PATCH", `/api/agents/${cto.body.id}/permissions`, cookie, {
+      canAssignTasks: true,
+    });
+    if (patchRes.status === 200) {
+      console.log("  tasks:assign granted");
+    } else {
+      console.warn("  Permission grant failed:", patchRes.status, JSON.stringify(patchRes.body));
+    }
+  } else {
+    console.log("  CTO has tasks:assign (source: " + (accessState.canAssignTasksSource || "unknown") + ")");
   }
 
   // 7. Create senior engineers — all report to CTO, skip existing
@@ -420,6 +450,7 @@ const seniorAgents = [
       name: dfName,
       role: "engineer",
       title: dfName,
+      description: "Haiku-tier assistant running local Qwen 3.5 9B on GPU. Strong at: research, summarization, analysis, documentation, data gathering, boilerplate code. Not suited for: complex multi-file refactoring, subtle architecture decisions, nuanced code review. Runs fast and free — no API cost.",
       adapterType: "deerflow",
       adapterConfig: { model: process.env.VLLM_MODEL_SHORT || "qwen3.5-9b", skill: "deep-research" },
       managerIds: [senior.id],
