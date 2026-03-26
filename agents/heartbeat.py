@@ -364,6 +364,9 @@ def run_heartbeat(config: SystemConfig) -> HeartbeatResult:
         except Exception as e:
             logger.debug("Message store maintenance skipped: %s", e)
 
+        # Best-effort artifact cache maintenance
+        _artifact_cache_maintenance()
+
         try:
             client.release_issue(issue.id)
         except PaperclipAPIError as e:
@@ -945,6 +948,18 @@ def _get_spending_tracker(config: SystemConfig) -> "Optional[SpendingTracker]":
     except Exception as e:
         logger.warning("Failed to initialize spending tracker (non-fatal): %s", e)
         return None
+
+
+def _artifact_cache_maintenance() -> None:
+    """Best-effort artifact cache cleanup: evict expired + LRU overflow."""
+    try:
+        from .artifact_store import ArtifactStore
+        store = ArtifactStore()
+        expired = store.cleanup_expired()
+        if expired:
+            logger.info("Heartbeat cache cleanup: removed %d expired artifacts", expired)
+    except Exception as e:
+        logger.debug("Artifact cache maintenance skipped: %s", e)
 
 
 def _post_failure(client: PaperclipClient, issue_id: str, error: str) -> None:

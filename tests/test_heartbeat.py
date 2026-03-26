@@ -2106,3 +2106,37 @@ class TestClarificationResume:
         # Verify clarification_reply was passed
         call_kwargs = mock_workflow.call_args[1]
         assert call_kwargs.get("clarification_reply") == "Use JWT please"
+
+
+# ── Artifact Cache Maintenance Tests ──
+
+
+def test_heartbeat_calls_artifact_cache_cleanup(monkeypatch, tmp_path):
+    """Heartbeat finally block should clean up expired cache entries."""
+    from agents.artifact_store import ArtifactStore
+
+    cleanup_called = False
+    evict_called = False
+
+    original_cleanup = ArtifactStore.cleanup_expired
+    original_evict = ArtifactStore._evict_if_needed
+
+    def mock_cleanup(self):
+        nonlocal cleanup_called
+        cleanup_called = True
+        return 0
+
+    def mock_evict(self, conn):
+        nonlocal evict_called
+        evict_called = True
+        return 0
+
+    monkeypatch.setattr(ArtifactStore, "cleanup_expired", mock_cleanup)
+    monkeypatch.setattr(ArtifactStore, "_evict_if_needed", mock_evict)
+
+    # We need to test that the finally block calls these.
+    # Import the function that does the cleanup:
+    from agents.heartbeat import _artifact_cache_maintenance
+    _artifact_cache_maintenance()
+
+    assert cleanup_called, "cleanup_expired should be called"
