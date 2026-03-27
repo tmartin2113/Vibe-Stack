@@ -37,8 +37,9 @@ def _make_state(**overrides):
 
 
 @pytest.fixture
-def trigger():
-    return SelfUpgradeTrigger()
+def trigger(tmp_path):
+    """Trigger with isolated signal store (no cross-test contamination)."""
+    return SelfUpgradeTrigger(signal_store_path=str(tmp_path / "signals.jsonl"))
 
 
 # ── No signals for healthy workflows ─────────────────────────────────
@@ -388,3 +389,69 @@ class TestMultipleSignals:
         # Should have multiple signals, potentially >= MIN_SIGNALS_TO_PROPOSE
         assert len(result.signals) >= MIN_SIGNALS_TO_PROPOSE
         assert result.should_propose is True
+
+
+# ── Signal persistence ───────────────────────────────────────────────
+
+
+class TestSignalPersistence:
+
+    def test_signals_persisted_to_disk(self, tmp_path):
+        store_path = str(tmp_path / "signals.jsonl")
+        trigger = SelfUpgradeTrigger(signal_store_path=store_path)
+        state = _make_state(output_critic_score=40)
+        trigger.analyse(state)
+
+        # File should exist with content
+        import json
+        with open(store_path) as f:
+            lines = [json.loads(l) for l in f if l.strip()]
+        assert len(lines) >= 1
+        assert lines[0]["category"] == "low_score"
+
+    def test_signals_loaded_on_init(self, tmp_path):
+        store_path = str(tmp_path / "signals.jsonl")
+
+        # First trigger writes signals
+        trigger1 = SelfUpgradeTrigger(signal_store_path=store_path)
+        trigger1.analyse(_make_state(output_critic_score=40))
+        count1 = trigger1.get_signal_count("code_generation")
+
+        # Second trigger loads persisted signals on init
+        trigger2 = SelfUpgradeTrigger(signal_store_path=store_path)
+        count2 = trigger2.get_signal_count("code_generation")
+        assert count2 == count1
+
+    def test_clear_signals_removes_from_disk(self, tmp_path):
+        store_path = str(tmp_path / "signals.jsonl")
+        trigger = SelfUpgradeTrigger(signal_store_path=store_path)
+        trigger.analyse(_make_state(output_critic_score=40))
+        trigger.clear_signals("code_generation")
+
+        # Reload — should have no signals
+        trigger2 = SelfUpgradeTrigger(signal_store_path=store_path)
+        assert trigger2.get_signal_count("code_generation") == 0
+
+    def test_signals_accumulate_across_instances(self, tmp_path):
+        store_path = str(tmp_path / "signals.jsonl")
+
+        for _ in range(MIN_SIGNALS_TO_PROPOSE):
+            t = SelfUpgradeTrigger(signal_store_path=store_path)
+            t.analyse(_make_state(output_critic_score=40))
+
+        # Fresh trigger should load all accumulated signals and propose
+        final = SelfUpgradeTrigger(signal_store_path=store_path)
+        result = final.analyse(_make_state(output_critic_score=40))
+        assert result.should_propose is True
+
+    def test_different_task_types_persisted_separately(self, tmp_path):
+        store_path = str(tmp_path / "signals.jsonl")
+        trigger = SelfUpgradeTrigger(signal_store_path=store_path)
+
+        trigger.analyse(_make_state(routed_task_type="code_generation", output_critic_score=40))
+        trigger.analyse(_make_state(routed_task_type="test_generation", output_critic_score=40))
+        trigger.clear_signals("code_generation")
+
+        trigger2 = SelfUpgradeTrigger(signal_store_path=store_path)
+        assert trigger2.get_signal_count("code_generation") == 0
+        assert trigger2.get_signal_count("test_generation") >= 1

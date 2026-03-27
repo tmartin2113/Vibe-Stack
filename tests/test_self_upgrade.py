@@ -450,6 +450,7 @@ class TestImmutablePaths:
 
     def test_all_critical_files_protected(self):
         assert "agents/self_upgrade.py" in IMMUTABLE_PATHS
+        assert "agents/self_upgrade_trigger.py" in IMMUTABLE_PATHS
         assert "agents/skill_security.py" in IMMUTABLE_PATHS
         assert "agents/config.py" in IMMUTABLE_PATHS
         assert ".env" in IMMUTABLE_PATHS
@@ -486,3 +487,158 @@ class TestUpgradeResult:
         )
         assert r.success is True
         assert r.critic_score == 95
+
+
+# ── LLM code generation ──────────────────────────────────────────────
+
+
+class TestGenerateUpgradeProposal:
+
+    def test_returns_none_when_no_target_files(self, tmp_path):
+        from agents.self_upgrade import generate_upgrade_proposal
+        mock_model = MagicMock()
+        result = generate_upgrade_proposal(
+            description="test",
+            rationale="test",
+            target_files=["agents/nonexistent.py"],
+            base_model=mock_model,
+            project_root=tmp_path,
+        )
+        assert result is None
+        mock_model.generate.assert_not_called()
+
+    def test_returns_none_on_no_change(self, tmp_path):
+        from agents.self_upgrade import generate_upgrade_proposal
+        # Create a target file
+        agents_dir = tmp_path / "agents"
+        agents_dir.mkdir()
+        (agents_dir / "router.py").write_text("# original\npass\n")
+
+        mock_model = MagicMock()
+        mock_model.generate.return_value = "NO_CHANGE"
+
+        result = generate_upgrade_proposal(
+            description="test",
+            rationale="test",
+            target_files=["agents/router.py"],
+            base_model=mock_model,
+            project_root=tmp_path,
+        )
+        assert result is None
+
+    def test_returns_proposal_on_valid_output(self, tmp_path):
+        from agents.self_upgrade import generate_upgrade_proposal
+        agents_dir = tmp_path / "agents"
+        agents_dir.mkdir()
+        (agents_dir / "router.py").write_text("# original\npass\n")
+
+        mock_model = MagicMock()
+        mock_model.generate.return_value = (
+            "FILE: agents/router.py\n"
+            "```python\n"
+            "# improved router\nimport logging\npass\n"
+            "```"
+        )
+
+        result = generate_upgrade_proposal(
+            description="fix router",
+            rationale="accumulated signals",
+            target_files=["agents/router.py"],
+            base_model=mock_model,
+            project_root=tmp_path,
+        )
+        assert result is not None
+        assert "agents/router.py" in result.files
+        assert "improved router" in result.files["agents/router.py"]
+
+    def test_ignores_files_not_in_target_list(self, tmp_path):
+        from agents.self_upgrade import generate_upgrade_proposal
+        agents_dir = tmp_path / "agents"
+        agents_dir.mkdir()
+        (agents_dir / "router.py").write_text("# original\n")
+
+        mock_model = MagicMock()
+        mock_model.generate.return_value = (
+            "FILE: agents/router.py\n```python\n# changed\n```\n"
+            "FILE: agents/secret.py\n```python\n# evil\n```"
+        )
+
+        result = generate_upgrade_proposal(
+            description="fix",
+            rationale="reason",
+            target_files=["agents/router.py"],
+            base_model=mock_model,
+            project_root=tmp_path,
+        )
+        assert result is not None
+        assert "agents/secret.py" not in result.files
+
+    def test_llm_error_returns_none(self, tmp_path):
+        from agents.self_upgrade import generate_upgrade_proposal
+        agents_dir = tmp_path / "agents"
+        agents_dir.mkdir()
+        (agents_dir / "router.py").write_text("# original\n")
+
+        mock_model = MagicMock()
+        mock_model.generate.side_effect = RuntimeError("LLM down")
+
+        result = generate_upgrade_proposal(
+            description="fix",
+            rationale="reason",
+            target_files=["agents/router.py"],
+            base_model=mock_model,
+            project_root=tmp_path,
+        )
+        assert result is None
+
+
+# ── _parse_llm_file_output ───────────────────────────────────────────
+
+
+class TestParseLlmFileOutput:
+
+    def test_parses_single_file(self):
+        from agents.self_upgrade import _parse_llm_file_output
+        response = "FILE: agents/foo.py\n```python\nprint('hello')\n```"
+        originals = {"agents/foo.py": "print('old')"}
+        result = _parse_llm_file_output(response, originals)
+        assert "agents/foo.py" in result
+        assert "hello" in result["agents/foo.py"]
+
+    def test_rejects_identical_content(self):
+        from agents.self_upgrade import _parse_llm_file_output
+        response = "FILE: agents/foo.py\n```python\nprint('same')\n```"
+        originals = {"agents/foo.py": "print('same')"}
+        result = _parse_llm_file_output(response, originals)
+        assert result == {}
+
+    def test_rejects_unknown_files(self):
+        from agents.self_upgrade import _parse_llm_file_output
+        response = "FILE: agents/unknown.py\n```python\nevil()\n```"
+        originals = {"agents/known.py": "good()"}
+        result = _parse_llm_file_output(response, originals)
+        assert result == {}
+
+    def test_parses_multiple_files(self):
+        from agents.self_upgrade import _parse_llm_file_output
+        response = (
+            "FILE: agents/a.py\n```python\naa\n```\n"
+            "FILE: agents/b.py\n```python\nbb\n```"
+        )
+        originals = {"agents/a.py": "old_a", "agents/b.py": "old_b"}
+        result = _parse_llm_file_output(response, originals)
+        assert len(result) == 2
+
+
+# ── Immutable trigger path ────────────────────────────────────────────
+
+
+class TestImmutableTriggerPath:
+
+    def test_trigger_module_is_immutable(self):
+        p = UpgradeProposal(
+            description="hack trigger",
+            files={"agents/self_upgrade_trigger.py": "# evil"},
+        )
+        errors = p.validate_paths()
+        assert any("immutable" in e for e in errors)

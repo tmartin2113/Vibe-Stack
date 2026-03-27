@@ -21,6 +21,7 @@ Safety invariants:
 - A human must review and merge the resulting branch/PR
 """
 
+import fcntl
 import hashlib
 import logging
 import os
@@ -29,7 +30,7 @@ import subprocess
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -41,12 +42,16 @@ DEFAULT_MIN_SCORE = 90
 
 # Files/directories that are never modifiable (even with self-upgrade enabled)
 IMMUTABLE_PATHS = frozenset({
-    "agents/self_upgrade.py",       # This module (prevent recursive bypass)
-    "agents/skill_security.py",     # Security layer
-    "agents/config.py",             # Core config
+    "agents/self_upgrade.py",           # This module (prevent recursive bypass)
+    "agents/self_upgrade_trigger.py",   # Trigger module (prevent signal manipulation)
+    "agents/skill_security.py",         # Security layer
+    "agents/config.py",                 # Core config
     ".env",
     ".env.example",
 })
+
+# Lock file for serialising git operations across concurrent workers
+_GIT_LOCK_PATH = Path(tempfile.gettempdir()) / "vibe_self_upgrade.lock"
 
 # Maximum diff size (lines) to prevent runaway changes
 MAX_DIFF_LINES = 500
@@ -350,7 +355,10 @@ class SelfUpgradePipeline:
     def _apply_and_commit(
         self, proposal: UpgradeProposal
     ) -> Tuple[str, str]:
-        """Apply changes to a feature branch and commit.
+        """Apply changes to a feature branch, commit, and push.
+
+        Uses a file lock to prevent concurrent git operations from
+        multiple daemon workers.
 
         Returns:
             (branch_name, commit_hash)
@@ -361,64 +369,244 @@ class SelfUpgradePipeline:
         ).hexdigest()[:8]
         branch_name = f"{UPGRADE_BRANCH_PREFIX}/{proposal_hash}"
 
-        # Create and switch to feature branch
-        subprocess.run(
-            ["git", "checkout", "-b", branch_name],
-            cwd=str(self.project_root),
-            capture_output=True,
-            text=True,
-            check=True,
-        )
+        # Acquire file lock to serialise git operations
+        lock_fd = open(_GIT_LOCK_PATH, "w")
+        try:
+            fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            lock_fd.close()
+            raise RuntimeError(
+                "Another self-upgrade is in progress (lock held)"
+            )
 
         try:
-            # Apply changes
-            for rel_path, content in proposal.files.items():
-                target = self.project_root / rel_path
-                target.parent.mkdir(parents=True, exist_ok=True)
-                target.write_text(content)
+            # Remember current branch to restore on failure
+            current_branch = subprocess.run(
+                ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+                cwd=str(self.project_root),
+                capture_output=True, text=True, check=True,
+            ).stdout.strip()
 
-            # Stage and commit
-            file_paths = list(proposal.files.keys())
+            # Create and switch to feature branch
             subprocess.run(
-                ["git", "add"] + file_paths,
+                ["git", "checkout", "-b", branch_name],
                 cwd=str(self.project_root),
-                capture_output=True,
-                check=True,
+                capture_output=True, text=True, check=True,
             )
 
-            commit_msg = (
-                f"self-upgrade: {proposal.description}\n\n"
-                f"Author: {proposal.author}\n"
-                f"Rationale: {proposal.rationale}\n\n"
-                f"This change was proposed and validated by the Vibe self-upgrade pipeline.\n"
-                f"Gates passed: path-validation, diff-size, pytest, bandit"
-            )
+            try:
+                # Apply changes
+                for rel_path, content in proposal.files.items():
+                    target = self.project_root / rel_path
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    target.write_text(content)
 
-            proc = subprocess.run(
-                ["git", "commit", "-m", commit_msg],
-                cwd=str(self.project_root),
-                capture_output=True,
-                text=True,
-                check=True,
-            )
+                # Stage and commit
+                file_paths = list(proposal.files.keys())
+                subprocess.run(
+                    ["git", "add"] + file_paths,
+                    cwd=str(self.project_root),
+                    capture_output=True, check=True,
+                )
 
-            # Extract commit hash
-            hash_proc = subprocess.run(
-                ["git", "rev-parse", "HEAD"],
-                cwd=str(self.project_root),
-                capture_output=True,
-                text=True,
-                check=True,
-            )
-            commit_hash = hash_proc.stdout.strip()
+                commit_msg = (
+                    f"self-upgrade: {proposal.description}\n\n"
+                    f"Author: {proposal.author}\n"
+                    f"Rationale: {proposal.rationale}\n\n"
+                    f"This change was proposed and validated by the Vibe "
+                    f"self-upgrade pipeline.\n"
+                    f"Gates passed: path-validation, diff-size, pytest, bandit"
+                )
 
-            return branch_name, commit_hash
+                subprocess.run(
+                    ["git", "commit", "-m", commit_msg],
+                    cwd=str(self.project_root),
+                    capture_output=True, text=True, check=True,
+                )
 
-        except Exception:
-            # Revert to previous branch on failure
-            subprocess.run(
-                ["git", "checkout", "-"],
-                cwd=str(self.project_root),
-                capture_output=True,
-            )
-            raise
+                # Extract commit hash
+                commit_hash = subprocess.run(
+                    ["git", "rev-parse", "HEAD"],
+                    cwd=str(self.project_root),
+                    capture_output=True, text=True, check=True,
+                ).stdout.strip()
+
+                # Push to remote (best-effort — works in CI/deployed envs)
+                push_result = subprocess.run(
+                    ["git", "push", "-u", "origin", branch_name],
+                    cwd=str(self.project_root),
+                    capture_output=True, text=True,
+                )
+                if push_result.returncode == 0:
+                    logger.info("Pushed branch %s to remote", branch_name)
+                else:
+                    logger.warning(
+                        "Failed to push %s (non-fatal): %s",
+                        branch_name, push_result.stderr[:200],
+                    )
+
+                # Switch back to original branch (leave upgrade branch intact)
+                subprocess.run(
+                    ["git", "checkout", current_branch],
+                    cwd=str(self.project_root),
+                    capture_output=True,
+                )
+
+                return branch_name, commit_hash
+
+            except Exception:
+                # Revert to previous branch on failure
+                subprocess.run(
+                    ["git", "checkout", current_branch],
+                    cwd=str(self.project_root),
+                    capture_output=True,
+                )
+                raise
+        finally:
+            fcntl.flock(lock_fd, fcntl.LOCK_UN)
+            lock_fd.close()
+
+
+# ── LLM-driven code generation ───────────────────────────────────────
+
+
+def generate_upgrade_proposal(
+    description: str,
+    rationale: str,
+    target_files: List[str],
+    base_model: Any,
+    project_root: Optional[Path] = None,
+) -> Optional[UpgradeProposal]:
+    """Use the LLM to generate an UpgradeProposal from trigger analysis.
+
+    Reads the target files, asks the LLM to propose improvements based on
+    the accumulated signal rationale, and returns a structured proposal.
+
+    Args:
+        description:  What should be improved (from TriggerAnalysis).
+        rationale:    Why (accumulated signal details).
+        target_files: Which files to read and potentially modify.
+        base_model:   The LLM backend instance.
+        project_root: Project root directory.
+
+    Returns:
+        UpgradeProposal with modified file contents, or None if the LLM
+        declines to propose changes.
+    """
+    if project_root is None:
+        project_root = get_project_root()
+
+    # Read current contents of target files
+    file_contents = {}
+    for rel_path in target_files:
+        full_path = project_root / rel_path
+        if full_path.exists() and full_path.is_file():
+            try:
+                file_contents[rel_path] = full_path.read_text()
+            except OSError:
+                continue
+
+    if not file_contents:
+        logger.warning("No readable target files for self-upgrade proposal")
+        return None
+
+    # Build the LLM prompt
+    file_sections = []
+    for rel_path, content in file_contents.items():
+        # Truncate very large files to avoid context overflow
+        truncated = content[:8000] if len(content) > 8000 else content
+        file_sections.append(
+            f"### {rel_path}\n```python\n{truncated}\n```"
+        )
+
+    prompt = f"""You are proposing a targeted improvement to the Vibe agent codebase.
+
+## Improvement Goal
+{description}
+
+## Evidence (from accumulated workflow signals)
+{rationale}
+
+## Current Source Files
+{chr(10).join(file_sections)}
+
+## Instructions
+1. Analyse the evidence and source files above
+2. Identify ONE specific, minimal change that addresses the dominant issue
+3. Output the COMPLETE modified file content for each file you change
+4. If no change is warranted, respond with exactly: NO_CHANGE
+
+## Output Format
+For each file you modify, output:
+FILE: <relative_path>
+```python
+<complete file content>
+```
+
+Only output files you actually changed. Keep changes minimal and backward-compatible.
+Do NOT modify function signatures unless absolutely necessary.
+Do NOT add new dependencies.
+"""
+
+    messages = [
+        {"role": "system", "content": (
+            "You are a senior software engineer performing a controlled "
+            "self-upgrade on the Vibe agent codebase. Output only the "
+            "requested format — no commentary."
+        )},
+        {"role": "user", "content": prompt},
+    ]
+
+    try:
+        response = base_model.generate(
+            messages, temperature=0.3, max_tokens=4000,
+        )
+    except Exception as e:
+        logger.error("LLM call failed during self-upgrade generation: %s", e)
+        return None
+
+    if not response or "NO_CHANGE" in response:
+        logger.info("LLM declined to propose changes for: %s", description)
+        return None
+
+    # Parse the response into file contents
+    modified_files = _parse_llm_file_output(response, file_contents)
+    if not modified_files:
+        logger.warning("Failed to parse LLM output for self-upgrade proposal")
+        return None
+
+    return UpgradeProposal(
+        description=description,
+        files=modified_files,
+        rationale=rationale,
+        author="vibe-self-upgrade",
+    )
+
+
+def _parse_llm_file_output(
+    response: str, original_files: Dict[str, str]
+) -> Dict[str, str]:
+    """Parse LLM output into {rel_path: content} dict.
+
+    Expected format:
+        FILE: agents/foo.py
+        ```python
+        <content>
+        ```
+    """
+    import re
+
+    files: Dict[str, str] = {}
+    # Match FILE: <path> followed by a fenced code block
+    pattern = r"FILE:\s*(\S+)\s*\n```(?:python)?\n(.*?)```"
+    matches = re.findall(pattern, response, re.DOTALL)
+
+    for rel_path, content in matches:
+        rel_path = rel_path.strip()
+        # Only accept files that were in our target list
+        if rel_path in original_files:
+            # Sanity: content shouldn't be empty or identical
+            if content.strip() and content.strip() != original_files[rel_path].strip():
+                files[rel_path] = content
+
+    return files

@@ -19,10 +19,14 @@ This module is intentionally conservative — it proposes upgrades only after
 seeing a pattern across multiple runs, not on a single bad outcome.
 """
 
+import json
 import logging
 import os
 import re
+import threading
 from dataclasses import dataclass, field
+from datetime import datetime
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from .state import AgentState
@@ -84,16 +88,25 @@ class SelfUpgradeTrigger:
         poor_score_threshold: int = POOR_SCORE_THRESHOLD,
         tool_failure_threshold: int = TOOL_FAILURE_THRESHOLD,
         min_signals: int = MIN_SIGNALS_TO_PROPOSE,
+        signal_store_path: Optional[str] = None,
     ):
         self.poor_score_threshold = poor_score_threshold
         self.tool_failure_threshold = tool_failure_threshold
         self.min_signals = min_signals
 
-        # In-memory signal accumulator (per task_type -> list of signals)
-        # In production this would be persisted, but for now we accumulate
-        # within a single process lifetime (daemon mode) or across heartbeats
-        # via the outcome store.
+        # Persistent signal store (JSONL file, survives across heartbeats)
+        if signal_store_path is None:
+            from .config import get_skills_dir
+            signal_store_path = str(
+                Path(get_skills_dir()) / "upgrade_signals.jsonl"
+            )
+        self._signal_store_path = Path(signal_store_path)
+        self._signal_store_path.parent.mkdir(parents=True, exist_ok=True)
+        self._lock = threading.Lock()
+
+        # Load persisted signals into memory
         self._signal_history: Dict[str, List[UpgradeSignal]] = {}
+        self._load_persisted_signals()
 
     def analyse(self, state: AgentState) -> TriggerAnalysis:
         """Analyse a completed workflow state for upgrade signals.
@@ -115,10 +128,11 @@ class SelfUpgradeTrigger:
         self._check_iteration_exhaustion(state, task_type, analysis)
         self._check_critic_patterns(state, task_type, analysis)
 
-        # Accumulate signals
+        # Accumulate signals (both in-memory and persisted to disk)
         if analysis.signals:
             history = self._signal_history.setdefault(task_type, [])
             history.extend(analysis.signals)
+            self._persist_signals(analysis.signals, task_type)
 
             logger.info(
                 "Self-upgrade trigger: %d new signal(s) for task_type=%s "
@@ -146,10 +160,89 @@ class SelfUpgradeTrigger:
     def clear_signals(self, task_type: str) -> None:
         """Clear accumulated signals for a task type (after successful upgrade)."""
         self._signal_history.pop(task_type, None)
+        self._remove_persisted_signals(task_type)
 
     def get_signal_count(self, task_type: str) -> int:
         """Return number of accumulated signals for a task type."""
         return len(self._signal_history.get(task_type, []))
+
+    # ── Persistence ───────────────────────────────────────────────────
+
+    def _persist_signals(self, signals: List[UpgradeSignal], task_type: str) -> None:
+        """Append signals to the JSONL store on disk."""
+        with self._lock:
+            try:
+                with open(self._signal_store_path, "a", encoding="utf-8") as f:
+                    for s in signals:
+                        entry = {
+                            "category": s.category,
+                            "task_type": s.task_type,
+                            "detail": s.detail[:300],
+                            "score": s.score,
+                            "source_node": s.source_node,
+                            "timestamp": datetime.utcnow().isoformat() + "Z",
+                        }
+                        f.write(json.dumps(entry) + "\n")
+            except OSError as e:
+                logger.debug("Failed to persist upgrade signals: %s", e)
+
+    def _load_persisted_signals(self) -> None:
+        """Load signals from disk into the in-memory history."""
+        if not self._signal_store_path.exists():
+            return
+        try:
+            with open(self._signal_store_path, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        entry = json.loads(line)
+                        signal = UpgradeSignal(
+                            category=entry.get("category", ""),
+                            task_type=entry.get("task_type", ""),
+                            detail=entry.get("detail", ""),
+                            score=entry.get("score", 0),
+                            source_node=entry.get("source_node", ""),
+                        )
+                        history = self._signal_history.setdefault(
+                            signal.task_type, []
+                        )
+                        history.append(signal)
+                    except (json.JSONDecodeError, KeyError):
+                        continue
+            total = sum(len(v) for v in self._signal_history.values())
+            if total > 0:
+                logger.info(
+                    "Loaded %d persisted upgrade signals from %s",
+                    total, self._signal_store_path,
+                )
+        except OSError as e:
+            logger.debug("Failed to load persisted signals: %s", e)
+
+    def _remove_persisted_signals(self, task_type: str) -> None:
+        """Remove all persisted signals for a task type from the JSONL store."""
+        if not self._signal_store_path.exists():
+            return
+        with self._lock:
+            try:
+                remaining = []
+                with open(self._signal_store_path, "r", encoding="utf-8") as f:
+                    for line in f:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        try:
+                            entry = json.loads(line)
+                            if entry.get("task_type") != task_type:
+                                remaining.append(line)
+                        except json.JSONDecodeError:
+                            remaining.append(line)
+                with open(self._signal_store_path, "w", encoding="utf-8") as f:
+                    for line in remaining:
+                        f.write(line + "\n")
+            except OSError as e:
+                logger.debug("Failed to clean up persisted signals: %s", e)
 
     # ── Signal detectors ──────────────────────────────────────────────
 
