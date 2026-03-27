@@ -757,6 +757,7 @@ def create_agent_graph(adapter_registry: AdapterRegistry, tool_registry: Optiona
                         rationale=trigger_result.proposal_rationale,
                         target_files=trigger_result.target_files,
                         base_model=base_model,
+                        state=result,
                     )
 
                     if proposal is not None:

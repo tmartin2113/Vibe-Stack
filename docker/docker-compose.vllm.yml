@@ -161,6 +161,16 @@ services:
     volumes:
       - vibe-skills-orchestrator:/home/vibe/.vibe
 
+  vibe-self-upgrade:
+    <<: *vibe-agent-base
+    environment:
+      <<: *vibe-env
+      VIBE_TASK_TYPE: self_upgrade
+      VIBE_SELF_UPGRADE_ENABLED: "true"
+      PAPERCLIP_AGENT_ID: ${PAPERCLIP_AGENT_ID_SELF_UPGRADE:-}
+    volumes:
+      - vibe-skills-self-upgrade:/home/vibe/.vibe
+
 volumes:
   paperclip-data:
   vllm-cache:
@@ -169,3 +179,4 @@ volumes:
   vibe-skills-security:
   vibe-skills-research:
   vibe-skills-orchestrator:
+  vibe-skills-self-upgrade:

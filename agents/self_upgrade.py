@@ -476,6 +476,7 @@ def generate_upgrade_proposal(
     target_files: List[str],
     base_model: Any,
     project_root: Optional[Path] = None,
+    state: Optional[Dict[str, Any]] = None,
 ) -> Optional[UpgradeProposal]:
     """Use the LLM to generate an UpgradeProposal from trigger analysis.
 
@@ -487,6 +488,8 @@ def generate_upgrade_proposal(
         rationale:    Why (accumulated signal details).
         target_files: Which files to read and potentially modify.
         base_model:   The LLM backend instance.
+        state:        Optional workflow state dict — if provided, self-upgrade
+                      token usage is added to total_input/output_tokens.
         project_root: Project root directory.
 
     Returns:
@@ -564,6 +567,17 @@ Do NOT add new dependencies.
     except Exception as e:
         logger.error("LLM call failed during self-upgrade generation: %s", e)
         return None
+
+    # Best-effort token tracking — estimate from prompt/response length
+    # and add to workflow state so heartbeat reports them to Paperclip.
+    if state is not None:
+        prompt_chars = sum(len(m["content"]) for m in messages)
+        response_chars = len(response) if response else 0
+        # Rough estimate: ~4 chars per token (conservative)
+        est_input = prompt_chars // 4
+        est_output = response_chars // 4
+        state["total_input_tokens"] = state.get("total_input_tokens", 0) + est_input
+        state["total_output_tokens"] = state.get("total_output_tokens", 0) + est_output
 
     if not response or "NO_CHANGE" in response:
         logger.info("LLM declined to propose changes for: %s", description)
