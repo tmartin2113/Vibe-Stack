@@ -259,6 +259,21 @@ class PaperclipConfig:
 
 
 @dataclass
+class SelfUpgradeConfig:
+    """Self-upgrade pipeline configuration.
+
+    When enabled, agents can propose modifications to their own source code.
+    Changes go through a gated pipeline (pytest + bandit + critic) and land
+    on a feature branch for human review.
+    """
+
+    enabled: bool = False
+    min_critic_score: int = 90        # Minimum critic score to accept a change
+    max_diff_lines: int = 500         # Maximum diff size (lines)
+    branch_prefix: str = "vibe/self-upgrade"  # Git branch prefix
+
+
+@dataclass
 class SystemConfig:
     """Overall system configuration"""
 
@@ -273,6 +288,7 @@ class SystemConfig:
     cache: CacheConfig = field(default_factory=CacheConfig)
     spending: SpendingConfig = field(default_factory=SpendingConfig)
     messages: MessageStoreConfig = field(default_factory=MessageStoreConfig)
+    self_upgrade: SelfUpgradeConfig = field(default_factory=SelfUpgradeConfig)
 
     # Logging
     log_level: str = "INFO"
@@ -318,6 +334,17 @@ class SystemConfig:
         poll_timeout = os.getenv("PAPERCLIP_ORCHESTRATOR_POLL_TIMEOUT")
         if poll_timeout:
             config.paperclip.orchestrator_poll_timeout = int(poll_timeout)
+
+        # Self-upgrade env overrides
+        if os.getenv("VIBE_SELF_UPGRADE_ENABLED", "").lower() in ("true", "1", "yes"):
+            config.self_upgrade.enabled = True
+        for attr, env_key in [
+            ("min_critic_score", "VIBE_SELF_UPGRADE_MIN_SCORE"),
+            ("max_diff_lines", "VIBE_SELF_UPGRADE_MAX_DIFF_LINES"),
+        ]:
+            val = os.getenv(env_key)
+            if val:
+                setattr(config.self_upgrade, attr, int(val))
 
         # MessageStore env overrides
         msg_db = os.getenv("MESSAGE_STORE_PATH")

@@ -54,9 +54,9 @@ class TestWorkflowFactoryInit:
 class TestWorkflowFactoryAdapters:
     """Tests for adapter registration."""
 
-    def test_adapter_defs_has_16_entries(self):
-        """All 16 adapters should be defined."""
-        assert len(_ADAPTER_DEFS) == 16
+    def test_adapter_defs_has_17_entries(self):
+        """All 17 adapters should be defined."""
+        assert len(_ADAPTER_DEFS) == 17
 
     @patch("agents.workflow_factory.create_agent_graph")
     @patch("agents.workflow_factory.create_backend_from_config")

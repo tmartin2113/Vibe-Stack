@@ -39,7 +39,8 @@ from .adapters import (
     DATA_SPECIALIST_PROMPT,
     API_GENERATOR_PROMPT,
     DATABASE_SPECIALIST_PROMPT,
-    CODE_REVIEWER_PROMPT
+    CODE_REVIEWER_PROMPT,
+    SELF_UPGRADE_PROMPT,
 )
 from .graph import create_agent_graph, run_workflow, stream_workflow, print_graph_structure
 from .state import create_initial_state
@@ -273,6 +274,7 @@ class MultiAgentSystem:
             ("doc_generator", CODE_SYSTEM_PROMPT),
             ("performance_optimizer", CODE_SYSTEM_PROMPT),
             ("debugging_assistant", CODE_SYSTEM_PROMPT),
+            ("self_upgrade", SELF_UPGRADE_PROMPT),
         ]
 
         for name, prompt in adapter_defs:

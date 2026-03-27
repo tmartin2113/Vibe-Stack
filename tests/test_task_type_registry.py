@@ -123,9 +123,9 @@ class TestRegistryProjections:
 class TestDefaultRegistry:
     """Tests for the pre-populated default registry."""
 
-    def test_has_12_builtin_types(self):
+    def test_has_13_builtin_types(self):
         reg = create_default_registry()
-        assert len(reg) == 12
+        assert len(reg) == 13
 
     def test_all_builtins_are_builtin_source(self):
         reg = create_default_registry()
@@ -173,7 +173,7 @@ class TestPopulateFromSkillRegistry:
         skill_reg.get_all_custom_task_types.return_value = {}
         injected = populate_from_skill_registry(reg, skill_reg)
         assert injected == 0
-        assert len(reg) == 12
+        assert len(reg) == 13
 
 
 class TestRouterUsesRegistry:
