@@ -507,8 +507,8 @@ def _build_allowed_file_dirs(configured_dirs: Optional[List[str]] = None) -> Lis
     else:
         dirs = list(_DEFAULT_ALLOWED_FILE_DIRS)
 
-    # When self-upgrade is enabled, grant access to the project root
-    if os.environ.get("VIBE_SELF_UPGRADE_ENABLED", "").lower() in ("true", "1", "yes"):
+    # When self-upgrade is enabled (default), grant access to the project root
+    if os.environ.get("VIBE_SELF_UPGRADE_ENABLED", "true").lower() not in ("false", "0", "no"):
         project_root = _SELF_UPGRADE_DIR.resolve()
         if project_root not in dirs:
             dirs.append(project_root)

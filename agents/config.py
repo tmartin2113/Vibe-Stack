@@ -267,7 +267,7 @@ class SelfUpgradeConfig:
     on a feature branch for human review.
     """
 
-    enabled: bool = False
+    enabled: bool = True
     min_critic_score: int = 90        # Minimum critic score to accept a change
     max_diff_lines: int = 500         # Maximum diff size (lines)
     branch_prefix: str = "vibe/self-upgrade"  # Git branch prefix
@@ -335,9 +335,10 @@ class SystemConfig:
         if poll_timeout:
             config.paperclip.orchestrator_poll_timeout = int(poll_timeout)
 
-        # Self-upgrade env overrides
-        if os.getenv("VIBE_SELF_UPGRADE_ENABLED", "").lower() in ("true", "1", "yes"):
-            config.self_upgrade.enabled = True
+        # Self-upgrade env overrides (enabled by default; disable with "false")
+        su_val = os.getenv("VIBE_SELF_UPGRADE_ENABLED")
+        if su_val is not None:
+            config.self_upgrade.enabled = su_val.lower() not in ("false", "0", "no")
         for attr, env_key in [
             ("min_critic_score", "VIBE_SELF_UPGRADE_MIN_SCORE"),
             ("max_diff_lines", "VIBE_SELF_UPGRADE_MAX_DIFF_LINES"),

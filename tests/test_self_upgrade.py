@@ -56,9 +56,9 @@ def pipeline(tmp_path):
 
 class TestIsSelfUpgradeEnabled:
 
-    def test_disabled_by_default(self):
+    def test_enabled_by_default(self):
         with patch.dict(os.environ, {}, clear=True):
-            assert is_self_upgrade_enabled() is False
+            assert is_self_upgrade_enabled() is True
 
     def test_enabled_true(self):
         with patch.dict(os.environ, {"VIBE_SELF_UPGRADE_ENABLED": "true"}):
@@ -76,13 +76,17 @@ class TestIsSelfUpgradeEnabled:
         with patch.dict(os.environ, {"VIBE_SELF_UPGRADE_ENABLED": "false"}):
             assert is_self_upgrade_enabled() is False
 
-    def test_disabled_empty(self):
-        with patch.dict(os.environ, {"VIBE_SELF_UPGRADE_ENABLED": ""}):
+    def test_disabled_zero(self):
+        with patch.dict(os.environ, {"VIBE_SELF_UPGRADE_ENABLED": "0"}):
+            assert is_self_upgrade_enabled() is False
+
+    def test_disabled_no(self):
+        with patch.dict(os.environ, {"VIBE_SELF_UPGRADE_ENABLED": "no"}):
             assert is_self_upgrade_enabled() is False
 
     def test_case_insensitive(self):
-        with patch.dict(os.environ, {"VIBE_SELF_UPGRADE_ENABLED": "TRUE"}):
-            assert is_self_upgrade_enabled() is True
+        with patch.dict(os.environ, {"VIBE_SELF_UPGRADE_ENABLED": "FALSE"}):
+            assert is_self_upgrade_enabled() is False
 
 
 # ── UpgradeProposal.validate_paths ──────────────────────────────────
@@ -342,7 +346,7 @@ class TestSelfUpgradeConfig:
     def test_config_defaults(self):
         from agents.config import SelfUpgradeConfig
         cfg = SelfUpgradeConfig()
-        assert cfg.enabled is False
+        assert cfg.enabled is True
         assert cfg.min_critic_score == 90
         assert cfg.max_diff_lines == 500
         assert cfg.branch_prefix == "vibe/self-upgrade"
@@ -351,13 +355,13 @@ class TestSelfUpgradeConfig:
         from agents.config import SystemConfig
         config = SystemConfig()
         assert hasattr(config, "self_upgrade")
-        assert config.self_upgrade.enabled is False
+        assert config.self_upgrade.enabled is True
 
-    def test_env_override_enables(self):
+    def test_env_override_disables(self):
         from agents.config import SystemConfig
-        with patch.dict(os.environ, {"VIBE_SELF_UPGRADE_ENABLED": "true"}):
+        with patch.dict(os.environ, {"VIBE_SELF_UPGRADE_ENABLED": "false"}):
             config = SystemConfig.from_env()
-            assert config.self_upgrade.enabled is True
+            assert config.self_upgrade.enabled is False
 
     def test_env_override_min_score(self):
         from agents.config import SystemConfig

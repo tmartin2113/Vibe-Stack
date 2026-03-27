@@ -53,10 +53,12 @@ MAX_DIFF_LINES = 500
 
 
 def is_self_upgrade_enabled() -> bool:
-    """Check whether self-upgrade is enabled via env var."""
-    return os.environ.get("VIBE_SELF_UPGRADE_ENABLED", "").lower() in (
-        "true", "1", "yes",
-    )
+    """Check whether self-upgrade is enabled.
+
+    Enabled by default.  Set VIBE_SELF_UPGRADE_ENABLED=false to disable.
+    """
+    val = os.environ.get("VIBE_SELF_UPGRADE_ENABLED", "true")
+    return val.lower() not in ("false", "0", "no")
 
 
 def get_project_root() -> Path:
