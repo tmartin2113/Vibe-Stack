@@ -552,6 +552,25 @@ def _execute_checked_out_task(
         logger.error("Failed to post results: %s", e)
         metrics.increment("vibe_paperclip_api_errors_total", labels={"endpoint": "update_issue"})
 
+    # ── Step 9b: Post self-upgrade status (if applicable) ──
+    if final_state.get("upgrade_applied"):
+        upgrade_comment = _format_upgrade_comment(
+            description=final_state.get("upgrade_proposal_description", ""),
+            branch=final_state.get("upgrade_branch", ""),
+            commit=final_state.get("upgrade_commit", ""),
+        )
+        try:
+            client.add_comment(issue.id, upgrade_comment)
+            metrics.increment("vibe_paperclip_api_calls_total", labels={"endpoint": "add_comment"})
+        except PaperclipAPIError as e:
+            logger.warning("Failed to post self-upgrade comment (non-fatal): %s", e)
+    elif final_state.get("upgrade_signals"):
+        signal_count = len(final_state.get("upgrade_signals", []))
+        logger.info(
+            "Self-upgrade: %d signal(s) recorded (not yet enough to propose)",
+            signal_count,
+        )
+
     # ── Step 10: Report costs ──
     usage = _extract_usage(final_state)
     if config.paperclip.cost_reporting:
@@ -910,6 +929,25 @@ def _format_clarification_comment(questions: List[str]) -> str:
         lines.append(f"{i}. {q}")
     lines.append("\n_Please reply to this comment with your answers._")
     return "\n".join(lines)
+
+
+def _format_upgrade_comment(description: str, branch: str, commit: str) -> str:
+    """Format a self-upgrade notification comment for Paperclip."""
+    commit_short = commit[:8] if commit else "unknown"
+    return (
+        f"## Self-Upgrade Proposed\n\n"
+        f"The agent identified an opportunity to improve its own code and "
+        f"has committed a validated change for review.\n\n"
+        f"**Improvement:** {description}\n"
+        f"**Branch:** `{branch}`\n"
+        f"**Commit:** `{commit_short}`\n\n"
+        f"### Validation Gates Passed\n"
+        f"- Path validation\n"
+        f"- Diff size check\n"
+        f"- Full pytest suite\n"
+        f"- Bandit security scan\n\n"
+        f"_Please review and merge the branch if the changes look good._"
+    )
 
 
 def _validate_heartbeat_config(config: SystemConfig) -> List[str]:
