@@ -574,6 +574,10 @@ def create_agent_graph(adapter_registry: AdapterRegistry, tool_registry: Optiona
 
     workflow.add_node("inject_memory", inject_memory)
 
+    # ===== SELF-UPGRADE TRIGGER =====
+    from .self_upgrade_trigger import SelfUpgradeTrigger
+    shared_upgrade_trigger = SelfUpgradeTrigger()
+
     # ===== RESULT CACHE (Artifact Store) =====
     cache_config = getattr(config, 'cache', None) if config else None
     shared_artifact_store: Optional[ArtifactStore] = None
@@ -686,7 +690,7 @@ def create_agent_graph(adapter_registry: AdapterRegistry, tool_registry: Optiona
     from .skill_cleanup import cleanup_skills
 
     def skill_cleanup_wrapper(state: AgentState) -> AgentState:
-        """Track skill usage statistics, record outcomes, cache results, and clean up temp skills."""
+        """Track skill usage statistics, record outcomes, cache results, analyse for self-upgrade, and clean up temp skills."""
         result = cleanup_skills(
             state,
             skill_registry=shared_skill_registry,
@@ -717,6 +721,36 @@ def create_agent_graph(adapter_registry: AdapterRegistry, tool_registry: Optiona
                     num_iterations=result.get("iteration_count", 1),
                 )
                 result["cache_entry_stored"] = stored
+
+        # Analyse workflow outcome for self-upgrade signals
+        try:
+            from .self_upgrade_trigger import analyse_for_upgrade
+            from .self_upgrade import is_self_upgrade_enabled
+
+            if is_self_upgrade_enabled():
+                trigger_result = analyse_for_upgrade(
+                    result, trigger=shared_upgrade_trigger,
+                )
+                if trigger_result.signals:
+                    result["upgrade_signals"] = [
+                        {"category": s.category, "detail": s.detail}
+                        for s in trigger_result.signals
+                    ]
+                if trigger_result.should_propose:
+                    result["upgrade_proposal_ready"] = True
+                    result["upgrade_proposal_description"] = (
+                        trigger_result.proposal_description
+                    )
+                    result["upgrade_proposal_rationale"] = (
+                        trigger_result.proposal_rationale
+                    )
+                    result["upgrade_target_files"] = trigger_result.target_files
+                    logger.info(
+                        "Self-upgrade proposal ready: %s",
+                        trigger_result.proposal_description,
+                    )
+        except Exception as e:
+            logger.debug("Self-upgrade analysis skipped: %s", e)
 
         return result
 
