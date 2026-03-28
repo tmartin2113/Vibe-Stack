@@ -5,7 +5,7 @@ Defines the common interface that all backend implementations must follow.
 """
 
 from abc import ABC, abstractmethod
-from typing import Dict, Any, Optional
+from typing import Dict, Any, List, Optional
 
 
 class BackendBase(ABC):
@@ -38,7 +38,7 @@ class BackendBase(ABC):
         prompt: str,
         max_tokens: Optional[int] = None,
         temperature: Optional[float] = None,
-        stop: Optional[list] = None
+        stop: Optional[List[str]] = None
     ) -> Dict[str, Any]:
         """
         Generate text completion from the LLM.

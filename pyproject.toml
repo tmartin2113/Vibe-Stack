@@ -39,21 +39,21 @@ agents = [
     "pyyaml>=6.0,<7.0.0",
 ]
 sandbox = [
-    "opensandbox>=0.1.4",
-    "opensandbox-code-interpreter>=0.1.2",
+    "opensandbox>=0.1.4,<1.0.0",
+    "opensandbox-code-interpreter>=0.1.2,<1.0.0",
 ]
 tools = [
-    "beautifulsoup4>=4.12.0",
-    "gitpython>=3.1.0",
+    "beautifulsoup4>=4.12.0,<5.0.0",
+    "gitpython>=3.1.0,<4.0.0",
 ]
 dev = [
     "pytest>=7.4.0,<9.0.0",
-    "pytest-cov>=4.1.0,<8.0.0",
+    "pytest-cov>=4.1.0,<6.0.0",
     "pytest-timeout>=2.1.0,<3.0.0",
     "mypy>=1.5.0,<2.0.0",
     "ruff>=0.1.0,<1.0.0",
-    "black>=23.0.0,<26.0.0",
-    "pre-commit>=3.4.0,<5.0.0",
+    "black>=23.0.0,<25.0.0",
+    "pre-commit>=3.4.0,<4.0.0",
 ]
 
 [project.scripts]
@@ -61,7 +61,7 @@ vibe = "vibe.cli:main"
 vibe-agents = "agents.main:main"
 
 [tool.setuptools]
-packages = ["vibe", "vibe.backends", "agents", "agents.tools", "agents.sandbox"]
+packages = ["vibe", "vibe.backends", "agents", "agents.tools", "agents.sandbox", "agents.storage"]
 
 [tool.setuptools.package-data]
 vibe = ["py.typed"]
