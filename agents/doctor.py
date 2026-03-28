@@ -429,7 +429,7 @@ def check_memory() -> CheckResult:
             try:
                 emb_row = conn.execute("SELECT COUNT(*) FROM memory_embeddings").fetchone()
                 embedded = emb_row[0] if emb_row else 0
-            except Exception:
+            except sqlite3.OperationalError:
                 embedded = 0
         finally:
             conn.close()
@@ -491,7 +491,7 @@ def check_message_store() -> CheckResult:
                 embedded = conn.execute(
                     "SELECT COUNT(*) FROM message_embeddings"
                 ).fetchone()[0]
-            except Exception:
+            except sqlite3.OperationalError:
                 embedded = 0
         finally:
             conn.close()

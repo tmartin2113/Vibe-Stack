@@ -13,6 +13,13 @@ import os
 import threading
 from typing import Any, List, Optional, Sequence, Tuple
 
+try:
+    import psycopg2
+    import psycopg2.pool
+    import psycopg2.extras
+except ImportError:
+    psycopg2 = None  # type: ignore[assignment]
+
 from .base import StorageBackend
 
 logger = logging.getLogger(__name__)
@@ -51,11 +58,7 @@ class PostgresBackend(StorageBackend):
         max_connections: int = 10,
         **connection_kwargs,
     ):
-        try:
-            import psycopg2
-            import psycopg2.pool
-            import psycopg2.extras
-        except ImportError:
+        if psycopg2 is None:
             raise ImportError(
                 "PostgreSQL backend requires psycopg2. "
                 "Install with: pip install psycopg2-binary"
@@ -93,7 +96,7 @@ class PostgresBackend(StorageBackend):
             with conn.cursor() as cur:
                 cur.execute(sql, params)
             conn.commit()
-        except Exception:
+        except psycopg2.Error:
             conn.rollback()
             raise
         finally:
@@ -105,7 +108,7 @@ class PostgresBackend(StorageBackend):
             with conn.cursor() as cur:
                 cur.executemany(sql, params_list)
             conn.commit()
-        except Exception:
+        except psycopg2.Error:
             conn.rollback()
             raise
         finally:
@@ -139,7 +142,7 @@ class PostgresBackend(StorageBackend):
             with conn.cursor() as cur:
                 cur.execute(sql)
             conn.commit()
-        except Exception:
+        except psycopg2.Error:
             conn.rollback()
             raise
         finally:
@@ -169,7 +172,7 @@ class PostgresBackend(StorageBackend):
                 "SELECT 1 FROM pg_extension WHERE extname = 'vector'"
             )
             return row is not None
-        except Exception:
+        except psycopg2.Error:
             return False
 
     def close(self) -> None:

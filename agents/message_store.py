@@ -175,7 +175,7 @@ class MessageStore:
         try:
             yield conn
             conn.commit()
-        except Exception:
+        except sqlite3.DatabaseError:
             conn.rollback()
             raise
         finally:
