@@ -9,7 +9,7 @@ Centralized configuration for:
 """
 
 from pathlib import Path
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, TypedDict, Literal
 from dataclasses import dataclass, field
 import os
 from dotenv import load_dotenv
@@ -18,13 +18,30 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
+class GenerationParams(TypedDict, total=False):
+    """Per-task LLM generation parameters."""
+    temperature: float
+    top_p: float
+    max_tokens: int
+    repetition_penalty: float
+
+
+# Type-safe string enums for configuration values
+BackendType = Literal["vllm", "openai", "anthropic"]
+PoolStrategy = Literal["failover", "round_robin", "least_loaded"]
+StorageBackendType = Literal["sqlite", "postgres"]
+CacheBackendType = Literal["memory", "redis"]
+SandboxBackendType = Literal["opensandbox", "subprocess"]
+SkillTier = Literal["official", "local", "temp"]
+
+
 @dataclass
 class ModelConfig:
     """Base model configuration"""
     model_name: str = "Qwen/Qwen3.5-9B"
 
     # Backend — vLLM only
-    backend: str = "vllm"
+    backend: BackendType = "vllm"
 
 
 @dataclass
@@ -40,7 +57,7 @@ class GenerationConfig:
     """Default generation parameters for different tasks"""
 
     # Per-task configs
-    configs: Dict[str, Dict[str, Any]] = field(default_factory=lambda: {
+    configs: Dict[str, GenerationParams] = field(default_factory=lambda: {
         "code": {
             "temperature": 0.3,
             "top_p": 0.95,
@@ -83,7 +100,7 @@ class GenerationConfig:
         }
     })
 
-    def get_config(self, config_name: str) -> Dict[str, Any]:
+    def get_config(self, config_name: str) -> GenerationParams:
         """Get generation config for a specific task/adapter"""
         return self.configs.get(config_name, self.configs["general"])
 
@@ -222,11 +239,11 @@ class SpendingConfig:
 class BackendPoolConfig:
     """Backend pool configuration for multi-backend failover / load balancing."""
 
-    strategy: str = "failover"  # "failover", "round_robin", "least_loaded"
+    strategy: PoolStrategy = "failover"  # "failover", "round_robin", "least_loaded"
     max_consecutive_failures: int = 3
     recovery_timeout: int = 60  # seconds before probing an open circuit
     fallback_urls: List[str] = field(default_factory=list)  # ["host:port", ...]
-    fallback_backend_type: str = "vllm"  # "vllm", "openai", "anthropic"
+    fallback_backend_type: BackendType = "vllm"  # "vllm", "openai", "anthropic"
 
 
 @dataclass
@@ -240,10 +257,10 @@ class StorageConfig:
     """
 
     # Persistent storage: "sqlite" (local) or "postgres" (multi-node)
-    storage_backend: str = "sqlite"
+    storage_backend: StorageBackendType = "sqlite"
 
     # Cache: "memory" (local) or "redis" (multi-node)
-    cache_backend: str = "memory"
+    cache_backend: CacheBackendType = "memory"
 
     # PostgreSQL connection (when storage_backend=postgres)
     database_url: str = ""  # VIBE_DATABASE_URL

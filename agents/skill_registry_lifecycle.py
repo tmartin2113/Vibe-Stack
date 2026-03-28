@@ -14,6 +14,7 @@ from typing import Any, Dict, List, Optional
 import logging
 
 from .skill_security import SkillSecurity, SkillSecurityError
+from .config import SkillTier
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +41,7 @@ class SkillRegistryLifecycleMixin:
         self,
         name: str,
         description: str,
-        tier: str,
+        tier: SkillTier,
         task_types: List[str],
         skill_path: Path
     ):

@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, List
+from typing import TYPE_CHECKING, List, Literal
+
+SandboxBackendType = Literal["opensandbox", "subprocess"]
 
 if TYPE_CHECKING:
     from ..resource_allocator import ResourcePlan
@@ -19,7 +21,7 @@ class SandboxConfig:
     """
 
     # Backend (OpenSandbox is the only supported execution backend)
-    backend: str = "opensandbox"
+    backend: SandboxBackendType = "opensandbox"
 
     # OpenSandbox server connection
     server_url: str = "http://opensandbox:8080"

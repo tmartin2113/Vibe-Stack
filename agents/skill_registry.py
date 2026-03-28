@@ -14,12 +14,12 @@ import urllib.request
 import urllib.error
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple, Any
+from typing import Dict, List, Optional, Tuple, Any, TypedDict
 from dataclasses import dataclass
 import logging
 
 from .skill_security import SkillSecurity, SkillSecurityError
-from .config import SkillsConfig, SkillSourceConfig
+from .config import SkillsConfig, SkillSourceConfig, SkillTier
 from .skill_registry_index import SkillRegistryIndexMixin
 from .skill_registry_lifecycle import SkillRegistryLifecycleMixin
 from .skill_registry_workspace import SkillRegistryWorkspaceMixin
@@ -33,12 +33,23 @@ from .skill_registry_utils import (
 logger = logging.getLogger(__name__)
 
 
+class TierStats(TypedDict):
+    count: int
+    total_usage: int
+    avg_score: float
+
+
+class RegistryStats(TypedDict):
+    total_skills: int
+    by_tier: Dict[str, TierStats]
+
+
 @dataclass
 class SkillMetadata:
     """Metadata for a skill."""
     name: str
     description: str
-    tier: str  # "official", "local", or "temp"
+    tier: SkillTier  # "official", "local", or "temp"
     path: str
     task_types: List[str]
     usage_count: int = 0
@@ -445,7 +456,7 @@ class SkillRegistry(
             return set(DEFAULT_ALLOWED_TOOLS)
         return self.security.parse_allowed_tools(content)
 
-    def get_stats(self) -> Dict[str, Any]:
+    def get_stats(self) -> RegistryStats:
         """Get statistics about the skill registry."""
         stats: Dict[str, Any] = {
             "total_skills": 0,
