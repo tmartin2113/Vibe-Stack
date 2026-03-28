@@ -29,8 +29,8 @@ class OutputNodesMixin:
         - The actual output
         - Metadata
         """
-        final_output = state.get("current_output", "")
-        final_score = state.get("critic_score", 0)
+        final_output = state.get("specialist_output", "")
+        final_score = state.get("output_critic_score", 0)
         iterations = state.get("iteration_count", 0)
 
         message = f"""✅ **Task Completed** (Score: {final_score}/100)

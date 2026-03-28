@@ -3,6 +3,9 @@ State Definition for Multi-Agent System
 
 This module defines the state object that flows through the workflow graph,
 tracking all context, outputs, and metadata across iterations.
+
+Fields are organized into semantic groups via TypedDict inheritance.
+AgentState composes all groups, so existing state["field"] access is unchanged.
 """
 
 from typing import TypedDict, Literal, Optional, Dict, List, Any
@@ -13,55 +16,73 @@ from datetime import datetime
 MAX_HISTORY_ENTRIES = 10
 
 
-class AgentState(TypedDict, total=False):
-    """
-    State object that flows through the workflow graph.
+# ===== Semantic State Groups =====
+# Each group is a TypedDict that AgentState inherits from.
+# This provides IDE navigation and logical grouping without
+# breaking any existing flat-key access patterns.
 
-    Using total=False allows optional fields, but we mark required ones
-    in the docstrings.
-    """
 
-    # ===== INPUT (Required) =====
+class InputState(TypedDict, total=False):
+    """Required input fields."""
+
     user_request: str  # Original user request
     session_id: str  # Unique session identifier
 
-    # ===== INTENT CLASSIFICATION (Before Routing) =====
+
+class IntentState(TypedDict, total=False):
+    """Intent classification (before routing)."""
+
     intent: Literal["conversational", "research", "planning", "code_generation"]
     intent_confidence: float  # 0.0-1.0 confidence in intent classification
 
-    # ===== ROUTING & CLASSIFICATION =====
+
+class RoutingState(TypedDict, total=False):
+    """Routing and task classification."""
+
     task_type: Literal["code", "creative", "research", "general"]
-
-    # ===== ITERATION TRACKING =====
-    iteration_count: int  # Current iteration number (starts at 0)
-    max_iterations: int  # Maximum allowed iterations (default: 3)
-
-    # ===== VIBE NODE OUTPUT (Specification Builder) =====
-    specification: str  # Detailed specification/prompt for specialist
-    clarification_needed: bool  # Does Vibe need more info from user?
-    clarification_questions: List[str]  # Questions to ask user
-
-    # ===== CRITIC STAGE 1 (Specification Validation) =====
-    spec_critic_scores: Dict[str, int]  # Scores for specification quality
-    spec_critic_score: int  # Overall specification score (0-100)
-    spec_critic_feedback: str  # Feedback on specification completeness
-
-    # ===== ROUTER NODE OUTPUT =====
     routed_task_type: str  # Classified task (e.g., "test_generation", "security_audit")
     specialist_adapter: str  # Which specialist adapter to use
     routing_confidence: float  # Router's confidence in classification
 
-    # ===== SKILL MANAGEMENT (Three-Tier System) =====
+
+class IterationState(TypedDict, total=False):
+    """Iteration tracking."""
+
+    iteration_count: int  # Current iteration number (starts at 0)
+    max_iterations: int  # Maximum allowed iterations (default: 3)
+
+
+class SpecState(TypedDict, total=False):
+    """Specification builder output."""
+
+    specification: str  # Detailed specification/prompt for specialist
+    clarification_needed: bool  # Does Vibe need more info from user?
+    clarification_questions: List[str]  # Questions to ask user
+
+
+class SpecCriticState(TypedDict, total=False):
+    """Critic stage 1 — specification validation."""
+
+    spec_critic_scores: Dict[str, int]  # Scores for specification quality
+    spec_critic_score: int  # Overall specification score (0-100)
+    spec_critic_feedback: str  # Feedback on specification completeness
+
+
+class SkillState(TypedDict, total=False):
+    """Skill management (three-tier system)."""
+
     discovered_skills: List[Dict[str, Any]]  # Skills found during routing
     skills_in_use: List[str]  # Active skill names being used
     skill_quality_scores: Dict[str, int]  # Quality scores for each skill (0-100)
     loaded_skills: List[Dict[str, Any]]  # Loaded skill content (SKILL.md)
     skills_cleaned_up: bool  # Cleanup complete marker
-    # Workspace tier: project-specific skills, cleared after each task
-    workspace_dir: Optional[str]       # Project repo being worked on (scanned for skills/)
-    skill_repo_dirs: List[str]         # Additional repos to scan for skills
+    workspace_dir: Optional[str]  # Project repo being worked on (scanned for skills/)
+    skill_repo_dirs: List[str]  # Additional repos to scan for skills
 
-    # ===== MULTI-SPECIALIST TASK DECOMPOSITION =====
+
+class DecompositionState(TypedDict, total=False):
+    """Multi-specialist task decomposition."""
+
     requires_decomposition: bool  # Does task require multiple specialists?
     sub_tasks: List[Dict[str, Any]]  # List of sub-tasks for multi-specialist workflows
     current_sub_task_index: int  # Index of currently executing sub-task
@@ -69,59 +90,70 @@ class AgentState(TypedDict, total=False):
     parallel_execution: bool  # Can sub-tasks execute in parallel?
     aggregation_strategy: str  # How to combine outputs: "merge", "sequential", "report"
 
-    # ===== SPECIALIST NODE OUTPUT =====
+
+class SpecialistOutputState(TypedDict, total=False):
+    """Specialist node output."""
+
     specialist_output: str  # Output from specialist adapter
     specialist_iteration_count: int  # Iterations at specialist level
     specialist_max_iterations: int  # Max iterations for specialist (default: 3)
 
-    # ===== CRITIC STAGE 2 (Output Validation) =====
+
+class OutputCriticState(TypedDict, total=False):
+    """Critic stage 2 — output validation."""
+
     output_critic_scores: Dict[str, int]  # Scores for specialist output
     output_critic_score: int  # Overall output score (0-100)
     output_critic_feedback: str  # Feedback on output quality
 
-    # ===== AGGREGATION (Multi-Specialist) =====
+
+class AggregationState(TypedDict, total=False):
+    """Aggregation (multi-specialist)."""
+
     aggregated_output: str  # Combined output from all specialists
     final_aggregation_score: int  # Final critic score for aggregated output
 
-    # Legacy fields (for backwards compatibility)
-    current_output: str  # Alias for specialist_output
-    critic_scores: Dict[str, int]  # Alias for output_critic_scores
-    critic_score: int  # Alias for output_critic_score
-    critic_feedback: str  # Alias for output_critic_feedback
 
-    # ===== QUALITY GATE DECISION =====
+class QualityGateState(TypedDict, total=False):
+    """Quality gate decision."""
+
     quality_gate_decision: Literal["pass", "refine", "fail", "max_iterations"]
     quality_threshold: int  # Score needed to pass (default: 85)
 
-    # ===== COMPLEXITY TIERING =====
+
+class ComplexityState(TypedDict, total=False):
+    """Complexity tiering."""
+
     complexity_tier: str  # "fast" | "standard" | "full"
     effective_quality_threshold: int  # Tier-adjusted quality threshold
     heuristic_critic_score: int  # Heuristic critic score (0-100)
     heuristic_critic_passed: bool  # Whether heuristic approved output
 
-    # ===== MEMORY CONTEXT (auto-injected) =====
+
+class MemoryState(TypedDict, total=False):
+    """Memory context (auto-injected)."""
+
     memory_context: str  # Relevant memories auto-injected for the specialist
     pending_messages: List[Dict[str, Any]]  # Raw message dicts from MessageStore
 
-    # ===== TOOL CALLING =====
+
+class ToolState(TypedDict, total=False):
+    """Tool calling."""
+
     tool_calls_made: List[Dict[str, Any]]  # History of tool executions
 
-    # ===== CONVERSATION HISTORY =====
-    # Stores summarized context from previous iterations
-    conversation_history: List[Dict[str, Any]]
 
-    # ===== OUTPUT & METADATA =====
-    final_output: str  # The output that passed quality gate
-    final_score: int  # Final critic score
-    mattermost_message: str  # Formatted message for Mattermost posting
-    mattermost_message_id: Optional[str]  # Posted message ID
+class CacheState(TypedDict, total=False):
+    """Result cache."""
 
-    # ===== RESULT CACHE =====
     cache_hit: bool  # True if specialist output was served from cache
     cache_key: str  # SHA-256 hash used for cache lookup
     cache_entry_stored: bool  # True if this run's result was written to cache
 
-    # ===== SELF-UPGRADE =====
+
+class UpgradeState(TypedDict, total=False):
+    """Self-upgrade."""
+
     upgrade_signals: List[Dict[str, Any]]  # Signals detected this run
     upgrade_proposal_ready: bool  # True if enough signals accumulated
     upgrade_proposal_description: str  # What should be upgraded
@@ -130,26 +162,63 @@ class AgentState(TypedDict, total=False):
     upgrade_commit: str  # Git commit hash of the upgrade
     upgrade_errors: List[str]  # Errors from pipeline execution
 
-    # ===== PARALLEL EXECUTION =====
-    parallel_execution_errors: List[Dict[str, Any]]  # Errors from parallel sub-tasks
 
-    # ===== SIMULATION (MiroFish-inspired integration prediction) =====
+class SimulationState(TypedDict, total=False):
+    """Simulation (MiroFish-inspired integration prediction)."""
+
     simulation_report: Optional[str]  # Integration risk report from sidecar sim
     simulation_conflicts: List[Dict[str, str]]  # Structured [{level, description}]
     simulation_risk_level: str  # "low", "medium", "high"
     simulation_skipped: bool  # True if hardware/config gated out
 
-    # Timing information
+
+class OutputMetadataState(TypedDict, total=False):
+    """Output, metadata, and timing."""
+
+    final_output: str  # The output that passed quality gate
+    final_score: int  # Final critic score
+    mattermost_message: str  # Formatted message for Mattermost posting
+    mattermost_message_id: Optional[str]  # Posted message ID
+    conversation_history: List[Dict[str, Any]]  # Summarized context from prior iterations
+    parallel_execution_errors: List[Dict[str, Any]]  # Errors from parallel sub-tasks
     start_time: str
     end_time: Optional[str]
     total_time_seconds: Optional[float]
-
-    # Adapter tracking
     adapters_used: List[str]  # Track which adapters were loaded
     current_adapter: Optional[str]  # Currently active adapter
-
-    # Debug/logging
     debug_info: Dict[str, Any]
+
+
+class AgentState(
+    InputState,
+    IntentState,
+    RoutingState,
+    IterationState,
+    SpecState,
+    SpecCriticState,
+    SkillState,
+    DecompositionState,
+    SpecialistOutputState,
+    OutputCriticState,
+    AggregationState,
+    QualityGateState,
+    ComplexityState,
+    MemoryState,
+    ToolState,
+    CacheState,
+    UpgradeState,
+    SimulationState,
+    OutputMetadataState,
+    total=False,
+):
+    """
+    State object that flows through the workflow graph.
+
+    Composes all semantic state groups via TypedDict inheritance.
+    All existing state["field"] access patterns continue to work unchanged.
+    """
+
+    pass
 
 
 class ConversationHistoryEntry(TypedDict):
@@ -262,13 +331,13 @@ def add_to_history(state: AgentState) -> AgentState:
 
     This creates a summarized entry to prevent context explosion.
     """
-    if state.get("current_output") and state.get("critic_score") is not None:
+    if state.get("specialist_output") and state.get("output_critic_score") is not None:
         entry = ConversationHistoryEntry(
             iteration=state["iteration_count"],
             specification=state.get("specification", "")[:200] + "...",  # Truncate
-            output=state.get("current_output", "")[:300] + "...",  # Truncate
-            score=state["critic_score"],
-            feedback_summary=_summarize_feedback(state.get("critic_feedback", "")),
+            output=state.get("specialist_output", "")[:300] + "...",  # Truncate
+            score=state["output_critic_score"],
+            feedback_summary=_summarize_feedback(state.get("output_critic_feedback", "")),
             timestamp=datetime.now().isoformat()
         )
 
@@ -338,16 +407,16 @@ def get_context_for_node(state: AgentState, node_name: str) -> Dict[str, Any]:
     elif node_name == "critic":
         # Critic needs: specification, output, task type for domain-specific evaluation
         context["specification"] = state.get("specification", "")
-        context["generated_output"] = state.get("current_output", "")
+        context["generated_output"] = state.get("specialist_output", "")
         context["routed_task_type"] = state.get("routed_task_type", "general")
         context["specialist_adapter"] = state.get("specialist_adapter", "")
 
     elif node_name == "refinement":
         # Refinement needs: critique + specialist type for targeted improvement plans
-        context["critic_score"] = state.get("critic_score", 0)
-        context["critic_scores"] = state.get("critic_scores", {})
-        context["critic_feedback"] = state.get("critic_feedback", "")
-        context["current_output"] = state.get("current_output", "")
+        context["output_critic_score"] = state.get("output_critic_score", 0)
+        context["output_critic_scores"] = state.get("output_critic_scores", {})
+        context["output_critic_feedback"] = state.get("output_critic_feedback", "")
+        context["specialist_output"] = state.get("specialist_output", "")
         context["iterations_remaining"] = state.get("max_iterations", 3) - state.get("iteration_count", 0)
         context["specialist_adapter"] = state.get("specialist_adapter", "")
         context["routed_task_type"] = state.get("routed_task_type", "general")
@@ -392,7 +461,7 @@ def finalize_state(state: AgentState) -> AgentState:
     state["total_time_seconds"] = (end - start).total_seconds()
 
     # Set final output and score
-    state["final_output"] = state.get("current_output", "")
-    state["final_score"] = state.get("critic_score", 0)
+    state["final_output"] = state.get("specialist_output", "")
+    state["final_score"] = state.get("output_critic_score", 0)
 
     return state

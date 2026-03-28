@@ -229,12 +229,6 @@ REASONING:
         state["output_critic_feedback"] = feedback
         state["adapters_used"] = state.get("adapters_used", []) + ["critic"]
 
-        # Update legacy aliases
-        state["critic_scores"] = scores
-        state["critic_score"] = scores.get("overall", 0)
-        state["critic_feedback"] = feedback
-        state["current_output"] = output  # Legacy alias
-
         logger.info(f"Output Critic scores: Overall={scores.get('overall', 0)}/100")
 
         return state
@@ -573,12 +567,6 @@ REASONING:
 
         # Copy aggregated output to specialist_output for compatibility
         state["specialist_output"] = aggregated
-        state["current_output"] = aggregated
-
-        # Update legacy aliases
-        state["critic_scores"] = scores
-        state["critic_score"] = scores.get("overall", 0)
-        state["critic_feedback"] = feedback
 
         logger.info(f"Final Aggregated Critic score: {scores.get('overall', 0)}/100")
 

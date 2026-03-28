@@ -51,10 +51,8 @@ def post_sigterm_partial(
     partial_state: Dict[str, Any],
 ) -> None:
     """Post partial results to Paperclip when SIGTERM interrupts the workflow."""
-    output = partial_state.get("current_output", "") or partial_state.get(
-        "specialist_output", ""
-    )
-    score = partial_state.get("critic_score", 0) or partial_state.get(
+    output = partial_state.get("specialist_output", "")
+    score = partial_state.get("output_critic_score", 0) or partial_state.get(
         "heuristic_critic_score", 0
     )
     last_node = partial_state.get("last_node", "unknown")

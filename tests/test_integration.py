@@ -354,10 +354,10 @@ class TestSingleSpecialistPath:
         assert "merge sort" in result["specification"].lower()
 
         # Verify specialist produced output
-        assert result.get("specialist_output") or result.get("current_output")
+        assert result.get("specialist_output")
 
         # Verify heuristic critic scored the output
-        assert result.get("heuristic_critic_score", 0) > 0 or result.get("critic_score", 0) > 0
+        assert result.get("heuristic_critic_score", 0) > 0 or result.get("output_critic_score", 0) > 0
 
         # Verify formatting happened
         assert result.get("mattermost_message"), "Should have formatted Mattermost message"
@@ -402,7 +402,7 @@ class TestRefinementLoop:
         result = graph.invoke(state)
 
         # Pipeline should complete with output
-        assert result.get("specialist_output") or result.get("current_output")
+        assert result.get("specialist_output")
 
 
 # ===== DECISION FUNCTIONS WITH REALISTIC STATE =====
@@ -519,10 +519,10 @@ class TestConversationHistoryBounding:
 
     def test_history_truncated_at_max(self):
         state = create_initial_state("test")
-        state["current_output"] = "output"
-        state["critic_score"] = 80
+        state["specialist_output"] = "output"
+        state["output_critic_score"] = 80
         state["specification"] = "prompt"
-        state["critic_feedback"] = "feedback"
+        state["output_critic_feedback"] = "feedback"
 
         for i in range(20):
             state["iteration_count"] = i
@@ -532,10 +532,10 @@ class TestConversationHistoryBounding:
 
     def test_history_keeps_most_recent(self):
         state = create_initial_state("test")
-        state["current_output"] = "output"
-        state["critic_score"] = 80
+        state["specialist_output"] = "output"
+        state["output_critic_score"] = 80
         state["specification"] = "prompt"
-        state["critic_feedback"] = "feedback"
+        state["output_critic_feedback"] = "feedback"
 
         for i in range(15):
             state["iteration_count"] = i
@@ -548,10 +548,10 @@ class TestConversationHistoryBounding:
 
     def test_history_under_max_not_truncated(self):
         state = create_initial_state("test")
-        state["current_output"] = "output"
-        state["critic_score"] = 80
+        state["specialist_output"] = "output"
+        state["output_critic_score"] = 80
         state["specification"] = "prompt"
-        state["critic_feedback"] = "feedback"
+        state["output_critic_feedback"] = "feedback"
 
         for i in range(5):
             state["iteration_count"] = i
@@ -587,7 +587,6 @@ class TestAgentNodeCore:
         state = create_initial_state("Write a function")
         state["specification"] = "Implement merge sort..."
         state["specialist_output"] = SPECIALIST_OUTPUT
-        state["current_output"] = SPECIALIST_OUTPUT
         state["routed_task_type"] = "code"
         state["specialist_adapter"] = "code_expert"
 
@@ -603,8 +602,8 @@ class TestAgentNodeCore:
         config = _make_config()
         nodes = AgentNodes(registry, create_default_tool_registry(sandbox_pool=MagicMock()), config=config)
         state = create_initial_state("Write a function")
-        state["current_output"] = "def sort(lst): return sorted(lst)"
-        state["critic_score"] = 90
+        state["specialist_output"] = "def sort(lst): return sorted(lst)"
+        state["output_critic_score"] = 90
         state["iteration_count"] = 1
 
         result = nodes.format_for_mattermost(state)

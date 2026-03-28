@@ -124,7 +124,7 @@ class TestExecuteWithSpecialist:
         )
         result = nodes.execute_with_specialist(state)
         assert result["specialist_output"] == "A beautiful poem"
-        assert result["current_output"] == "A beautiful poem"
+        assert result["specialist_output"] == "A beautiful poem"
         assert "creative_writer" in result["adapters_used"]
 
     def test_skill_content_truncation(self):

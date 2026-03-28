@@ -94,13 +94,9 @@ def completed_state(initial_state):
         specialist_adapter="code_expert",
         routing_confidence=0.9,
         specialist_output="def merge_sort(lst):\n    if len(lst) <= 1:\n        return lst\n    ...",
-        current_output="def merge_sort(lst):\n    if len(lst) <= 1:\n        return lst\n    ...",
         output_critic_score=88,
         output_critic_scores={"correctness": 90, "efficiency": 85, "readability": 90},
         output_critic_feedback="Good implementation. Minor efficiency concern.",
-        critic_score=88,
-        critic_scores={"correctness": 90, "efficiency": 85, "readability": 90},
-        critic_feedback="Good implementation. Minor efficiency concern.",
         quality_gate_decision="pass",
         iteration_count=1,
     )

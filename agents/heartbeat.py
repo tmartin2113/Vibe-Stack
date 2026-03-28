@@ -525,8 +525,8 @@ def _execute_checked_out_task(
             )
 
     # ── Step 9: Post results ──
-    output = final_state.get("final_output", final_state.get("current_output", ""))
-    score = final_state.get("final_score", final_state.get("critic_score", final_state.get("output_critic_score", 0)))
+    output = final_state.get("final_output", final_state.get("specialist_output", ""))
+    score = final_state.get("final_score", final_state.get("output_critic_score", 0))
     quality_threshold = config.workflow.quality_threshold
 
     logger.info(

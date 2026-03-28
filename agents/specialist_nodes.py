@@ -361,7 +361,6 @@ Use the above clarification answers to inform your solution. Provide a complete 
                     clar_result.unresolved if clar_result.unresolved else questions
                 )
                 state["specialist_output"] = output
-                state["current_output"] = output
                 state["adapters_used"] = state.get("adapters_used", []) + [specialist_name]
                 state["tool_calls_made"] = state.get("tool_calls_made", []) + tool_results_history
                 logger.info(
@@ -473,7 +472,6 @@ If you're satisfied with the results, provide your final output without more too
         logger.debug(f"Output: {output[:100]}...")
 
         state["specialist_output"] = output
-        state["current_output"] = output  # Legacy alias
         state["adapters_used"] = state.get("adapters_used", []) + [specialist_name]
         state["tool_calls_made"] = state.get("tool_calls_made", []) + tool_results_history
 
@@ -488,16 +486,16 @@ If you're satisfied with the results, provide your final output without more too
         routed_task_type = state.get("routed_task_type", "general")
         user_request = state.get("user_request", "")
 
-        prompt = f"""The {routed_task_type.replace('_', ' ')} output scored {context.get('critic_score', 0)}/100. Plan refinements.
+        prompt = f"""The {routed_task_type.replace('_', ' ')} output scored {context.get('output_critic_score', 0)}/100. Plan refinements.
 
 **Original User Request**: {user_request}
 
 **Specialist**: {specialist_name} ({routed_task_type.replace('_', ' ')})
 
 **Critic Scores**:
-{self._format_scores(context.get('critic_scores', {}))}
+{self._format_scores(context.get('output_critic_scores', {}))}
 
-**Critic Feedback**: {context.get('critic_feedback', 'N/A')}
+**Critic Feedback**: {context.get('output_critic_feedback', 'N/A')}
 
 **Iteration**: {context['iteration']}/{context['iteration'] + context.get('iterations_remaining', 0)}
 

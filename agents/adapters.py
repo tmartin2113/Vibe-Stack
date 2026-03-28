@@ -7,8 +7,20 @@ tasks using system prompts and per-task generation configs.
 The AdapterRegistry manages switching between adapters during workflow execution.
 """
 
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, Union
+from typing_extensions import TypedDict, Unpack
 import logging
+
+
+class GenerateKwargs(TypedDict, total=False):
+    """Type-safe keyword arguments for adapter generate() calls."""
+
+    temperature: float
+    max_tokens: int
+    top_p: float
+    stop: Optional[List[str]]
+    history: List[Dict[str, str]]
+    system_prompt: str
 
 logger = logging.getLogger(__name__)
 
@@ -36,17 +48,13 @@ class PromptAdapter:
         self.base_model = base_model
         self.config = config or {}
 
-    def generate(self, prompt: str, **kwargs) -> str:
+    def generate(self, prompt: str, **kwargs: Unpack[GenerateKwargs]) -> str:
         """
         Generate using system prompt + base model.
 
         Args:
             prompt: User/task prompt
-            **kwargs: Generation parameters (temperature, max_tokens, top_p, etc.)
-                      Special kwarg 'history': List[Dict[str, str]] of prior turns
-                      to prepend before the current prompt.
-                      Special kwarg 'system_prompt': Override the adapter's default
-                      system prompt for this call.
+            **kwargs: Typed generation parameters (see GenerateKwargs).
 
         Returns:
             Generated response

@@ -141,7 +141,7 @@ class TestWorkflowFactoryProgress:
     @patch("agents.workflow_factory.create_backend_from_config")
     def test_partial_state_updated(self, mock_backend, mock_graph):
         """partial_state dict should be updated with latest state."""
-        fake_state = {"current_output": "hello", "last_node": "specialist"}
+        fake_state = {"specialist_output": "hello", "last_node": "specialist"}
         mock_compiled = MagicMock()
         mock_compiled.stream.return_value = iter([
             {"specialist": fake_state},
@@ -156,5 +156,5 @@ class TestWorkflowFactoryProgress:
             partial_state=partial,
         )
 
-        assert partial.get("current_output") == "hello"
+        assert partial.get("specialist_output") == "hello"
         assert partial.get("last_node") == "specialist"

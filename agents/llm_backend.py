@@ -8,8 +8,18 @@ Adapts backend API to work with the multi-agent adapter system.
 import logging
 import os
 from typing import Dict, Any, List, Optional
+from typing_extensions import TypedDict
 from pathlib import Path
 import sys
+
+
+class LLMGenerateKwargs(TypedDict, total=False):
+    """Type-safe keyword arguments for LLMBackend.generate() calls."""
+
+    temperature: float
+    max_tokens: int
+    stop: Optional[List[str]]
+    chat_template_kwargs: Optional[Dict[str, Any]]
 
 from .llm_retry import retry_llm_call, DEFAULT_MAX_RETRIES, DEFAULT_BASE_DELAY
 
@@ -29,8 +39,7 @@ class LLMBackend:
     """
 
     def __init__(self, model: str, host: str = "localhost", port: Optional[int] = None,
-                 max_retries: int = DEFAULT_MAX_RETRIES, retry_base_delay: float = DEFAULT_BASE_DELAY,
-                 **kwargs):
+                 max_retries: int = DEFAULT_MAX_RETRIES, retry_base_delay: float = DEFAULT_BASE_DELAY):
         """
         Initialize LLM backend.
 
@@ -60,22 +69,29 @@ class LLMBackend:
         """
         return self.backend.health_check()
 
-    def generate(self, messages: List[Dict[str, str]], **kwargs) -> str:
+    def generate(
+        self,
+        messages: List[Dict[str, str]],
+        temperature: float = 0.7,
+        max_tokens: int = 2000,
+        stop: Optional[List[str]] = None,
+        chat_template_kwargs: Optional[Dict[str, Any]] = None,
+        **kwargs: Any,
+    ) -> str:
         """
         Generate completion from messages (adapter interface).
 
         Args:
             messages: List of message dicts with 'role' and 'content'
-            **kwargs: Generation parameters (temperature, max_tokens, etc.)
+            temperature: Sampling temperature
+            max_tokens: Maximum tokens to generate
+            stop: Stop sequences
+            chat_template_kwargs: Extra kwargs for chat template
+            **kwargs: Additional backend-specific parameters
 
         Returns:
             str: Generated text
         """
-        temperature = kwargs.get("temperature", 0.7)
-        max_tokens = kwargs.get("max_tokens", 2000)
-        stop = kwargs.get("stop", None)
-        chat_template_kwargs = kwargs.get("chat_template_kwargs", None)
-
         # Use chat completions to preserve system prompts
         result = retry_llm_call(
             self.backend.generate_chat,
