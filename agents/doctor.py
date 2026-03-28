@@ -16,6 +16,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+import requests
+
 from .llm_backend import LLMBackend
 from .messenger_client import MattermostClient
 from .skill_registry import SkillRegistry
@@ -198,7 +200,7 @@ def check_messenger(config: Any) -> CheckResult:
             client = MattermostClient(url=mm_url, bot_token=mm_token)
             username = client.get_bot_username()
             platforms.append(f"Mattermost (@{username})")
-        except Exception:
+        except (requests.RequestException, ConnectionError):
             platforms.append("Mattermost (token set, connection failed)")
     elif mm_token or mm_url:
         missing.append("Mattermost (partial config — need both MATTERMOST_URL and MATTERMOST_BOT_TOKEN)")

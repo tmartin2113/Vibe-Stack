@@ -274,9 +274,7 @@ class PaperclipClient:
                 timeout=5.0,
             )
             return response.ok
-        except (requests.exceptions.ConnectionError, requests.exceptions.Timeout):
-            return False
-        except Exception:
+        except requests.RequestException:
             return False
 
     # ── Identity ──

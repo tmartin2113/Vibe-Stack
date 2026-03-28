@@ -24,6 +24,7 @@ import logging
 import os
 import threading
 import time
+import urllib.error
 from collections import defaultdict
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from typing import Any, Callable, Dict, List, Optional, Tuple
@@ -232,7 +233,7 @@ class _HealthHandler(BaseHTTPRequestHandler):
                 req = urllib.request.Request(url, method="GET")
                 with urllib.request.urlopen(req, timeout=3) as resp:
                     checks["llm_backend"] = "ok" if resp.status == 200 else "degraded"
-            except Exception:
+            except (urllib.error.URLError, OSError):
                 checks["llm_backend"] = "unreachable"
                 healthy = False
         else:
@@ -246,7 +247,7 @@ class _HealthHandler(BaseHTTPRequestHandler):
                 f.write("ok")
             os.remove(test_file)
             checks["data_dir"] = "ok"
-        except Exception:
+        except OSError:
             checks["data_dir"] = "not_writable"
             healthy = False
 
@@ -259,7 +260,7 @@ class _HealthHandler(BaseHTTPRequestHandler):
                 req = urllib.request.Request(url, method="GET")
                 with urllib.request.urlopen(req, timeout=3) as resp:
                     checks["paperclip_api"] = "ok" if resp.status == 200 else "degraded"
-            except Exception:
+            except (urllib.error.URLError, OSError):
                 checks["paperclip_api"] = "unreachable"
                 # Paperclip unreachable is degraded, not fatal for liveness
                 checks["paperclip_api_note"] = "degraded_but_not_fatal"

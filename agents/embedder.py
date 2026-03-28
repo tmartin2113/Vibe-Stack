@@ -62,7 +62,7 @@ class VLLMEmbedder:
                 timeout=self.timeout,
             )
             self._available = resp.status_code == 200
-        except Exception:
+        except (requests.RequestException, OSError):
             self._available = False
         if not self._available:
             logger.info(

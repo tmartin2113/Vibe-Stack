@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 from typing import Any, Dict, Optional
@@ -142,7 +143,7 @@ class ImageGenerationTool(Tool):
                 error=f"Image generation timed out (prompt_id: {prompt_id})",
             )
 
-        except Exception as e:
+        except (urllib.error.URLError, OSError) as e:
             return ToolResult(
                 success=False, output="",
                 error=f"ComfyUI image generation failed: {e}",
@@ -231,7 +232,7 @@ class ImageGenerationTool(Tool):
                             })
                             return f"{self._base_url}/view?{params}"
                     return None  # Completed but no images
-            except Exception:
+            except (urllib.error.URLError, OSError):
                 pass  # Server not ready yet
 
             time.sleep(2)

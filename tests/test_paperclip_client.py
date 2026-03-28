@@ -197,8 +197,8 @@ class TestHealthCheck:
         assert client.health_check() is False
 
     @patch("agents.paperclip_client.requests.get")
-    def test_returns_false_on_unexpected_error(self, mock_get, client):
-        mock_get.side_effect = RuntimeError("boom")
+    def test_returns_false_on_request_exception(self, mock_get, client):
+        mock_get.side_effect = requests.exceptions.RequestException("unexpected request error")
         assert client.health_check() is False
 
 

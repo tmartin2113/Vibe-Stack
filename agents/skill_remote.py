@@ -395,7 +395,7 @@ class SkillRegistryRemoteMixin:
             req = urllib.request.Request(url, headers=headers)
             with urllib.request.urlopen(req, timeout=10) as resp:
                 entries = json.loads(resp.read())
-        except Exception:
+        except (urllib.error.URLError, json.JSONDecodeError, OSError):
             return
 
         raw_base = (
@@ -421,7 +421,7 @@ class SkillRegistryRemoteMixin:
                     with urllib.request.urlopen(file_req, timeout=10) as file_resp:
                         local_dir.mkdir(parents=True, exist_ok=True)
                         (local_dir / name).write_bytes(file_resp.read())
-                except Exception:
+                except (urllib.error.URLError, OSError):
                     pass  # Non-critical
 
             elif entry_type == "dir":
