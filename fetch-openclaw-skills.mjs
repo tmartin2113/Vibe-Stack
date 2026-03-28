@@ -16,8 +16,11 @@ import https from "node:https";
 const CATALOG_DIR = path.resolve("skill-sources/voltagent-skills/categories");
 const OUTPUT_DIR = path.resolve("skill-sources/openclaw-skills/skills");
 
-// Link pattern: https://github.com/openclaw/skills/tree/main/skills/<author>/<name>/SKILL.md
-const LINK_RE = /\(https:\/\/github\.com\/openclaw\/skills\/tree\/main\/skills\/([^)]+\/SKILL\.md)\)/g;
+// Link patterns — the catalog has used different URL schemes over time:
+// Old: https://github.com/openclaw/skills/tree/main/skills/<author>/<name>/SKILL.md
+// New: https://clawskills.sh/skills/<author>-<skillname>
+const LINK_RE_GITHUB = /\(https:\/\/github\.com\/openclaw\/skills\/tree\/main\/skills\/([^)]+\/SKILL\.md)\)/g;
+const LINK_RE_CLAWSKILLS = /\[([\w-]+)\]\(https:\/\/clawskills\.sh\/skills\/([\w.-]+-[\w.-]+)\)/g;
 
 // Category file → tag mapping for auto-tagging downloaded skills
 const CATEGORY_TAGS = {
@@ -67,25 +70,25 @@ async function sleep(ms) {
 // Parse all category files and extract unique skill paths
 function discoverSkills() {
   const categoryFiles = fs.readdirSync(CATALOG_DIR).filter((f) => f.endsWith(".md"));
-  const skills = new Map(); // skillName -> { path, rawUrl, tags, description }
+  const skills = new Map(); // skillName -> { path, rawUrl, tags, description, author, clawskillsUrl }
 
   for (const file of categoryFiles) {
     const content = fs.readFileSync(path.join(CATALOG_DIR, file), "utf-8");
     const categoryBase = file.replace(".md", "");
     const tag = CATEGORY_TAGS[categoryBase] || "other";
 
-    for (const match of content.matchAll(LINK_RE)) {
+    // Old-format links: github.com/openclaw/skills/tree/main/skills/<author>/<name>/SKILL.md
+    for (const match of content.matchAll(LINK_RE_GITHUB)) {
       const skillPath = match[1]; // e.g. "author/skillname/SKILL.md"
       const parts = skillPath.split("/");
       if (parts.length < 3) continue;
-      const skillName = parts[1]; // author/skillName/SKILL.md -> skillName
+      const author = parts[0];
+      const skillName = parts[1];
 
       if (skills.has(skillName)) {
-        // Add tag from this category if not already present
         const existing = skills.get(skillName);
         if (!existing.tags.includes(tag)) existing.tags.push(tag);
       } else {
-        // Extract description from the markdown line
         const lineRe = new RegExp(`\\[${skillName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\]\\([^)]+\\)\\s*-\\s*(.+)`, "i");
         const descMatch = content.match(lineRe);
         const description = descMatch ? descMatch[1].trim() : "";
@@ -95,6 +98,41 @@ function discoverSkills() {
           rawUrl: `https://raw.githubusercontent.com/openclaw/skills/main/skills/${skillPath}`,
           tags: [tag],
           description,
+          author,
+          clawskillsUrl: `https://clawskills.sh/skills/${author}-${skillName}`,
+        });
+      }
+    }
+
+    // New-format links: [skillname](https://clawskills.sh/skills/<author>-<skillname>)
+    for (const match of content.matchAll(LINK_RE_CLAWSKILLS)) {
+      const skillName = match[1];
+      const authorSkill = match[2]; // e.g. "mfergpt-4claw"
+      // Extract author: everything before the last occurrence of -skillName
+      const suffixIdx = authorSkill.lastIndexOf(`-${skillName}`);
+      const author = suffixIdx > 0 ? authorSkill.slice(0, suffixIdx) : authorSkill.split("-")[0];
+
+      if (skills.has(skillName)) {
+        const existing = skills.get(skillName);
+        if (!existing.tags.includes(tag)) existing.tags.push(tag);
+        // Upgrade source info if we didn't have author before
+        if (!existing.author) {
+          existing.author = author;
+          existing.clawskillsUrl = `https://clawskills.sh/skills/${authorSkill}`;
+        }
+      } else {
+        // Extract description from the markdown line
+        const lineRe = new RegExp(`\\[${skillName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\]\\([^)]+\\)\\s*-\\s*(.+)`, "i");
+        const descMatch = content.match(lineRe);
+        const description = descMatch ? descMatch[1].trim() : "";
+
+        skills.set(skillName, {
+          skillPath: `${author}/${skillName}/SKILL.md`,
+          rawUrl: `https://raw.githubusercontent.com/openclaw/skills/main/skills/${author}/${skillName}/SKILL.md`,
+          tags: [tag],
+          description,
+          author,
+          clawskillsUrl: `https://clawskills.sh/skills/${authorSkill}`,
         });
       }
     }
@@ -163,7 +201,12 @@ async function main() {
   // Write a metadata index for quick lookups
   const index = {};
   for (const [name, info] of skills) {
-    index[name] = { tags: info.tags, description: info.description };
+    index[name] = {
+      tags: info.tags,
+      description: info.description,
+      author: info.author || null,
+      source: info.clawskillsUrl || null,
+    };
   }
   const indexPath = path.join(OUTPUT_DIR, "..", "index.json");
   fs.writeFileSync(indexPath, JSON.stringify(index, null, 2));
