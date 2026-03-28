@@ -903,6 +903,18 @@ class TestLighthouseSEOTool:
 # ====================================================================
 
 
+def _has_seo_deps() -> bool:
+    try:
+        import requests  # noqa: F401
+        from bs4 import BeautifulSoup  # noqa: F401
+        return True
+    except ImportError:
+        return False
+
+
+_seo_deps_available = _has_seo_deps()
+
+
 class TestPageAnalyzerTool:
     """Test PageAnalyzerTool.execute with mocked HTTP requests."""
 
@@ -925,6 +937,11 @@ class TestPageAnalyzerTool:
             assert "required" in result["error"].lower()
         finally:
             seo_tools.REQUESTS_AVAILABLE = original
+
+
+@pytest.mark.skipif(not _seo_deps_available, reason="requests and beautifulsoup4 not installed")
+class TestPageAnalyzerToolWithDeps:
+    """PageAnalyzerTool tests that require requests + beautifulsoup4."""
 
     def test_full_page_analysis(self):
         from agents.tools.seo_tools import PageAnalyzerTool

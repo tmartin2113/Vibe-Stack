@@ -10,6 +10,8 @@ Covers:
 
 import os
 import json
+import urllib.error
+import urllib.request
 from unittest.mock import patch, MagicMock
 
 import pytest
