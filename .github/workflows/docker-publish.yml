@@ -15,6 +15,32 @@ jobs:
   test:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_DB: vibe_test
+          POSTGRES_USER: vibe
+          POSTGRES_PASSWORD: test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      VIBE_DATABASE_URL: postgresql://vibe:test@localhost:5432/vibe_test
+      VIBE_REDIS_URL: redis://localhost:6379/0
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v5
@@ -22,7 +48,7 @@ jobs:
           python-version: "3.12"
           cache: "pip"
       - name: Install dependencies
-        run: pip install -e ".[agents,tools,dev]"
+        run: pip install -e ".[agents,tools,dev]" psycopg2-binary redis
       - name: Run tests
         run: python -m pytest tests/ -q --tb=short
 
