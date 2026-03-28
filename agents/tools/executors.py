@@ -109,7 +109,7 @@ class PythonExecutor(Tool):
             # Non-Unix platform or limit not supported — skip silently
             pass
 
-    def execute(self, code: str, timeout: int = 30, **kwargs) -> ToolResult:  # type: ignore[override]
+    def execute(self, code: str, timeout: int = 30, **kwargs) -> ToolResult:
         """Execute Python code with timeout and process-level sandboxing."""
         # Create temporary file for code (SECURITY: unpredictable name)
         temp_file = None
@@ -205,7 +205,7 @@ class PytestRunner(Tool):
             "required": ["test_file"]
         }
 
-    def execute(self, test_file: str, coverage: bool = True, verbose: bool = True, **kwargs) -> ToolResult:  # type: ignore[override]
+    def execute(self, test_file: str, coverage: bool = True, verbose: bool = True, **kwargs) -> ToolResult:
         """Run pytest with optional coverage"""
         try:
             # SECURITY: Validate test file path is within allowed directories
@@ -292,7 +292,7 @@ class BanditScanner(Tool):
             "required": ["target"]
         }
 
-    def execute(self, target: str, severity_level: str = "medium", **kwargs) -> ToolResult:  # type: ignore[override]
+    def execute(self, target: str, severity_level: str = "medium", **kwargs) -> ToolResult:
         """Run Bandit security scan"""
         try:
             # SECURITY: Validate target path is within allowed directories
@@ -405,7 +405,7 @@ class ShellExecutor(Tool):
             "required": ["command"],
         }
 
-    def execute(self, command: str, timeout: int = 30, **kwargs) -> ToolResult:  # type: ignore[override]
+    def execute(self, command: str, timeout: int = 30, **kwargs) -> ToolResult:
         if not command or not command.strip():
             return ToolResult(success=False, output="", error="No command provided")
 

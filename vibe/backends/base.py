@@ -5,7 +5,17 @@ Defines the common interface that all backend implementations must follow.
 """
 
 from abc import ABC, abstractmethod
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, TypedDict
+
+
+class GenerateResult(TypedDict):
+    """Structured result from LLM generation."""
+    text: str
+    tokens_used: int
+    prompt_tokens: int
+    completion_tokens: int
+    time_ms: float
+    finish_reason: str
 
 
 class BackendBase(ABC):
@@ -39,7 +49,7 @@ class BackendBase(ABC):
         max_tokens: Optional[int] = None,
         temperature: Optional[float] = None,
         stop: Optional[List[str]] = None
-    ) -> Dict[str, Any]:
+    ) -> GenerateResult:
         """
         Generate text completion from the LLM.
 
@@ -50,10 +60,8 @@ class BackendBase(ABC):
             stop: Stop sequences
 
         Returns:
-            Dict containing:
-                - 'text': Generated text
-                - 'tokens_used': Number of tokens generated (if available)
-                - 'finish_reason': Reason for completion (if available)
+            GenerateResult containing 'text', 'tokens_used', 'prompt_tokens',
+            'completion_tokens', 'time_ms', and 'finish_reason'.
         """
         pass
 

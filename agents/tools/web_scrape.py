@@ -58,7 +58,7 @@ class WebScrapeTool(Tool):
             "required": ["url"],
         }
 
-    def execute(  # type: ignore[override]
+    def execute(
         self,
         url: str,
         return_format: str = "markdown",

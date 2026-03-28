@@ -81,7 +81,7 @@ class ArtifactStorageTool(Tool):
             "required": ["action"],
         }
 
-    def execute(  # type: ignore[override]
+    def execute(
         self,
         action: str,
         key: str = "",

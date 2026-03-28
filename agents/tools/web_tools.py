@@ -41,7 +41,7 @@ class DevToolWrapper(Tool):
     def _get_parameters_schema(self) -> Dict[str, Any]:
         return self._params_schema
 
-    def execute(self, **kwargs) -> ToolResult:  # type: ignore[override]
+    def execute(self, **kwargs) -> ToolResult:
         result = self._inner.execute(**kwargs)
         if isinstance(result, ToolResult):
             return result
@@ -87,7 +87,7 @@ class WebFetchTool(Tool):
             "required": ["url"],
         }
 
-    def execute(self, url: str, timeout: int = 15, **kwargs) -> ToolResult:  # type: ignore[override]
+    def execute(self, url: str, timeout: int = 15, **kwargs) -> ToolResult:
         if not url or not url.strip():
             return ToolResult(success=False, output="", error="No URL provided")
         if not url.startswith(("http://", "https://")):

@@ -68,7 +68,7 @@ class WebSearchTool(Tool):
             "required": ["query"],
         }
 
-    def execute(  # type: ignore[override]
+    def execute(
         self,
         query: str,
         categories: str = "general",

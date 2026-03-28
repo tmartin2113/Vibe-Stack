@@ -147,7 +147,7 @@ class FileReader(Tool):
             "required": ["file_path"]
         }
 
-    def execute(self, file_path: str, encoding: str = "utf-8", **kwargs) -> ToolResult:  # type: ignore[override]
+    def execute(self, file_path: str, encoding: str = "utf-8", **kwargs) -> ToolResult:
         """Read file contents"""
         try:
             # SECURITY: Validate path is within allowed directories
@@ -245,7 +245,7 @@ class FileWriter(Tool):
             "required": ["file_path", "content"]
         }
 
-    def execute(self, file_path: str, content: str, encoding: str = "utf-8", **kwargs) -> ToolResult:  # type: ignore[override]
+    def execute(self, file_path: str, content: str, encoding: str = "utf-8", **kwargs) -> ToolResult:
         """Write content to file"""
         try:
             # SECURITY: Validate path is within allowed directories

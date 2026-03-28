@@ -71,7 +71,7 @@ class ContainerInspectTool(Tool):
             "required": ["action"],
         }
 
-    def execute(  # type: ignore[override]
+    def execute(
         self,
         action: str,
         container: str = "",

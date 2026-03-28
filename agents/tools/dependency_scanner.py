@@ -55,7 +55,7 @@ class DependencyScannerTool(Tool):
             "required": ["path"],
         }
 
-    def execute(  # type: ignore[override]
+    def execute(
         self,
         path: str,
         ecosystem: str = "auto",

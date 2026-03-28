@@ -60,7 +60,7 @@ class MemoryStoreTool(Tool):
             "required": ["content"],
         }
 
-    def execute(self, content: str, source: str = "agent", tags: str = "", **kwargs) -> ToolResult:  # type: ignore[override]
+    def execute(self, content: str, source: str = "agent", tags: str = "", **kwargs) -> ToolResult:
         if not content or not content.strip():
             return ToolResult(success=False, output="", error="Content cannot be empty")
 
@@ -124,7 +124,7 @@ class MemoryRecallTool(Tool):
             "required": ["query"],
         }
 
-    def execute(self, query: str, max_results: int = 5, tag_filter: str = "", source_filter: str = "", **kwargs) -> ToolResult:  # type: ignore[override]
+    def execute(self, query: str, max_results: int = 5, tag_filter: str = "", source_filter: str = "", **kwargs) -> ToolResult:
         if not query or not query.strip():
             return ToolResult(success=False, output="", error="Query cannot be empty")
 

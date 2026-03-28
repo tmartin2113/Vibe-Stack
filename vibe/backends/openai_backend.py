@@ -12,7 +12,7 @@ import json
 import logging
 import requests
 from typing import Dict, Any, List, Optional
-from vibe.backends.base import BackendBase
+from vibe.backends.base import BackendBase, GenerateResult
 
 
 def estimate_tokens(text: str) -> int:
@@ -140,7 +140,7 @@ class OpenAIBackend(BackendBase):
         max_tokens: Optional[int] = None,
         temperature: Optional[float] = None,
         stop: Optional[list] = None,
-    ) -> Dict[str, Any]:
+    ) -> GenerateResult:
         """
         Generate text completion using OpenAI /v1/completions endpoint.
 
@@ -228,7 +228,7 @@ class OpenAIBackend(BackendBase):
         temperature: Optional[float] = None,
         stop: Optional[list] = None,
         chat_template_kwargs: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, Any]:
+    ) -> GenerateResult:
         """
         Generate chat completion using structured messages.
 

@@ -69,7 +69,7 @@ class BrowserAutomationTool(Tool):
             "required": ["action"],
         }
 
-    def execute(  # type: ignore[override]
+    def execute(
         self,
         action: str,
         url: str = "",

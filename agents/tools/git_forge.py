@@ -98,7 +98,7 @@ class GitForgeTool(Tool):
             "required": ["action"],
         }
 
-    def execute(  # type: ignore[override]
+    def execute(
         self,
         action: str,
         owner: str = "",

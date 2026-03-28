@@ -12,7 +12,7 @@ import json
 import logging
 import requests
 from typing import Dict, Any, List, Optional
-from vibe.backends.base import BackendBase
+from vibe.backends.base import BackendBase, GenerateResult
 
 
 def estimate_tokens(text: str) -> int:
@@ -137,7 +137,7 @@ class AnthropicBackend(BackendBase):
 
         return system_text, filtered
 
-    def _parse_response(self, result: Dict[str, Any], elapsed_ms: float, input_estimate: int) -> Dict[str, Any]:
+    def _parse_response(self, result: Dict[str, Any], elapsed_ms: float, input_estimate: int) -> GenerateResult:
         """
         Parse Anthropic Messages API response into standard format.
 
@@ -212,7 +212,7 @@ class AnthropicBackend(BackendBase):
         max_tokens: Optional[int] = None,
         temperature: Optional[float] = None,
         stop: Optional[list] = None,
-    ) -> Dict[str, Any]:
+    ) -> GenerateResult:
         """
         Generate text completion by converting prompt to messages format.
 
@@ -250,7 +250,7 @@ class AnthropicBackend(BackendBase):
         temperature: Optional[float] = None,
         stop: Optional[list] = None,
         chat_template_kwargs: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, Any]:
+    ) -> GenerateResult:
         """
         Generate chat completion using structured messages.
 
@@ -291,7 +291,7 @@ class AnthropicBackend(BackendBase):
         temperature: Optional[float],
         stop: Optional[list],
         input_estimate: int,
-    ) -> Dict[str, Any]:
+    ) -> GenerateResult:
         """
         Internal method to call the Anthropic Messages API with retry logic.
 

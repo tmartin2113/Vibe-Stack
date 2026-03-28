@@ -77,7 +77,7 @@ class ImageGenerationTool(Tool):
             "required": ["prompt"],
         }
 
-    def execute(  # type: ignore[override]
+    def execute(
         self,
         prompt: str,
         negative_prompt: str = "",
