@@ -230,6 +230,29 @@ class BackendPoolConfig:
 
 
 @dataclass
+class StorageConfig:
+    """Storage layer configuration for multi-node deployment.
+
+    Controls which backends are used for persistent storage (SQL)
+    and caching (key-value).  Defaults to SQLite + in-memory dict
+    for local single-node development.  Production multi-node uses
+    PostgreSQL + Redis.
+    """
+
+    # Persistent storage: "sqlite" (local) or "postgres" (multi-node)
+    storage_backend: str = "sqlite"
+
+    # Cache: "memory" (local) or "redis" (multi-node)
+    cache_backend: str = "memory"
+
+    # PostgreSQL connection (when storage_backend=postgres)
+    database_url: str = ""  # VIBE_DATABASE_URL
+
+    # Redis connection (when cache_backend=redis)
+    redis_url: str = ""  # VIBE_REDIS_URL
+
+
+@dataclass
 class MessageStoreConfig:
     """MessageStore (V2 inter-agent messaging) configuration.
 
@@ -285,6 +308,7 @@ class SystemConfig:
     spending: SpendingConfig = field(default_factory=SpendingConfig)
     messages: MessageStoreConfig = field(default_factory=MessageStoreConfig)
     backend_pool: BackendPoolConfig = field(default_factory=BackendPoolConfig)
+    storage: StorageConfig = field(default_factory=StorageConfig)
 
     # Logging
     log_level: str = "INFO"
@@ -352,6 +376,20 @@ class SystemConfig:
             val = os.getenv(env_key)
             if val is not None:
                 setattr(config.messages, attr, val.lower() not in ("false", "0", "no"))
+
+        # Storage layer env overrides
+        storage_backend = os.getenv("VIBE_STORAGE_BACKEND")
+        if storage_backend:
+            config.storage.storage_backend = storage_backend.lower()
+        cache_backend = os.getenv("VIBE_CACHE_BACKEND")
+        if cache_backend:
+            config.storage.cache_backend = cache_backend.lower()
+        database_url = os.getenv("VIBE_DATABASE_URL") or os.getenv("DATABASE_URL")
+        if database_url:
+            config.storage.database_url = database_url
+        redis_url = os.getenv("VIBE_REDIS_URL") or os.getenv("REDIS_URL")
+        if redis_url:
+            config.storage.redis_url = redis_url
 
         # Backend pool env overrides
         fallback_urls = os.getenv("VIBE_FALLBACK_URLS")

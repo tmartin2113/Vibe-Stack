@@ -30,7 +30,10 @@ import time
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .storage.base import StorageBackend
 
 logger = logging.getLogger(__name__)
 
@@ -69,6 +72,7 @@ class ArtifactStore:
         max_entries: int = 1000,
         default_ttl_seconds: int = 3600,
         min_score_to_cache: int = 70,
+        storage_backend: "Optional[StorageBackend]" = None,
     ):
         """
         Initialize the artifact store.
@@ -79,7 +83,14 @@ class ArtifactStore:
             max_entries: Maximum number of cached entries (LRU eviction).
             default_ttl_seconds: Default time-to-live for entries.
             min_score_to_cache: Minimum critic score required to cache a result.
+            storage_backend: Optional StorageBackend for multi-node deployment.
+                           When provided, all SQL is routed through this backend
+                           instead of the built-in SQLite connection.  The backend
+                           handles connection pooling, dialect differences, and
+                           distributed locking.
         """
+        self.storage_backend = storage_backend
+
         if db_path is None:
             db_path = str(Path.home() / ".vibe" / "artifact_cache.db")
 
@@ -89,8 +100,9 @@ class ArtifactStore:
         self.min_score_to_cache = min_score_to_cache
         self._lock = threading.Lock()
 
-        # Ensure parent directory exists
-        Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
+        if self.storage_backend is None:
+            # Ensure parent directory exists
+            Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
 
         # Initialize schema
         self._init_db()
@@ -99,35 +111,41 @@ class ArtifactStore:
     # Schema
     # ------------------------------------------------------------------
 
+    _SCHEMA_DDL = """
+        CREATE TABLE IF NOT EXISTS artifacts (
+            cache_key       TEXT PRIMARY KEY,
+            specification   TEXT NOT NULL,
+            specialist_output TEXT NOT NULL,
+            output_critic_score INTEGER NOT NULL,
+            final_score     INTEGER NOT NULL,
+            tool_calls_json TEXT NOT NULL DEFAULT '[]',
+            task_type       TEXT NOT NULL,
+            specialist_adapter TEXT NOT NULL,
+            skills_hash     TEXT NOT NULL,
+            num_iterations  INTEGER NOT NULL DEFAULT 1,
+            created_at      TEXT NOT NULL,
+            last_accessed_at TEXT NOT NULL,
+            access_count    INTEGER NOT NULL DEFAULT 0,
+            ttl_seconds     INTEGER NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_artifacts_task_type
+            ON artifacts(task_type);
+        CREATE INDEX IF NOT EXISTS idx_artifacts_last_accessed
+            ON artifacts(last_accessed_at);
+        CREATE INDEX IF NOT EXISTS idx_artifacts_created
+            ON artifacts(created_at);
+    """
+
     def _init_db(self) -> None:
         """Create tables if they don't exist."""
+        if self.storage_backend is not None:
+            self.storage_backend.execute_script(self._SCHEMA_DDL)
+            return
+
         conn = self._connect()
         try:
-            conn.executescript("""
-                CREATE TABLE IF NOT EXISTS artifacts (
-                    cache_key       TEXT PRIMARY KEY,
-                    specification   TEXT NOT NULL,
-                    specialist_output TEXT NOT NULL,
-                    output_critic_score INTEGER NOT NULL,
-                    final_score     INTEGER NOT NULL,
-                    tool_calls_json TEXT NOT NULL DEFAULT '[]',
-                    task_type       TEXT NOT NULL,
-                    specialist_adapter TEXT NOT NULL,
-                    skills_hash     TEXT NOT NULL,
-                    num_iterations  INTEGER NOT NULL DEFAULT 1,
-                    created_at      TEXT NOT NULL,
-                    last_accessed_at TEXT NOT NULL,
-                    access_count    INTEGER NOT NULL DEFAULT 0,
-                    ttl_seconds     INTEGER NOT NULL
-                );
-
-                CREATE INDEX IF NOT EXISTS idx_artifacts_task_type
-                    ON artifacts(task_type);
-                CREATE INDEX IF NOT EXISTS idx_artifacts_last_accessed
-                    ON artifacts(last_accessed_at);
-                CREATE INDEX IF NOT EXISTS idx_artifacts_created
-                    ON artifacts(created_at);
-            """)
+            conn.executescript(self._SCHEMA_DDL)
             conn.commit()
         finally:
             conn.close()
@@ -139,6 +157,13 @@ class ArtifactStore:
         conn.execute("PRAGMA foreign_keys=ON")
         conn.row_factory = sqlite3.Row
         return conn
+
+    @property
+    def _ph(self) -> str:
+        """Parameter placeholder — '?' for SQLite, '%s' for PostgreSQL."""
+        if self.storage_backend is not None:
+            return self.storage_backend.placeholder
+        return "?"
 
     # ------------------------------------------------------------------
     # Cache key computation
