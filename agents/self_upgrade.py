@@ -454,7 +454,7 @@ class SelfUpgradePipeline:
 
                 return branch_name, commit_hash
 
-            except Exception:
+            except (subprocess.CalledProcessError, OSError):
                 # Revert to previous branch on failure
                 subprocess.run(
                     ["git", "checkout", current_branch],

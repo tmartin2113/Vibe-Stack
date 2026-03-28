@@ -290,7 +290,7 @@ class SkillRegistry(SkillRegistryRemoteMixin, SkillRegistrySearchMixin):
             # Clean up temp file on error
             try:
                 Path(temp_path).unlink()
-            except Exception:
+            except OSError:
                 pass
             raise e
 
@@ -459,13 +459,13 @@ class SkillRegistry(SkillRegistryRemoteMixin, SkillRegistrySearchMixin):
 
         try:
             self.security.validate_skill_name(skill_name)
-        except Exception:
+        except SkillSecurityError:
             logger.warning(f"Workspace skill rejected (invalid name): {skill_file}")
             return 0
 
         try:
             self.security.validate_skill_content(content, skill_name)
-        except Exception as exc:
+        except SkillSecurityError as exc:
             logger.warning(f"Workspace skill rejected (security): {skill_file}: {exc}")
             return 0
 

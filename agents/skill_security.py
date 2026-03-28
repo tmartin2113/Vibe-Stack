@@ -902,7 +902,7 @@ class SkillSecurity:
         for py_file in skill_path.rglob("*.py"):
             try:
                 content = py_file.read_text(encoding="utf-8", errors="replace")
-            except Exception:
+            except OSError:
                 continue
 
             rel_path = str(py_file.relative_to(skill_path))

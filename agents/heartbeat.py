@@ -26,6 +26,7 @@ import json
 import logging
 import os
 import re
+import sqlite3
 import sys
 import time
 from dataclasses import asdict, dataclass, field
@@ -1039,7 +1040,7 @@ def _get_spending_tracker(config: SystemConfig) -> "Optional[SpendingTracker]":
             retention_days=config.spending.retention_days,
             agent_id=os.environ.get("PAPERCLIP_AGENT_ID", ""),
         )
-    except Exception as e:
+    except (ImportError, OSError) as e:
         logger.warning("Failed to initialize spending tracker (non-fatal): %s", e)
         return None
 
@@ -1061,7 +1062,7 @@ def _artifact_cache_maintenance() -> None:
                 logger.info("Heartbeat cache eviction: removed %d over-limit artifacts", evicted)
         finally:
             conn.close()
-    except Exception as e:
+    except (ImportError, OSError, sqlite3.DatabaseError) as e:
         logger.debug("Artifact cache maintenance skipped: %s", e)
 
 

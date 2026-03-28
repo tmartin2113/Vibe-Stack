@@ -460,7 +460,7 @@ def _poll_children_once(
     if pending_count > 0 and done_count > 0:
         try:
             agents = client.list_agents()
-        except Exception:
+        except (PaperclipAPIError, OSError):
             agents = []
         if agents:
             _rebalance_children(client, children, agents)

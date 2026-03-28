@@ -91,7 +91,7 @@ class CodebaseSearchTool:
                 "results": results
             }
 
-        except Exception as e:
+        except (OSError, ValueError, re.error) as e:
             return {
                 "success": False,
                 "error": f"Search failed: {str(e)}"
@@ -141,7 +141,7 @@ class CodebaseSearchTool:
                 if len(results) >= max_results:
                     break
 
-            except Exception:
+            except (OSError, UnicodeDecodeError):
                 continue
 
         return results[:max_results]
@@ -191,7 +191,7 @@ class CodebaseSearchTool:
                 if len(results) >= max_results:
                     break
 
-            except Exception:
+            except (OSError, UnicodeDecodeError):
                 continue
 
         return results[:max_results]
@@ -223,7 +223,7 @@ class CodebaseSearchTool:
                         if len(results) >= max_results:
                             return results
 
-            except Exception:
+            except (OSError, UnicodeDecodeError):
                 continue
 
         return results[:max_results]

@@ -8,6 +8,7 @@ in_progress and completion.
 
 import logging
 import os
+import sqlite3
 from typing import Any, Callable, Dict
 
 from .paperclip_client import PaperclipAPIError, PaperclipClient
@@ -74,7 +75,7 @@ def make_progress_callback(
                 metadata={"node": node_name, "iteration": iteration, "score": score},
                 ttl_seconds=3600,  # 1 hour — progress is ephemeral
             )
-        except Exception:
+        except (ImportError, AttributeError, OSError, RuntimeError, sqlite3.DatabaseError):
             pass  # Best-effort, same as Paperclip write
 
     return _on_node_complete
