@@ -58,8 +58,8 @@ def _set_flag(state):
 
 
 def _slow_node(state):
-    """Node that takes too long."""
-    time.sleep(5)
+    """Node that takes too long — reduced from 5s to keep the test suite fast."""
+    time.sleep(0.5)
     return state
 
 
@@ -1193,9 +1193,10 @@ class TestTimeouts:
         wf.add_node("slow", _slow_node)
         wf.set_entry_point("slow")
         wf.add_edge("slow", END)
-        app = wf.compile(node_timeout=1)
+        # _slow_node sleeps 0.5s; timeout of 0.3s ensures it fires before completion
+        app = wf.compile(node_timeout=0.3)
         state = create_initial_state("test")
-        with pytest.raises(NodeTimeoutError, match="exceeded 1s timeout"):
+        with pytest.raises(NodeTimeoutError, match="exceeded 0.3s timeout"):
             app.invoke(state)
 
     def test_workflow_timeout_raises(self):

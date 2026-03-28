@@ -21,6 +21,7 @@ Tests are skipped when services are unavailable (local dev without Docker).
 import os
 import time
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -151,10 +152,14 @@ class TestMemoryCacheBackend:
 
     def test_ttl_expiry(self):
         cache = MemoryCacheBackend()
+        # Use a real monotonic baseline so the set() stores expiry = now + 1
+        import agents.storage.redis_backend as _rb
+        real_monotonic = time.monotonic
         cache.set("k1", "v1", ttl_seconds=1)
         assert cache.get("k1") == "v1"
-        time.sleep(1.1)
-        assert cache.get("k1") is None
+        # Advance mocked monotonic past the TTL without sleeping
+        with patch.object(_rb.time, "monotonic", return_value=real_monotonic() + 2.0):
+            assert cache.get("k1") is None
         cache.close()
 
     def test_json_roundtrip(self):
@@ -446,6 +451,9 @@ class TestRedisCacheBackend:
         try:
             cache.set("k1", "v1", ttl_seconds=1)
             assert cache.get("k1") == "v1"
+            # Redis TTL is enforced by the Redis server, not by Python's time
+            # module, so mocking time.monotonic has no effect here. The sleep
+            # is genuinely required to let the server-side TTL expire.
             time.sleep(1.1)
             assert cache.get("k1") is None
         finally:

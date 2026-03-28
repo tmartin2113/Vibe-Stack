@@ -249,13 +249,26 @@ class TestHealthServer:
             readiness_fn=TestHealthServer._readiness_check,
             daemon_status_fn=lambda: {"running": True, "workers": 3},
         )
-        # Give the server thread a moment to start
-        time.sleep(0.2)
+        # Poll until the server is ready rather than sleeping a fixed amount
+        for _ in range(20):  # 20 * 0.05s = 1s max
+            try:
+                urllib.request.urlopen(f"http://localhost:{port}/healthz", timeout=0.5)
+                break
+            except Exception:
+                time.sleep(0.05)
         request.cls.server = server
         yield
         if server:
             server.shutdown()
-            time.sleep(0.1)  # let the socket release
+            # Poll until the port is released rather than sleeping a fixed amount
+            import socket
+            for _ in range(20):  # 20 * 0.05s = 1s max
+                try:
+                    with socket.create_connection(("localhost", port), timeout=0.1):
+                        pass
+                    time.sleep(0.05)
+                except OSError:
+                    break
 
     def _get(self, path: str) -> tuple:
         """Helper to GET a path and return (status, body)."""
