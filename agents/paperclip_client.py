@@ -348,6 +348,7 @@ class PaperclipClient:
         issue_id: str,
         status: Optional[str] = None,
         comment: Optional[str] = None,
+        labels: Optional[List[str]] = None,
         **fields: Any,
     ) -> Issue:
         """PATCH /api/issues/{issueId} — update issue status/fields with optional comment."""
@@ -356,6 +357,8 @@ class PaperclipClient:
             body["status"] = status
         if comment is not None:
             body["comment"] = comment
+        if labels is not None:
+            body["labels"] = labels
         body.update(fields)
         data = self._request("PATCH", f"/api/issues/{issue_id}", json_body=body)
         return _parse_issue(data)

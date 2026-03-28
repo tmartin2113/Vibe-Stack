@@ -25,6 +25,7 @@ from .adapters import (
     CRITIC_SYSTEM_PROMPT,
     DATABASE_SPECIALIST_PROMPT,
     DATA_SPECIALIST_PROMPT,
+    SELF_UPGRADE_PROMPT,
     VIBE_SYSTEM_PROMPT,
     REFINEMENT_SYSTEM_PROMPT,
     RESEARCH_SYSTEM_PROMPT,
@@ -56,6 +57,7 @@ _ADAPTER_DEFS = [
     ("doc_generator", CODE_SYSTEM_PROMPT),
     ("performance_optimizer", CODE_SYSTEM_PROMPT),
     ("debugging_assistant", CODE_SYSTEM_PROMPT),
+    ("self_upgrade", SELF_UPGRADE_PROMPT),
 ]
 
 
