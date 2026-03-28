@@ -25,8 +25,6 @@ Usage:
 import json
 import logging
 import os
-import re
-import sqlite3
 import sys
 import time
 from dataclasses import asdict, dataclass, field
@@ -38,9 +36,6 @@ from .cancellation import (
     start_cancellation_poller,
 )
 from .config import SystemConfig
-# TYPE_CHECKING would create a circular import; SpendingTracker is lazily
-# imported at runtime in _get_spending_tracker() — we just use string
-# annotations for type hints.
 from .heartbeat_progress import (
     PROGRESS_NODES as _PROGRESS_NODES,
     make_progress_callback as _make_progress_callback,
@@ -53,6 +48,19 @@ from .heartbeat_formatting import (
     _format_upgrade_issue_body,
     _post_failure,
     _post_cancelled,
+)
+from .heartbeat_spending import (
+    _estimate_cost_cents,
+    _get_spending_tracker,
+    _validate_heartbeat_config,
+    _artifact_cache_maintenance,
+)
+from .heartbeat_context import (
+    _rank_tasks,
+    _resolve_task_type,
+    _build_user_request,
+    _detect_clarification_resume,
+    _extract_complexity_hint,
 )
 from .heartbeat_signals import (
     SigtermReceived as _SigtermReceived,
@@ -675,73 +683,6 @@ def _execute_checked_out_task(
 # ── Internal Helpers ──
 
 
-# Per-million-token pricing in cents. Conservative estimates; actual pricing
-# varies by tier and changes over time.  Local backends (vllm, ollama,
-# llama.cpp) are free — they run on the agent's own hardware.
-_PRICING_PER_MILLION: Dict[str, Dict[str, tuple]] = {
-    # backend -> model_prefix -> (input_cents, output_cents) per 1M tokens
-    "openai": {
-        "gpt-4o": (250, 1000),
-        "gpt-4o-mini": (15, 60),
-        "gpt-4-turbo": (1000, 3000),
-        "gpt-4": (3000, 6000),
-        "gpt-3.5": (50, 150),
-        "_default": (250, 1000),
-    },
-    "anthropic": {
-        "claude-3-opus": (1500, 7500),
-        "claude-3.5-sonnet": (300, 1500),
-        "claude-3-sonnet": (300, 1500),
-        "claude-3-haiku": (25, 125),
-        "claude-3.5-haiku": (80, 400),
-        "_default": (300, 1500),
-    },
-    "google": {
-        "gemini-1.5-pro": (125, 500),
-        "gemini-1.5-flash": (8, 30),
-        "gemini-pro": (50, 150),
-        "_default": (125, 500),
-    },
-}
-
-# Local backends — always free
-_FREE_BACKENDS = {"vllm", "ollama", "llama.cpp", "llamacpp"}
-
-
-def _estimate_cost_cents(
-    backend: str,
-    model_name: str,
-    input_tokens: int,
-    output_tokens: int,
-) -> int:
-    """
-    Estimate cost in cents from backend, model, and token counts.
-
-    Returns 0 for local backends (vLLM, Ollama, llama.cpp).
-    For cloud backends, uses conservative per-million-token pricing.
-    """
-    backend_lower = backend.lower()
-    if backend_lower in _FREE_BACKENDS or not input_tokens and not output_tokens:
-        return 0
-
-    pricing = _PRICING_PER_MILLION.get(backend_lower)
-    if pricing is None:
-        return 0
-
-    # Find best matching model prefix (longest match wins to avoid
-    # "gpt-4o" matching before "gpt-4o-mini")
-    model_lower = model_name.lower()
-    input_rate, output_rate = pricing["_default"]
-    best_prefix_len = 0
-    for prefix, rates in pricing.items():
-        if prefix != "_default" and model_lower.startswith(prefix) and len(prefix) > best_prefix_len:
-            input_rate, output_rate = rates
-            best_prefix_len = len(prefix)
-
-    cost = (input_tokens * input_rate + output_tokens * output_rate) / 1_000_000
-    return max(1, round(cost))  # At least 1 cent if any cloud tokens used
-
-
 def _create_client(config: SystemConfig) -> PaperclipClient:
     """Create PaperclipClient with config overrides applied.
 
@@ -759,148 +700,6 @@ def _create_client(config: SystemConfig) -> PaperclipClient:
             "PAPERCLIP_AGENT_ID not set — required for clarification self-comment filtering"
         )
     return client
-
-
-def _rank_tasks(assignments: List[Issue]) -> List[Issue]:
-    """
-    Rank tasks by priority, returning a sorted list for fallthrough checkout.
-
-    Priority order:
-    1. PAPERCLIP_TASK_ID if set and in assignments (always first)
-    2. in_progress tasks (resume existing work)
-    3. todo tasks
-    4. blocked only if explicitly woken for it
-    """
-    forced_task_id = os.environ.get("PAPERCLIP_TASK_ID", "").strip()
-    ranked: List[Issue] = []
-    seen_ids: set = set()
-
-    # Forced task always first
-    if forced_task_id:
-        for issue in assignments:
-            if issue.id == forced_task_id:
-                ranked.append(issue)
-                seen_ids.add(issue.id)
-                break
-
-    # in_progress first
-    for issue in assignments:
-        if issue.id not in seen_ids and issue.status == "in_progress":
-            ranked.append(issue)
-            seen_ids.add(issue.id)
-
-    # then todo
-    for issue in assignments:
-        if issue.id not in seen_ids and issue.status == "todo":
-            ranked.append(issue)
-            seen_ids.add(issue.id)
-
-    # blocked only if explicitly woken for it
-    wake_reason = os.environ.get("PAPERCLIP_WAKE_REASON", "")
-    if wake_reason in ("issue_comment_mentioned", "issue_assigned"):
-        for issue in assignments:
-            if issue.id not in seen_ids and issue.status == "blocked" and issue.id == forced_task_id:
-                ranked.append(issue)
-                seen_ids.add(issue.id)
-
-    return ranked
-
-
-def _resolve_task_type(config: SystemConfig) -> str:
-    """Resolve the task type from config or env var."""
-    if config.paperclip.task_type:
-        return config.paperclip.task_type
-    return os.environ.get("VIBE_TASK_TYPE", "")
-
-
-def _build_user_request(
-    issue: Issue,
-    comments: list,
-    clarification_reply: Optional[str] = None,
-) -> str:
-    """
-    Build a user_request string from issue context.
-
-    Includes title, description, ancestor chain (the "why"), and
-    recent comments for additional context. When resuming from a
-    clarification, the human's reply is injected prominently.
-    """
-    parts = []
-
-    # Ancestor context (the "why" chain)
-    if issue.ancestors:
-        ancestor_chain = " → ".join(
-            a.get("title", "Unknown") for a in reversed(issue.ancestors)
-        )
-        parts.append(f"Goal chain: {ancestor_chain}")
-
-    # Primary task
-    parts.append(f"Task: {issue.title}")
-    if issue.description:
-        parts.append(f"\n{issue.description}")
-
-    # Human clarification reply — injected prominently before discussion
-    if clarification_reply:
-        parts.append(
-            f"\n[Clarification from human]: {clarification_reply}"
-        )
-
-    # Recent comments for additional context (last 5)
-    if comments:
-        recent = comments[-5:]
-        comment_text = "\n".join(f"- {c.body[:200]}" for c in recent)
-        parts.append(f"\nRecent discussion:\n{comment_text}")
-
-    return "\n".join(parts)
-
-
-def _detect_clarification_resume(
-    issue: Issue,
-    comments: List[Any],
-    agent_id: str,
-) -> Optional[str]:
-    """
-    Detect if this heartbeat is a resume from a human clarification reply.
-
-    Returns the human's reply text if all conditions are met:
-    1. PAPERCLIP_WAKE_REASON is 'issue_comment_mentioned'
-    2. PAPERCLIP_WAKE_COMMENT_ID is set
-    3. The issue was previously blocked
-    4. The wake comment is from a human (not this agent)
-
-    Returns None if this is a normal (non-resume) invocation.
-    """
-    wake_reason = os.environ.get("PAPERCLIP_WAKE_REASON", "").strip()
-    wake_comment_id = os.environ.get("PAPERCLIP_WAKE_COMMENT_ID", "").strip()
-
-    if wake_reason != "issue_comment_mentioned" or not wake_comment_id:
-        return None
-
-    if issue.status != "blocked":
-        return None
-
-    # Find the specific wake comment
-    for comment in comments:
-        if comment.id == wake_comment_id:
-            # Ensure it's from a human, not this agent echoing itself
-            if comment.author_agent_id and comment.author_agent_id == agent_id:
-                logger.debug("Wake comment %s is from self — not a clarification", wake_comment_id)
-                return None
-            # Strip whitespace; treat empty/whitespace-only replies as no reply
-            body = (comment.body or "").strip()
-            if not body:
-                logger.debug("Wake comment %s has empty body — skipping", wake_comment_id)
-                return None
-            return body
-
-    logger.warning("Wake comment %s not found in issue comments", wake_comment_id)
-    return None
-
-
-def _extract_complexity_hint(description: str) -> str:
-    """Extract complexity tier from orchestrator-embedded HTML comment."""
-    match = re.search(r"<!-- complexity:(\w+) -->", description or "")
-    return match.group(1) if match else ""
 
 
 def _run_workflow(
@@ -939,71 +738,5 @@ def _extract_usage(state: Dict[str, Any]) -> Dict[str, int]:
         "output_tokens": state.get("total_output_tokens", 0),
     }
 
-
-def _validate_heartbeat_config(config: SystemConfig) -> List[str]:
-    """
-    Validate config for heartbeat mode. Returns list of issues (empty = valid).
-
-    Runs the base config.validate() plus heartbeat-specific checks.
-    """
-    issues: List[str] = []
-
-    if not config.model.model_name:
-        issues.append("Model name not specified")
-
-    if config.mattermost.enabled and not config.mattermost.webhook_url:
-        issues.append("Mattermost enabled but webhook URL not configured")
-
-    # Heartbeat-specific: Paperclip connectivity requirements
-    if not os.environ.get("PAPERCLIP_API_URL") and not config.paperclip.api_url:
-        issues.append("PAPERCLIP_API_URL not set (required for heartbeat mode)")
-
-    if not os.environ.get("PAPERCLIP_AGENT_ID"):
-        issues.append("PAPERCLIP_AGENT_ID not set (required for self-comment filtering)")
-
-    return issues
-
-
-def _get_spending_tracker(config: SystemConfig) -> "Optional[SpendingTracker]":
-    """Create a SpendingTracker if spending tracking is enabled."""
-    if not config.spending.enabled:
-        return None
-    try:
-        from .spending_tracker import SpendingTracker
-        return SpendingTracker(
-            db_path=config.spending.db_path,
-            window_seconds=config.spending.window_seconds,
-            max_cents_per_window=config.spending.max_cents_per_window,
-            max_heartbeats_per_window=config.spending.max_heartbeats_per_window,
-            max_consecutive_non_idle=config.spending.max_consecutive_non_idle,
-            cooldown_seconds=config.spending.cooldown_seconds,
-            max_cooldown_seconds=config.spending.max_cooldown_seconds,
-            retention_days=config.spending.retention_days,
-            agent_id=os.environ.get("PAPERCLIP_AGENT_ID", ""),
-        )
-    except (ImportError, OSError) as e:
-        logger.warning("Failed to initialize spending tracker (non-fatal): %s", e)
-        return None
-
-
-def _artifact_cache_maintenance() -> None:
-    """Best-effort artifact cache cleanup: evict expired + LRU overflow."""
-    try:
-        from .artifact_store import ArtifactStore
-        store = ArtifactStore()
-        expired = store.cleanup_expired()
-        if expired:
-            logger.info("Heartbeat cache cleanup: removed %d expired artifacts", expired)
-        # Also enforce LRU cap (separate from TTL expiry)
-        conn = store._connect()
-        try:
-            evicted = store._evict_if_needed(conn)
-            conn.commit()
-            if evicted:
-                logger.info("Heartbeat cache eviction: removed %d over-limit artifacts", evicted)
-        finally:
-            conn.close()
-    except (ImportError, OSError, sqlite3.DatabaseError) as e:
-        logger.debug("Artifact cache maintenance skipped: %s", e)
 
 
