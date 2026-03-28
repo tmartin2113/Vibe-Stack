@@ -35,7 +35,7 @@ Deterministic state machine: **Router → Skill Loader → Spec Builder → Spec
 | **Sandbox** | `agents/sandbox/` | OpenSandbox Docker containers with GPU passthrough. Toggle: `VIBE_SANDBOX_BACKEND=opensandbox\|subprocess` |
 | **LLM Retry** | `agents/llm_retry.py` | Exponential backoff with jitter, Retry-After header support, per-node and workflow timeouts |
 | **Task Type Registry** | `agents/task_type_registry.py` | Unified registry of builtin + skill-defined types. Router, orchestrator, and LLM classifier all read from it |
-| **Workflow Factory** | `agents/workflow_factory.py` | Cached LLM backend + 24 adapters (16 specialist + 8 simulation) across heartbeat runs. Lazy init on first `run_workflow()` |
+| **Workflow Factory** | `agents/workflow_factory.py` | Cached LLM backend + 28 adapters (17 specialist + 11 simulation) across heartbeat runs. Lazy init on first `run_workflow()` |
 | **Heartbeat Hardening** | `agents/heartbeat_progress.py`, `agents/heartbeat_signals.py` | Progress comments at key nodes, graceful SIGTERM with partial result posting |
 | **WebSocket Client** | `agents/ws_client.py` | Push-based Paperclip events via WS. Auto-reconnect with backoff. Used by orchestrator POLL and cancellation watcher |
 | **MessageStore** | `agents/message_store.py`, `agents/message_types.py` | Message bus with FTS5 + vector semantic search. Typed messages (INFO, DECISION, BLOCKER, HANDOFF, STATUS, QUESTION, COMPLETION) with TTL-based expiry. Pluggable storage backend |
@@ -150,7 +150,7 @@ On SIGTERM: posts partial output/score/last-step to Paperclip, sets issue to blo
 Supporting modules:
 - `agents/heartbeat_progress.py` — progress callback that posts Paperclip comments at key nodes
 - `agents/heartbeat_signals.py` — SIGTERM handler, partial result posting
-- `agents/workflow_factory.py` — cached LLM backend + 24 adapter instances across heartbeat runs
+- `agents/workflow_factory.py` — cached LLM backend + 28 adapter instances across heartbeat runs
 
 ### Docker Compose (`docker/docker-compose.paperclip.yml`)
 

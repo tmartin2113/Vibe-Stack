@@ -51,7 +51,7 @@ Built for real workloads where agents run unattended:
 - **Graceful SIGTERM** — when Paperclip kills the container, the agent catches the signal, posts partial results (output, score, last step) to the issue, and sets it to blocked for retry
 - **Startup validation** — validates config (model name, `PAPERCLIP_API_URL`, `PAPERCLIP_AGENT_ID`) before any API calls. Fails fast with a clear message instead of crashing mid-workflow
 - **Lazy sandbox init** — defers Docker container pre-warming to first tool execution, cutting 10-30s off the startup critical path
-- **Cached factory** — `WorkflowFactory` reuses the LLM backend and 16 adapter instances across workflow runs instead of recreating them per invocation
+- **Cached factory** — `WorkflowFactory` reuses the LLM backend and 28 adapter instances (17 specialist + 11 simulation) across workflow runs instead of recreating them per invocation
 
 ### Orchestrator Agent
 

@@ -151,6 +151,7 @@ class BrowserAutomationTool(Tool):
         url_json = json.dumps(url)
         selector_json = json.dumps(selector)
         value_json = json.dumps(value)
+        timeout_json = json.dumps(timeout)
 
         return f"""
 import asyncio, json, os
@@ -162,7 +163,7 @@ async def main():
         browser = await p.chromium.connect(ws_url)
         context = await browser.new_context()
         page = await context.new_page()
-        page.set_default_timeout({timeout})
+        page.set_default_timeout({timeout_json})
 
         action = {json.dumps(action)}
         result = ""
