@@ -663,9 +663,14 @@ def create_agent_graph(adapter_registry: AdapterRegistry, tool_registry: Optiona
 
     # Parallel sub-task execution (when parallel_execution=True)
     def parallel_subtasks_wrapper(state: AgentState) -> AgentState:
-        """Execute all sub-tasks concurrently using thread pool."""
+        """Execute all sub-tasks concurrently using thread pool.
+
+        Passes adapter_registry so the simulation sidecar can create
+        persona LLM calls on the same base_model.
+        """
         return execute_parallel_subtasks(
-            state, nodes, config
+            state, nodes, config,
+            adapter_registry=adapter_registry,
         )
 
     workflow.add_node("parallel_subtasks", parallel_subtasks_wrapper)

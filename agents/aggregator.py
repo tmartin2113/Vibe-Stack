@@ -14,6 +14,7 @@ import logging
 from typing import Dict, Any, List, Optional
 
 from .adapters import AdapterRegistry
+from .simulation import format_simulation_for_aggregator, SimulationReport
 from .state import AgentState
 
 logger = logging.getLogger(__name__)
@@ -69,6 +70,17 @@ class AggregatorNode:
         # Build the raw material: structured representation of all outputs
         raw_sections = self._build_raw_sections(completed)
 
+        # Build simulation context (empty string if no simulation ran)
+        sim_context = ""
+        sim_report_text = state.get("simulation_report")
+        if sim_report_text and not state.get("simulation_skipped", True):
+            sim_report_obj = SimulationReport(
+                report=sim_report_text,
+                conflicts=state.get("simulation_conflicts", []),
+                risk_level=state.get("simulation_risk_level", "unknown"),
+            )
+            sim_context = format_simulation_for_aggregator(sim_report_obj)
+
         # Try LLM-driven aggregation first, fall back to string concatenation
         adapter = self._get_aggregation_adapter()
 
@@ -76,7 +88,7 @@ class AggregatorNode:
             logger.info(f"Using LLM-driven aggregation (strategy: {aggregation_strategy})")
             aggregated = self._llm_aggregate(
                 adapter, raw_sections, user_request, specification,
-                aggregation_strategy
+                aggregation_strategy, simulation_context=sim_context,
             )
         else:
             logger.info(f"No adapter available, using fallback concatenation (strategy: {aggregation_strategy})")
@@ -157,6 +169,7 @@ class AggregatorNode:
         user_request: str,
         specification: str,
         strategy: str,
+        simulation_context: str = "",
     ) -> str:
         """
         Use the LLM to intelligently aggregate specialist outputs.
@@ -178,6 +191,16 @@ class AggregatorNode:
             prompt = self._build_report_prompt(sections_text, user_request, specification)
         else:
             prompt = self._build_merge_prompt(sections_text, user_request, specification)
+
+        # Append simulation context if available — gives the aggregator
+        # awareness of predicted integration risks from the sidecar.
+        if simulation_context:
+            prompt += f"""
+
+**Integration Simulation Results**:
+The following integration risks were identified by an automated simulation that ran alongside the specialists. Address these in your aggregation:
+
+{simulation_context}"""
 
         try:
             result = adapter.generate(
