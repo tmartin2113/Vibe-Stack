@@ -288,7 +288,7 @@ class TestMultiAgentSystem:
         assert "critic" in adapters
         assert "code" in adapters
         assert "creative" in adapters
-        assert len(adapters) == 16  # 16 adapter definitions (including general)
+        assert len(adapters) == 17  # 17 adapters (including general + self_upgrade)
 
     def test_run_not_initialized(self, system):
         with pytest.raises(RuntimeError, match="not initialized"):

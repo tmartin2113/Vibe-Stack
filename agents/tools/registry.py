@@ -482,6 +482,9 @@ _DEFAULT_ALLOWED_FILE_DIRS = [
     Path("/tmp").resolve(),
 ]
 
+# Project root for self-upgrade mode (agents/ source directory)
+_SELF_UPGRADE_DIR = Path(__file__).resolve().parent.parent  # agents/ parent = Vibe-Stack
+
 # File size limits (in bytes) to prevent memory issues
 # These limits protect against memory exhaustion and excessive disk usage
 # Adjust these values based on your deployment environment
@@ -498,11 +501,19 @@ def _build_allowed_file_dirs(configured_dirs: Optional[List[str]] = None) -> Lis
     3. Built-in defaults (/home/user/Vibe, /tmp)
     """
     if configured_dirs:
-        return [Path(d).resolve() for d in configured_dirs]
-    env_dirs = os.environ.get("VIBE_ALLOWED_FILE_DIRS")
-    if env_dirs:
-        return [Path(d).resolve() for d in env_dirs.split(":") if d.strip()]
-    return list(_DEFAULT_ALLOWED_FILE_DIRS)
+        dirs = [Path(d).resolve() for d in configured_dirs]
+    elif (env_dirs := os.environ.get("VIBE_ALLOWED_FILE_DIRS")):
+        dirs = [Path(d).resolve() for d in env_dirs.split(":") if d.strip()]
+    else:
+        dirs = list(_DEFAULT_ALLOWED_FILE_DIRS)
+
+    # When self-upgrade is enabled (default), grant access to the project root
+    if os.environ.get("VIBE_SELF_UPGRADE_ENABLED", "true").lower() not in ("false", "0", "no"):
+        project_root = _SELF_UPGRADE_DIR.resolve()
+        if project_root not in dirs:
+            dirs.append(project_root)
+
+    return dirs
 
 
 def _validate_file_path(

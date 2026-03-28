@@ -121,6 +121,15 @@ class AgentState(TypedDict, total=False):
     cache_key: str  # SHA-256 hash used for cache lookup
     cache_entry_stored: bool  # True if this run's result was written to cache
 
+    # ===== SELF-UPGRADE =====
+    upgrade_signals: List[Dict[str, Any]]  # Signals detected this run
+    upgrade_proposal_ready: bool  # True if enough signals accumulated
+    upgrade_proposal_description: str  # What should be upgraded
+    upgrade_applied: bool  # True if an upgrade was successfully committed
+    upgrade_branch: str  # Git branch name of the upgrade
+    upgrade_commit: str  # Git commit hash of the upgrade
+    upgrade_errors: List[str]  # Errors from pipeline execution
+
     # ===== PARALLEL EXECUTION =====
     parallel_execution_errors: List[Dict[str, Any]]  # Errors from parallel sub-tasks
 
