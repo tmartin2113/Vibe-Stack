@@ -71,8 +71,6 @@ def should_approve_output(state: AgentState) -> str:
     _extra = {"gate": "output", "score": output_score, "threshold": threshold,
               "iteration": state["specialist_iteration_count"], "max_iterations": max_specialist_iterations}
 
-    # Sync legacy alias so heartbeat sees the score regardless of outcome
-    state["critic_score"] = output_score
 
     # Success: output meets threshold
     if output_score >= threshold:
@@ -229,9 +227,6 @@ def should_use_llm_critic(state: AgentState) -> str:
         state["output_critic_score"] = score
         state["output_critic_feedback"] = "Approved by heuristic critic."
         state["quality_gate_decision"] = "pass"
-        # Sync legacy aliases so finalize_state() and heartbeat see the score
-        state["critic_score"] = score
-        state["critic_feedback"] = "Approved by heuristic critic."
         return "approve"
 
     logger.info("Heuristic critic did not pass — routing to LLM critic")

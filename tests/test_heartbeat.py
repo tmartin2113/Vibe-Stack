@@ -437,7 +437,7 @@ class TestRunHeartbeat:
         mock_workflow.return_value = {
             "final_output": "Done successfully",
             "final_score": 90,
-            "critic_score": 90,
+            "output_critic_score": 90,
             "total_input_tokens": 1000,
             "total_output_tokens": 500,
         }
@@ -520,7 +520,7 @@ class TestRunHeartbeat:
         mock_workflow.return_value = {
             "final_output": "Partial work",
             "final_score": 50,
-            "critic_score": 50,
+            "output_critic_score": 50,
         }
 
         result = run_heartbeat(config)
@@ -1879,7 +1879,7 @@ class TestProgressCallback:
         """Progress callback posts a comment for specialist node."""
         client = MagicMock(spec=PaperclipClient)
         cb = _make_progress_callback(client, "issue-1")
-        state = {"iteration_count": 1, "max_iterations": 3, "critic_score": 0}
+        state = {"iteration_count": 1, "max_iterations": 3, "output_critic_score": 0}
         cb("specialist", state)
         client.add_comment.assert_called_once()
         body = client.add_comment.call_args[0][1]
@@ -1890,7 +1890,7 @@ class TestProgressCallback:
         """Progress callback includes score for critic node."""
         client = MagicMock(spec=PaperclipClient)
         cb = _make_progress_callback(client, "issue-1")
-        state = {"iteration_count": 0, "max_iterations": 3, "critic_score": 72, "heuristic_critic_score": 72}
+        state = {"iteration_count": 0, "max_iterations": 3, "output_critic_score": 72, "heuristic_critic_score": 72}
         cb("heuristic_critic", state)
         client.add_comment.assert_called_once()
         body = client.add_comment.call_args[0][1]
@@ -1928,7 +1928,7 @@ class TestProgressCallback:
         mock_workflow.return_value = {
             "final_output": "done",
             "final_score": 90,
-            "critic_score": 90,
+            "output_critic_score": 90,
         }
 
         result = run_heartbeat(config)
@@ -1975,8 +1975,8 @@ class TestSigtermHandling:
         """_post_sigterm_partial posts partial output and sets blocked."""
         client = MagicMock(spec=PaperclipClient)
         state = {
-            "current_output": "partial code here",
-            "critic_score": 45,
+            "specialist_output": "partial code here",
+            "output_critic_score": 45,
             "last_node": "specialist",
         }
         _post_sigterm_partial(client, "i1", state)
@@ -2093,7 +2093,7 @@ class TestClarificationResume:
         mock_workflow.return_value = {
             "final_output": "done",
             "final_score": 90,
-            "critic_score": 90,
+            "output_critic_score": 90,
         }
 
         with patch.dict(os.environ, {

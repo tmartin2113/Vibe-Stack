@@ -47,16 +47,25 @@ def _build_allowed_file_dirs(configured_dirs: Optional[List[str]] = None) -> Lis
     1. ``configured_dirs`` (from SandboxConfig.allowed_file_dir_list)
     2. ``VIBE_ALLOWED_FILE_DIRS`` env var (colon-separated)
     3. Built-in defaults (/home/user/Vibe, /tmp)
+
+    The self-upgrade project root is appended only when using env-var
+    or built-in defaults (not when explicit dirs are passed), so that
+    callers who pass a specific allow-list get exactly those dirs.
     """
     if configured_dirs:
-        dirs = [Path(d).resolve() for d in configured_dirs]
-    elif (env_dirs := os.environ.get("VIBE_ALLOWED_FILE_DIRS")):
+        return [Path(d).resolve() for d in configured_dirs]
+
+    if (env_dirs := os.environ.get("VIBE_ALLOWED_FILE_DIRS")):
         dirs = [Path(d).resolve() for d in env_dirs.split(":") if d.strip()]
     else:
         dirs = list(_DEFAULT_ALLOWED_FILE_DIRS)
 
-    # When self-upgrade is enabled (default), grant access to the project root
-    if os.environ.get("VIBE_SELF_UPGRADE_ENABLED", "true").lower() not in ("false", "0", "no"):
+    # When self-upgrade is explicitly enabled via env var, grant access to
+    # the project root.  We check for explicit presence (not a default) so
+    # that unit tests with cleared environments get predictable results and
+    # production deployments opt in via their .env / docker-compose config.
+    su_val = os.environ.get("VIBE_SELF_UPGRADE_ENABLED")
+    if su_val is not None and su_val.lower() not in ("false", "0", "no"):
         project_root = _SELF_UPGRADE_DIR.resolve()
         if project_root not in dirs:
             dirs.append(project_root)

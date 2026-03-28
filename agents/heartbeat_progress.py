@@ -43,7 +43,7 @@ def make_progress_callback(
 
         iteration = state.get("iteration_count", 0)
         max_iter = state.get("max_iterations", 3)
-        score = state.get("critic_score") or state.get("heuristic_critic_score") or 0
+        score = state.get("output_critic_score") or state.get("heuristic_critic_score") or 0
 
         parts = [f"**{label}**"]
         if node_name == "specialist":

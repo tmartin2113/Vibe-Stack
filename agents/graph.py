@@ -378,9 +378,7 @@ def create_agent_graph(adapter_registry: AdapterRegistry, tool_registry: Optiona
         # Cache HIT — populate state with cached results
         state["cache_hit"] = True
         state["specialist_output"] = entry.specialist_output
-        state["current_output"] = entry.specialist_output
         state["output_critic_score"] = entry.output_critic_score
-        state["critic_score"] = entry.output_critic_score
         state["final_output"] = entry.specialist_output
         state["final_score"] = entry.final_score
         state["tool_calls_made"] = entry.tool_calls
@@ -464,7 +462,7 @@ def create_agent_graph(adapter_registry: AdapterRegistry, tool_registry: Optiona
         # Store approved results in the artifact cache
         if shared_artifact_store is not None and not result.get("cache_hit", False):
             cache_key = result.get("cache_key", "")
-            specialist_output = result.get("specialist_output", "") or result.get("current_output", "")
+            specialist_output = result.get("specialist_output", "")
             output_score = result.get("output_critic_score", 0)
             final_score = result.get("final_score", 0)
 

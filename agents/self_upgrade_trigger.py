@@ -250,15 +250,12 @@ class SelfUpgradeTrigger:
         self, state: AgentState, task_type: str, analysis: TriggerAnalysis
     ) -> None:
         """Detect workflows that scored poorly overall."""
-        score = state.get("output_critic_score", 0) or state.get("critic_score", 0)
+        score = state.get("output_critic_score", 0)
         if score == 0:
             return  # Unevaluated — don't signal
 
         if score < self.poor_score_threshold:
-            feedback = (
-                state.get("output_critic_feedback", "")
-                or state.get("critic_feedback", "")
-            )
+            feedback = state.get("output_critic_feedback", "")
             analysis.signals.append(UpgradeSignal(
                 category="low_score",
                 task_type=task_type,
@@ -315,10 +312,7 @@ class SelfUpgradeTrigger:
         self, state: AgentState, task_type: str, analysis: TriggerAnalysis
     ) -> None:
         """Detect recurring themes in critic feedback."""
-        feedback = (
-            state.get("output_critic_feedback", "")
-            or state.get("critic_feedback", "")
-        )
+        feedback = state.get("output_critic_feedback", "")
         if not feedback:
             return
 

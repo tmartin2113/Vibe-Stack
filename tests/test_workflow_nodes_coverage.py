@@ -253,10 +253,10 @@ class TestGetContextForNode:
         state["output_critic_feedback"] = "Needs error handling"
         state["output_critic_score"] = 72
         state["specialist_iteration_count"] = 1
-        state["current_output"] = "def handler(): ..."
-        state["critic_score"] = 72
-        state["critic_scores"] = {"completeness": 70, "quality": 74}
-        state["critic_feedback"] = "Needs error handling"
+        state["specialist_output"] = "def handler(): ..."
+        state["output_critic_score"] = 72
+        state["output_critic_scores"] = {"completeness": 70, "quality": 74}
+        state["output_critic_feedback"] = "Needs error handling"
         state["sub_tasks"] = [{"task_type": "code"}]
         state["aggregation_strategy"] = "merge"
         return state
@@ -304,10 +304,10 @@ class TestGetContextForNode:
     def test_refinement_context(self):
         state = self._base_state()
         ctx = get_context_for_node(state, "refinement")
-        assert ctx["critic_score"] == 72
-        assert ctx["critic_scores"] == {"completeness": 70, "quality": 74}
-        assert ctx["critic_feedback"] == "Needs error handling"
-        assert ctx["current_output"] == "def handler(): ..."
+        assert ctx["output_critic_score"] == 72
+        assert ctx["output_critic_scores"] == {"completeness": 70, "quality": 74}
+        assert ctx["output_critic_feedback"] == "Needs error handling"
+        assert ctx["specialist_output"] == "def handler(): ..."
         assert ctx["specialist_adapter"] == "code_expert"
         assert "iterations_remaining" in ctx
 
@@ -341,15 +341,15 @@ class TestFinalizeState:
         assert "total_time_seconds" in result
         assert result["total_time_seconds"] >= 0
 
-    def test_sets_final_output_from_current_output(self):
+    def test_sets_final_output_from_specialist_output(self):
         state = create_initial_state("test")
-        state["current_output"] = "the final answer"
+        state["specialist_output"] = "the final answer"
         result = finalize_state(state)
         assert result["final_output"] == "the final answer"
 
-    def test_sets_final_score_from_critic_score(self):
+    def test_sets_final_score_from_output_critic_score(self):
         state = create_initial_state("test")
-        state["critic_score"] = 91
+        state["output_critic_score"] = 91
         result = finalize_state(state)
         assert result["final_score"] == 91
 
@@ -861,12 +861,8 @@ class TestEvaluateAggregatedOutput:
         assert result["output_critic_score"] > 0
         assert result["output_critic_scores"]["overall"] > 0
         assert result["output_critic_feedback"] != ""
-        # Legacy aliases
-        assert result["critic_score"] == result["output_critic_score"]
-        assert result["critic_scores"] == result["output_critic_scores"]
-        # aggregated_output should be copied to specialist_output/current_output
+        # aggregated_output should be copied to specialist_output
         assert result["specialist_output"] == state["aggregated_output"]
-        assert result["current_output"] == state["aggregated_output"]
 
     def test_no_subtasks_still_evaluates(self):
         """Even with empty sub_tasks, aggregated output is evaluated."""
@@ -974,10 +970,10 @@ class TestPlanRefinement:
         state = create_initial_state("Write a function")
         state["specialist_adapter"] = "code_expert"
         state["routed_task_type"] = "code_generation"
-        state["critic_score"] = 65
-        state["critic_scores"] = {"completeness": 60, "quality": 70}
-        state["critic_feedback"] = "Missing error handling. Variable names unclear."
-        state["current_output"] = "def f(x): return x"
+        state["output_critic_score"] = 65
+        state["output_critic_scores"] = {"completeness": 60, "quality": 70}
+        state["output_critic_feedback"] = "Missing error handling. Variable names unclear."
+        state["specialist_output"] = "def f(x): return x"
         state["specialist_iteration_count"] = 1
         state["specialist_max_iterations"] = 3
         state["iteration_count"] = 1
@@ -988,17 +984,17 @@ class TestPlanRefinement:
         assert "refinement" in result.get("adapters_used", [])
 
     def test_plan_refinement_adds_to_history(self):
-        """plan_refinement calls add_to_history, which requires current_output and critic_score."""
+        """plan_refinement calls add_to_history, which requires specialist_output and output_critic_score."""
         nodes = _make_nodes(responses={
             "refinement": "Improve error handling",
         })
         state = create_initial_state("Write a function")
         state["specialist_adapter"] = "code_expert"
         state["routed_task_type"] = "code_generation"
-        state["critic_score"] = 65
-        state["critic_scores"] = {"completeness": 60}
-        state["critic_feedback"] = "Needs work."
-        state["current_output"] = "def f(): pass"
+        state["output_critic_score"] = 65
+        state["output_critic_scores"] = {"completeness": 60}
+        state["output_critic_feedback"] = "Needs work."
+        state["specialist_output"] = "def f(): pass"
         state["iteration_count"] = 0
         state["specification"] = "Write code"
 

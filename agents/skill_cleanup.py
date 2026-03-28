@@ -74,15 +74,8 @@ class SkillCleanupNode:
             # Build shared lookups once (Bug #5 fix: avoid redundant computation)
             subtask_scores = self._build_subtask_score_map(state)
             subtask_feedback = self._build_subtask_feedback_map(state)
-            fallback_score = (
-                state.get("output_critic_score")
-                or state.get("critic_score")
-                or 0
-            )
-            fallback_feedback = (
-                state.get("output_critic_feedback", "")
-                or state.get("critic_feedback", "")
-            )
+            fallback_score = state.get("output_critic_score") or 0
+            fallback_feedback = state.get("output_critic_feedback", "")
 
             # Track usage for all skills that were used
             self._track_skill_usage(
@@ -129,7 +122,7 @@ class SkillCleanupNode:
         upstream nodes).  Falls back through:
           1. Per-skill scores from sub-task critics (multi-specialist path)
           2. The top-level output_critic_score (single-specialist path)
-          3. The legacy critic_score alias
+          3. Zero (no score available)
 
         Args:
             state:           Current agent state

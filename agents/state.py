@@ -114,15 +114,6 @@ class AggregationState(TypedDict, total=False):
     final_aggregation_score: int  # Final critic score for aggregated output
 
 
-class LegacyAliasState(TypedDict, total=False):
-    """Legacy fields (for backwards compatibility)."""
-
-    current_output: str  # Alias for specialist_output
-    critic_scores: Dict[str, int]  # Alias for output_critic_scores
-    critic_score: int  # Alias for output_critic_score
-    critic_feedback: str  # Alias for output_critic_feedback
-
-
 class QualityGateState(TypedDict, total=False):
     """Quality gate decision."""
 
@@ -210,7 +201,6 @@ class AgentState(
     SpecialistOutputState,
     OutputCriticState,
     AggregationState,
-    LegacyAliasState,
     QualityGateState,
     ComplexityState,
     MemoryState,
@@ -341,13 +331,13 @@ def add_to_history(state: AgentState) -> AgentState:
 
     This creates a summarized entry to prevent context explosion.
     """
-    if state.get("current_output") and state.get("critic_score") is not None:
+    if state.get("specialist_output") and state.get("output_critic_score") is not None:
         entry = ConversationHistoryEntry(
             iteration=state["iteration_count"],
             specification=state.get("specification", "")[:200] + "...",  # Truncate
-            output=state.get("current_output", "")[:300] + "...",  # Truncate
-            score=state["critic_score"],
-            feedback_summary=_summarize_feedback(state.get("critic_feedback", "")),
+            output=state.get("specialist_output", "")[:300] + "...",  # Truncate
+            score=state["output_critic_score"],
+            feedback_summary=_summarize_feedback(state.get("output_critic_feedback", "")),
             timestamp=datetime.now().isoformat()
         )
 
@@ -417,16 +407,16 @@ def get_context_for_node(state: AgentState, node_name: str) -> Dict[str, Any]:
     elif node_name == "critic":
         # Critic needs: specification, output, task type for domain-specific evaluation
         context["specification"] = state.get("specification", "")
-        context["generated_output"] = state.get("current_output", "")
+        context["generated_output"] = state.get("specialist_output", "")
         context["routed_task_type"] = state.get("routed_task_type", "general")
         context["specialist_adapter"] = state.get("specialist_adapter", "")
 
     elif node_name == "refinement":
         # Refinement needs: critique + specialist type for targeted improvement plans
-        context["critic_score"] = state.get("critic_score", 0)
-        context["critic_scores"] = state.get("critic_scores", {})
-        context["critic_feedback"] = state.get("critic_feedback", "")
-        context["current_output"] = state.get("current_output", "")
+        context["output_critic_score"] = state.get("output_critic_score", 0)
+        context["output_critic_scores"] = state.get("output_critic_scores", {})
+        context["output_critic_feedback"] = state.get("output_critic_feedback", "")
+        context["specialist_output"] = state.get("specialist_output", "")
         context["iterations_remaining"] = state.get("max_iterations", 3) - state.get("iteration_count", 0)
         context["specialist_adapter"] = state.get("specialist_adapter", "")
         context["routed_task_type"] = state.get("routed_task_type", "general")
@@ -471,7 +461,7 @@ def finalize_state(state: AgentState) -> AgentState:
     state["total_time_seconds"] = (end - start).total_seconds()
 
     # Set final output and score
-    state["final_output"] = state.get("current_output", "")
-    state["final_score"] = state.get("critic_score", 0)
+    state["final_output"] = state.get("specialist_output", "")
+    state["final_score"] = state.get("output_critic_score", 0)
 
     return state
