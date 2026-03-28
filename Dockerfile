@@ -1,5 +1,5 @@
 # ── Stage 1: Install dependencies ────────────────────────────────────
-FROM python:3.14-slim AS deps
+FROM python:3.13-slim AS deps
 
 WORKDIR /app
 
@@ -9,7 +9,7 @@ COPY requirements-production.lock .
 RUN pip install --no-cache-dir -r requirements-production.lock
 
 # ── Stage 2: Runtime image ───────────────────────────────────────────
-FROM python:3.14-slim AS runtime
+FROM python:3.13-slim AS runtime
 
 WORKDIR /app
 
@@ -24,7 +24,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY --from=docker:cli /usr/local/bin/docker /usr/local/bin/docker
 
 # Create non-root user for running the application
-RUN groupadd -r vibe && useradd -r -g vibe -m -d /home/vibe vibe
+RUN groupadd -r vibe && useradd -r -g vibe -u 1000 -m -d /home/vibe vibe
 
 # Copy installed Python packages from deps stage.
 # Uses BuildKit mount to discover site-packages path dynamically so the build

@@ -13,7 +13,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
     && curl -fsSL https://deb.nodesource.com/setup_lts.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \
-    && npm install -g npm@latest \
+    && npm install -g npm@10.9.2 \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -27,5 +27,8 @@ COPY main.py .
 EXPOSE 9000
 # Staging port range
 EXPOSE 8100-8119
+
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
+    CMD curl -f http://localhost:9000/docs || exit 1
 
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "9000", "--workers", "1"]

@@ -24,11 +24,14 @@ services:
       - bulletin-data:/shared/bulletin
       - /var/run/docker.sock:/var/run/docker.sock
       - ./:/home/user/Vibe:ro
+    networks:
+      - backend
+      - sandbox
     deploy:
       resources:
         limits:
           cpus: "2.0"
-          memory: 2G
+          memory: ${VIBE_AGENT_MEMORY_LIMIT:-2G}
         reservations:
           memory: 512M
           devices:
@@ -38,6 +41,7 @@ services:
 
   vllm:
     image: vllm/vllm-openai:latest
+    restart: unless-stopped
     profiles:
       - vllm   # use 'docker compose --profile vllm up' when no host vLLM service
     ports:
@@ -71,8 +75,12 @@ services:
       timeout: 5s
       retries: 5
       start_period: 60s
+    networks:
+      - backend
     deploy:
       resources:
+        limits:
+          memory: ${VIBE_VLLM_MEMORY_LIMIT:-24G}
         reservations:
           devices:
             - driver: nvidia
@@ -81,6 +89,7 @@ services:
 
   opensandbox:
     image: opensandbox/server:v0.1.7
+    restart: unless-stopped
     command: ["--config", "/root/.sandbox.toml"]
     ports:
       - "9090:8080"
@@ -94,8 +103,12 @@ services:
       timeout: 5s
       retries: 5
       start_period: 15s
+    networks:
+      - sandbox
     deploy:
       resources:
+        limits:
+          memory: ${VIBE_SANDBOX_MEMORY_LIMIT:-4G}
         reservations:
           devices:
             - driver: nvidia
@@ -122,3 +135,9 @@ volumes:
   vibe-data:
   bulletin-data:
   tailscale-state:
+
+networks:
+  backend:
+    driver: bridge
+  sandbox:
+    driver: bridge

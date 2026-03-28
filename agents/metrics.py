@@ -265,6 +265,42 @@ class _HealthHandler(BaseHTTPRequestHandler):
                 # Paperclip unreachable is degraded, not fatal for liveness
                 checks["paperclip_api_note"] = "degraded_but_not_fatal"
 
+        # Check 4: GPU availability (when opensandbox backend configured)
+        sandbox_backend = os.environ.get("VIBE_SANDBOX_BACKEND", "subprocess")
+        if sandbox_backend == "opensandbox":
+            try:
+                import subprocess as _sp
+                result = _sp.run(
+                    ["nvidia-smi", "--query-gpu=memory.free",
+                     "--format=csv,noheader,nounits"],
+                    capture_output=True, text=True, timeout=3,
+                )
+                if result.returncode == 0 and result.stdout.strip():
+                    free_mb = int(result.stdout.strip().split("\n")[0])
+                    if free_mb > 1024:
+                        checks["gpu"] = "ok"
+                    else:
+                        checks["gpu"] = f"low_memory ({free_mb}MB free)"
+                else:
+                    checks["gpu"] = "not_detected"
+            except (FileNotFoundError, OSError):
+                checks["gpu"] = "nvidia_smi_unavailable"
+            except Exception:
+                checks["gpu"] = "probe_failed"
+
+        # Check 5: Sandbox connectivity (when configured)
+        sandbox_url = os.environ.get("VIBE_SANDBOX_URL", "")
+        if sandbox_url:
+            try:
+                import urllib.request
+                url = f"{sandbox_url.rstrip('/')}/docs"
+                req = urllib.request.Request(url, method="GET")
+                with urllib.request.urlopen(req, timeout=3) as resp:
+                    checks["sandbox"] = "ok" if resp.status == 200 else "degraded"
+            except (urllib.error.URLError, OSError):
+                checks["sandbox"] = "unreachable"
+                checks["sandbox_note"] = "degraded_but_not_fatal"
+
         status_code = 200 if healthy else 503
         body = json.dumps({"status": "ok" if healthy else "unhealthy", "checks": checks})
         self._respond(status_code, body, "application/json")
