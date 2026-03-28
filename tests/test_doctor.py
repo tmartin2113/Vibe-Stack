@@ -465,13 +465,12 @@ class TestRunDoctor:
              patch("agents.doctor.check_hardware", return_value=CheckResult("Hardware", "ok", "ok")), \
              patch("agents.doctor.check_sandbox", return_value=CheckResult("Sandbox", "ok", "ok")), \
              patch("agents.doctor.check_docker_gpu", return_value=CheckResult("Docker GPU", "ok", "ok")), \
-             patch("agents.doctor.check_firecrawl", return_value=CheckResult("Firecrawl", "ok", "ok")), \
              patch("agents.doctor.check_memory", return_value=CheckResult("Memory Store", "ok", "ok")), \
              patch("agents.doctor.check_message_store", return_value=CheckResult("Message Store", "ok", "ok")):
             report = run_doctor(config)
 
-        assert len(report.checks) == 13
-        assert report.ok_count == 13
+        assert len(report.checks) == 12
+        assert report.ok_count == 12
         assert report.fail_count == 0
 
     def test_report_with_failures(self):
@@ -486,14 +485,13 @@ class TestRunDoctor:
              patch("agents.doctor.check_hardware", return_value=CheckResult("Hardware", "ok", "ok")), \
              patch("agents.doctor.check_sandbox", return_value=CheckResult("Sandbox", "ok", "ok")), \
              patch("agents.doctor.check_docker_gpu", return_value=CheckResult("Docker GPU", "ok", "ok")), \
-             patch("agents.doctor.check_firecrawl", return_value=CheckResult("Firecrawl", "ok", "ok")), \
              patch("agents.doctor.check_memory", return_value=CheckResult("Memory Store", "ok", "ok")), \
              patch("agents.doctor.check_message_store", return_value=CheckResult("Message Store", "ok", "ok")):
             report = run_doctor(config)
 
         assert report.fail_count == 1
         assert report.warn_count == 1
-        assert report.ok_count == 11
+        assert report.ok_count == 10
 
     def test_format_output_is_printable(self):
         config = _make_config()
@@ -507,7 +505,6 @@ class TestRunDoctor:
              patch("agents.doctor.check_hardware", return_value=CheckResult("Hardware", "ok", "ok")), \
              patch("agents.doctor.check_sandbox", return_value=CheckResult("Sandbox", "ok", "ok")), \
              patch("agents.doctor.check_docker_gpu", return_value=CheckResult("Docker GPU", "ok", "ok")), \
-             patch("agents.doctor.check_firecrawl", return_value=CheckResult("Firecrawl", "ok", "ok")), \
              patch("agents.doctor.check_memory", return_value=CheckResult("Memory Store", "ok", "ok")), \
              patch("agents.doctor.check_message_store", return_value=CheckResult("Message Store", "ok", "ok")):
             report = run_doctor(config)

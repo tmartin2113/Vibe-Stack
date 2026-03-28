@@ -1537,22 +1537,16 @@ class TestSaveKeyFailure:
 
     def test_save_key_raises_on_failure(self, tmp_path):
         """Lines 140-142: _save_key raises if write fails."""
+        from unittest.mock import patch as _patch
         from agents.api_key_manager import APIKeyManager
         mgr = APIKeyManager.__new__(APIKeyManager)
         mgr.config = None
         mgr.cache = {}
-        # Use an invalid path to force write failure
-        mgr.storage_path = tmp_path / "nonexistent_dir" / "subdir" / "api_keys.json"
-        # Create parent dir but make it read-only
-        parent = tmp_path / "nonexistent_dir" / "subdir"
-        parent.mkdir(parents=True)
-        mgr.storage_path.write_text("{}")
-        os.chmod(str(parent), 0o000)
-        try:
-            with pytest.raises(Exception):
+        mgr.storage_path = tmp_path / "api_keys.json"
+        # Force the file write to raise — works regardless of user/root
+        with _patch("builtins.open", side_effect=OSError("disk full")):
+            with pytest.raises(OSError):
                 mgr._save_key("KEY", "value")
-        finally:
-            os.chmod(str(parent), 0o755)
 
 
 # ===========================================================================

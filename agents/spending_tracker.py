@@ -23,7 +23,10 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
+
+if TYPE_CHECKING:
+    from .storage.base import StorageBackend
 
 logger = logging.getLogger(__name__)
 
@@ -87,7 +90,10 @@ class SpendingTracker:
         max_cooldown_seconds: int = 7200,
         retention_days: int = 30,
         agent_id: str = "",
+        storage_backend: "Optional[StorageBackend]" = None,
     ):
+        self.storage_backend = storage_backend
+
         if db_path is None:
             db_path = str(Path.home() / ".vibe" / "spending_ledger.db")
 
@@ -102,48 +108,55 @@ class SpendingTracker:
         self.retention_days = retention_days
         self._lock = threading.Lock()
 
-        Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
+        if self.storage_backend is None:
+            Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
         self._init_db()
 
     # ------------------------------------------------------------------
     # Schema
     # ------------------------------------------------------------------
 
+    _SCHEMA_DDL = """
+        CREATE TABLE IF NOT EXISTS cost_events (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp   TEXT NOT NULL,
+            agent_id    TEXT NOT NULL DEFAULT '',
+            agent_name  TEXT NOT NULL DEFAULT '',
+            run_id      TEXT NOT NULL DEFAULT '',
+            issue_id    TEXT NOT NULL DEFAULT '',
+            provider    TEXT NOT NULL DEFAULT '',
+            model       TEXT NOT NULL DEFAULT '',
+            input_tokens  INTEGER NOT NULL DEFAULT 0,
+            output_tokens INTEGER NOT NULL DEFAULT 0,
+            cost_cents  INTEGER NOT NULL DEFAULT 0,
+            status      TEXT NOT NULL DEFAULT '',
+            tokens_per_second REAL NOT NULL DEFAULT 0,
+            generation_duration_ms INTEGER NOT NULL DEFAULT 0
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_cost_events_timestamp
+            ON cost_events(timestamp);
+        CREATE INDEX IF NOT EXISTS idx_cost_events_status
+            ON cost_events(status);
+
+        CREATE TABLE IF NOT EXISTS circuit_breaker (
+            scope         TEXT PRIMARY KEY,
+            state         TEXT NOT NULL DEFAULT 'closed',
+            opened_at     TEXT NOT NULL DEFAULT '',
+            reason        TEXT NOT NULL DEFAULT '',
+            cooldown_until TEXT NOT NULL DEFAULT '',
+            trip_count    INTEGER NOT NULL DEFAULT 0
+        );
+    """
+
     def _init_db(self) -> None:
+        if self.storage_backend is not None:
+            self.storage_backend.execute_script(self._SCHEMA_DDL)
+            return
+
         conn = self._connect()
         try:
-            conn.executescript("""
-                CREATE TABLE IF NOT EXISTS cost_events (
-                    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-                    timestamp   TEXT NOT NULL,
-                    agent_id    TEXT NOT NULL DEFAULT '',
-                    agent_name  TEXT NOT NULL DEFAULT '',
-                    run_id      TEXT NOT NULL DEFAULT '',
-                    issue_id    TEXT NOT NULL DEFAULT '',
-                    provider    TEXT NOT NULL DEFAULT '',
-                    model       TEXT NOT NULL DEFAULT '',
-                    input_tokens  INTEGER NOT NULL DEFAULT 0,
-                    output_tokens INTEGER NOT NULL DEFAULT 0,
-                    cost_cents  INTEGER NOT NULL DEFAULT 0,
-                    status      TEXT NOT NULL DEFAULT '',
-                    tokens_per_second REAL NOT NULL DEFAULT 0,
-                    generation_duration_ms INTEGER NOT NULL DEFAULT 0
-                );
-
-                CREATE INDEX IF NOT EXISTS idx_cost_events_timestamp
-                    ON cost_events(timestamp);
-                CREATE INDEX IF NOT EXISTS idx_cost_events_status
-                    ON cost_events(status);
-
-                CREATE TABLE IF NOT EXISTS circuit_breaker (
-                    scope         TEXT PRIMARY KEY,
-                    state         TEXT NOT NULL DEFAULT 'closed',
-                    opened_at     TEXT NOT NULL DEFAULT '',
-                    reason        TEXT NOT NULL DEFAULT '',
-                    cooldown_until TEXT NOT NULL DEFAULT '',
-                    trip_count    INTEGER NOT NULL DEFAULT 0
-                );
-            """)
+            conn.executescript(self._SCHEMA_DDL)
             # Migrate existing DBs: add columns if missing
             try:
                 conn.execute("SELECT tokens_per_second FROM cost_events LIMIT 0")
@@ -161,6 +174,13 @@ class SpendingTracker:
         conn.execute("PRAGMA foreign_keys=ON")
         conn.row_factory = sqlite3.Row
         return conn
+
+    @property
+    def _ph(self) -> str:
+        """Parameter placeholder — '?' for SQLite, '%s' for PostgreSQL."""
+        if self.storage_backend is not None:
+            return self.storage_backend.placeholder
+        return "?"
 
     # ------------------------------------------------------------------
     # Event Recording

@@ -1,5 +1,5 @@
 """
-Tests for infrastructure service tools (replaced Firecrawl).
+Tests for web infrastructure tools (SearXNG search, Playwright scraping).
 
 Covers:
 - WebSearchTool (SearXNG): query validation, result parsing, env gating
@@ -10,6 +10,8 @@ Covers:
 
 import os
 import json
+import urllib.error
+import urllib.request
 from unittest.mock import patch, MagicMock
 
 import pytest
@@ -311,8 +313,7 @@ class TestInfraRegistryWiring:
     def _clean_env(self):
         """Remove all infrastructure service env vars."""
         for key in ["SEARXNG_URL", "PLAYWRIGHT_WS_URL",
-                     "PENPOT_API_URL", "COMFYUI_URL", "GITEA_URL", "MINIO_URL",
-                     "FIRECRAWL_API_KEY"]:
+                     "PENPOT_API_URL", "COMFYUI_URL", "GITEA_URL", "MINIO_URL"]:
             os.environ.pop(key, None)
 
     def test_no_tools_when_env_missing(self):

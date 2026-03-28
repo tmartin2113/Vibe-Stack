@@ -12,9 +12,9 @@ import logging
 import math
 import os
 from dataclasses import dataclass, field
-from typing import List
+from typing import List, Optional
 
-from .resource_discovery import SystemProfile
+from .resource_discovery import SystemProfile, get_free_vram_mb
 
 logger = logging.getLogger(__name__)
 
@@ -307,3 +307,14 @@ def compute_resource_plan(profile: SystemProfile) -> ResourcePlan:
 
     logger.info("Resource plan computed:\n%s", plan.summary())
     return plan
+
+
+def get_available_gpu_headroom() -> Optional[int]:
+    """Return available GPU memory headroom in MB for runtime decisions.
+
+    Used by simulation module, parallel subtasks, and other components
+    that need to make runtime GPU-aware decisions.
+
+    Returns None if no GPU is available or probing fails.
+    """
+    return get_free_vram_mb()

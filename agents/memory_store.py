@@ -39,7 +39,10 @@ import threading
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
+
+if TYPE_CHECKING:
+    from .storage.base import StorageBackend
 
 from .embedder import VLLMEmbedder, cosine_similarity
 
@@ -131,13 +134,48 @@ class MemoryStore:
     # Maximum number of memories to keep (oldest evicted first)
     MAX_ENTRIES = 10000
 
+    _SCHEMA_DDL = """
+        CREATE TABLE IF NOT EXISTS memories (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            content      TEXT NOT NULL,
+            source       TEXT NOT NULL DEFAULT 'agent',
+            tags         TEXT NOT NULL DEFAULT '',
+            created_at   TEXT NOT NULL,
+            updated_at   TEXT NOT NULL,
+            access_count INTEGER NOT NULL DEFAULT 0
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_memories_source
+            ON memories(source);
+
+        CREATE INDEX IF NOT EXISTS idx_memories_tags
+            ON memories(tags);
+
+        CREATE INDEX IF NOT EXISTS idx_memories_updated
+            ON memories(updated_at);
+
+        CREATE TABLE IF NOT EXISTS memory_embeddings (
+            memory_id  INTEGER PRIMARY KEY REFERENCES memories(id) ON DELETE CASCADE,
+            embedding  TEXT NOT NULL,
+            model      TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        );
+    """
+
     def __init__(
         self,
         db_path: Optional[Path] = None,
         max_entries: int = MAX_ENTRIES,
         embedder: Optional[VLLMEmbedder] = None,
+        storage_backend: "Optional[StorageBackend]" = None,
     ):
-        self._db_path = str(db_path or _get_db_path())
+        self.storage_backend = storage_backend
+
+        if self.storage_backend is None:
+            self._db_path = str(db_path or _get_db_path())
+        else:
+            # storage_backend handles its own storage; skip Path.mkdir
+            self._db_path = str(db_path) if db_path else str(_DB_PATH)
         self._max_entries = max_entries
         self._lock = threading.Lock()
         self._embedder = embedder  # None = lazy-init on first use
@@ -163,36 +201,21 @@ class MemoryStore:
         finally:
             conn.close()
 
+    @property
+    def _ph(self) -> str:
+        """Parameter placeholder — '?' for SQLite, '%s' for PostgreSQL."""
+        if self.storage_backend is not None:
+            return self.storage_backend.placeholder
+        return "?"
+
     def _init_db(self):
         """Create tables, FTS5 virtual table, and embeddings table."""
+        if self.storage_backend is not None:
+            self.storage_backend.execute_script(self._SCHEMA_DDL)
+            return
+
         with self._connect() as conn:
-            conn.executescript("""
-                CREATE TABLE IF NOT EXISTS memories (
-                    id           INTEGER PRIMARY KEY AUTOINCREMENT,
-                    content      TEXT NOT NULL,
-                    source       TEXT NOT NULL DEFAULT 'agent',
-                    tags         TEXT NOT NULL DEFAULT '',
-                    created_at   TEXT NOT NULL,
-                    updated_at   TEXT NOT NULL,
-                    access_count INTEGER NOT NULL DEFAULT 0
-                );
-
-                CREATE INDEX IF NOT EXISTS idx_memories_source
-                    ON memories(source);
-
-                CREATE INDEX IF NOT EXISTS idx_memories_tags
-                    ON memories(tags);
-
-                CREATE INDEX IF NOT EXISTS idx_memories_updated
-                    ON memories(updated_at);
-
-                CREATE TABLE IF NOT EXISTS memory_embeddings (
-                    memory_id  INTEGER PRIMARY KEY REFERENCES memories(id) ON DELETE CASCADE,
-                    embedding  TEXT NOT NULL,
-                    model      TEXT NOT NULL,
-                    created_at TEXT NOT NULL
-                );
-            """)
+            conn.executescript(self._SCHEMA_DDL)
 
             # FTS5 virtual table for full-text search with BM25 ranking.
             # content_rowid links to memories.id for synchronization.

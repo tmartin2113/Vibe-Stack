@@ -91,22 +91,32 @@ class LLMBackend:
         return result["text"]  # type: ignore[no-any-return]
 
 
-def create_backend_from_config(config: Any) -> LLMBackend:
+def _create_backend_for_url(url: str, model: str, backend_type: str = "vllm") -> VLLMBackend:
+    """Create a raw VLLMBackend from a host:port string."""
+    if ":" in url:
+        h, p = url.rsplit(":", 1)
+        return VLLMBackend(host=h, port=int(p), model=model)
+    return VLLMBackend(host=url, port=8000, model=model)
+
+
+def create_backend_from_config(config: Any):
     """
     Create LLM backend from system config.
+
+    If fallback URLs are configured (via config or VIBE_FALLBACK_URLS env var),
+    returns a BackendPool wrapping the primary + fallback backends.
+    Otherwise returns a single LLMBackend (backwards compatible).
 
     Args:
         config: SystemConfig object
 
     Returns:
-        LLMBackend instance
+        LLMBackend or BackendPool instance (both expose generate() and health_check())
     """
     model = os.getenv("VIBE_MODEL", config.model.model_name)
     host = os.getenv("VIBE_BACKEND_HOST", "localhost")
     port_str = os.getenv("VIBE_BACKEND_PORT")
     port = int(port_str) if port_str else None
-
-    logger.info(f"Creating vLLM backend ({model})")
 
     # Read retry settings from config
     max_retries = DEFAULT_MAX_RETRIES
@@ -114,6 +124,55 @@ def create_backend_from_config(config: Any) -> LLMBackend:
     if hasattr(config, 'workflow'):
         max_retries = getattr(config.workflow, 'llm_max_retries', DEFAULT_MAX_RETRIES)
         retry_base_delay = getattr(config.workflow, 'llm_retry_base_delay', DEFAULT_BASE_DELAY)
+
+    # Determine fallback URLs
+    fallback_urls: List[str] = []
+    pool_config = getattr(config, "backend_pool", None)
+    if pool_config is not None:
+        raw = getattr(pool_config, "fallback_urls", None)
+        if isinstance(raw, list) and raw:
+            fallback_urls = raw
+    env_urls = os.getenv("VIBE_FALLBACK_URLS")
+    if env_urls and not fallback_urls:
+        fallback_urls = [u.strip() for u in env_urls.split(",") if u.strip()]
+
+    if fallback_urls:
+        from .backend_pool import BackendPool
+
+        # Build primary + fallback raw backends
+        primary_port = port if port is not None else 8000
+        primary = VLLMBackend(host=host, port=primary_port, model=model)
+        backends = [primary] + [
+            _create_backend_for_url(u, model) for u in fallback_urls
+        ]
+
+        strategy = pool_config.strategy if pool_config else "failover"
+        max_failures = pool_config.max_consecutive_failures if pool_config else 3
+        recovery = pool_config.recovery_timeout if pool_config else 60
+
+        pool = BackendPool(
+            backends=backends,
+            strategy=strategy,
+            max_consecutive_failures=max_failures,
+            recovery_timeout=recovery,
+            max_retries=max_retries,
+            retry_base_delay=retry_base_delay,
+        )
+
+        logger.info(
+            "Created BackendPool (%s) with %d backends for model %s",
+            strategy,
+            len(backends),
+            model,
+        )
+
+        if not pool.health_check():
+            logger.warning("BackendPool health check: no healthy backends found")
+
+        return pool
+
+    # Single backend (original path)
+    logger.info(f"Creating vLLM backend ({model})")
 
     backend = LLMBackend(
         model=model,

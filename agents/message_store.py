@@ -21,7 +21,10 @@ import threading
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
+
+if TYPE_CHECKING:
+    from .storage.base import StorageBackend
 
 from .embedder import VLLMEmbedder, cosine_similarity, get_shared_embedder
 from .message_types import (
@@ -76,17 +79,87 @@ class MessageStore:
 
     MAX_MESSAGES = MAX_MESSAGES
 
+    _SCHEMA_DDL = """
+        CREATE TABLE IF NOT EXISTS messages (
+            id            TEXT PRIMARY KEY,
+            sender        TEXT NOT NULL DEFAULT '',
+            recipient     TEXT NOT NULL DEFAULT '*',
+            msg_type      TEXT NOT NULL DEFAULT 'info',
+            topic         TEXT NOT NULL DEFAULT '',
+            content       TEXT NOT NULL DEFAULT '',
+            metadata_json TEXT NOT NULL DEFAULT '{}',
+            parent_id     TEXT REFERENCES messages(id) ON DELETE SET NULL,
+            issue_id      TEXT,
+            paperclip_comment_id TEXT,
+            ttl_seconds   INTEGER NOT NULL DEFAULT 604800,
+            created_at    TEXT NOT NULL,
+            expires_at    TEXT,
+            read_by       TEXT NOT NULL DEFAULT '[]'
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_messages_created
+            ON messages(created_at);
+        CREATE INDEX IF NOT EXISTS idx_messages_recipient
+            ON messages(recipient);
+        CREATE INDEX IF NOT EXISTS idx_messages_msg_type
+            ON messages(msg_type);
+        CREATE INDEX IF NOT EXISTS idx_messages_parent_id
+            ON messages(parent_id);
+        CREATE INDEX IF NOT EXISTS idx_messages_topic
+            ON messages(topic);
+        CREATE INDEX IF NOT EXISTS idx_messages_expires_at
+            ON messages(expires_at);
+
+        CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
+            content,
+            topic,
+            sender,
+            content='messages',
+            content_rowid='rowid'
+        );
+
+        CREATE TRIGGER IF NOT EXISTS messages_ai AFTER INSERT ON messages BEGIN
+            INSERT INTO messages_fts(rowid, content, topic, sender)
+            VALUES (new.rowid, new.content, new.topic, new.sender);
+        END;
+
+        CREATE TRIGGER IF NOT EXISTS messages_ad AFTER DELETE ON messages BEGIN
+            INSERT INTO messages_fts(messages_fts, rowid, content, topic, sender)
+            VALUES ('delete', old.rowid, old.content, old.topic, old.sender);
+        END;
+
+        CREATE TRIGGER IF NOT EXISTS messages_au AFTER UPDATE ON messages BEGIN
+            INSERT INTO messages_fts(messages_fts, rowid, content, topic, sender)
+            VALUES ('delete', old.rowid, old.content, old.topic, old.sender);
+            INSERT INTO messages_fts(rowid, content, topic, sender)
+            VALUES (new.rowid, new.content, new.topic, new.sender);
+        END;
+
+        CREATE TABLE IF NOT EXISTS message_embeddings (
+            message_id TEXT PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,
+            embedding  TEXT NOT NULL,
+            model      TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        );
+    """
+
     def __init__(
         self,
         db_path: Optional[Path] = None,
         vllm_url: Optional[str] = None,
         embed_model: Optional[str] = None,
         config: "Optional[MessageStoreConfig]" = None,
+        storage_backend: "Optional[StorageBackend]" = None,
     ):
+        self.storage_backend = storage_backend
+
         if config and config.db_path:
             self._db_path = config.db_path
-        else:
+        elif self.storage_backend is None:
             self._db_path = str(db_path or _get_db_path())
+        else:
+            # storage_backend handles its own storage; skip Path.mkdir
+            self._db_path = str(db_path) if db_path else str(_DEFAULT_DB_PATH)
         self._lock = threading.Lock()
         self._embedder: Optional[VLLMEmbedder] = None
         self._config = config
@@ -113,83 +186,20 @@ class MessageStore:
             self._embedder = get_shared_embedder()
         return self._embedder
 
+    @property
+    def _ph(self) -> str:
+        """Parameter placeholder — '?' for SQLite, '%s' for PostgreSQL."""
+        if self.storage_backend is not None:
+            return self.storage_backend.placeholder
+        return "?"
+
     def _init_db(self):
+        if self.storage_backend is not None:
+            self.storage_backend.execute_script(self._SCHEMA_DDL)
+            return
+
         with self._connect() as conn:
-            conn.executescript(
-                """
-                CREATE TABLE IF NOT EXISTS messages (
-                    id            TEXT PRIMARY KEY,
-                    sender        TEXT NOT NULL DEFAULT '',
-                    recipient     TEXT NOT NULL DEFAULT '*',
-                    msg_type      TEXT NOT NULL DEFAULT 'info',
-                    topic         TEXT NOT NULL DEFAULT '',
-                    content       TEXT NOT NULL DEFAULT '',
-                    metadata_json TEXT NOT NULL DEFAULT '{}',
-                    parent_id     TEXT REFERENCES messages(id) ON DELETE SET NULL,
-                    issue_id      TEXT,
-                    paperclip_comment_id TEXT,
-                    ttl_seconds   INTEGER NOT NULL DEFAULT 604800,
-                    created_at    TEXT NOT NULL,
-                    expires_at    TEXT,
-                    read_by       TEXT NOT NULL DEFAULT '[]'
-                );
-
-                CREATE INDEX IF NOT EXISTS idx_messages_created
-                    ON messages(created_at);
-                CREATE INDEX IF NOT EXISTS idx_messages_recipient
-                    ON messages(recipient);
-                CREATE INDEX IF NOT EXISTS idx_messages_msg_type
-                    ON messages(msg_type);
-                CREATE INDEX IF NOT EXISTS idx_messages_parent_id
-                    ON messages(parent_id);
-                CREATE INDEX IF NOT EXISTS idx_messages_topic
-                    ON messages(topic);
-                CREATE INDEX IF NOT EXISTS idx_messages_expires_at
-                    ON messages(expires_at);
-                """
-            )
-
-            # FTS5 virtual table (content-synced)
-            conn.executescript(
-                """
-                CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
-                    content,
-                    topic,
-                    sender,
-                    content='messages',
-                    content_rowid='rowid'
-                );
-
-                CREATE TRIGGER IF NOT EXISTS messages_ai AFTER INSERT ON messages BEGIN
-                    INSERT INTO messages_fts(rowid, content, topic, sender)
-                    VALUES (new.rowid, new.content, new.topic, new.sender);
-                END;
-
-                CREATE TRIGGER IF NOT EXISTS messages_ad AFTER DELETE ON messages BEGIN
-                    INSERT INTO messages_fts(messages_fts, rowid, content, topic, sender)
-                    VALUES ('delete', old.rowid, old.content, old.topic, old.sender);
-                END;
-
-                CREATE TRIGGER IF NOT EXISTS messages_au AFTER UPDATE ON messages BEGIN
-                    INSERT INTO messages_fts(messages_fts, rowid, content, topic, sender)
-                    VALUES ('delete', old.rowid, old.content, old.topic, old.sender);
-                    INSERT INTO messages_fts(rowid, content, topic, sender)
-                    VALUES (new.rowid, new.content, new.topic, new.sender);
-                END;
-                """
-            )
-
-            # Embeddings table
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS message_embeddings (
-                    message_id TEXT PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,
-                    embedding  TEXT NOT NULL,
-                    model      TEXT NOT NULL,
-                    created_at TEXT NOT NULL
-                )
-                """
-            )
+            conn.executescript(self._SCHEMA_DDL)
 
     def _row_to_message(self, row: sqlite3.Row) -> Message:
         """Convert a database row to a Message object."""

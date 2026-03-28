@@ -20,6 +20,11 @@ import logging
 import time
 from typing import Any, Dict, List, Optional
 
+from .simulation import (
+    SimulationReport,
+    run_integration_simulation,
+    format_simulation_for_aggregator,
+)
 from .state import AgentState
 
 logger = logging.getLogger(__name__)
@@ -137,6 +142,8 @@ def execute_parallel_subtasks(
     state: AgentState,
     nodes: Any,
     config: Any = None,
+    adapter_registry: Any = None,
+    system_profile: Any = None,
 ) -> AgentState:
     """
     Graph node: execute all sub-tasks in parallel using ThreadPoolExecutor.
@@ -189,6 +196,7 @@ def execute_parallel_subtasks(
     # Map future → original index
     errors: List[Dict[str, Any]] = []
     results: Dict[int, Dict[str, Any]] = {}
+    sim_report: Optional[SimulationReport] = None
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
         future_to_index = {}
@@ -203,6 +211,18 @@ def execute_parallel_subtasks(
                 max_iterations=max_iterations,
             )
             future_to_index[future] = idx
+
+        # Launch integration simulation as a sidecar future.
+        # Runs alongside specialists; delay lets them claim KV slots first.
+        sim_future = None
+        if adapter_registry is not None:
+            sim_future = executor.submit(
+                run_integration_simulation,
+                specification=shared_context.get("specification", ""),
+                sub_tasks=sub_tasks,
+                adapter_registry=adapter_registry,
+                system_profile=system_profile,
+            )
 
         try:
             for future in concurrent.futures.as_completed(
@@ -240,6 +260,16 @@ def execute_parallel_subtasks(
                     failed_copy["status"] = "failed"
                     results[idx] = failed_copy
 
+        # Collect simulation result (non-blocking: if not done yet, wait briefly)
+        if sim_future is not None:
+            try:
+                sim_report = sim_future.result(timeout=30)
+            except Exception as e:
+                logger.warning(f"[Parallel] Simulation sidecar failed: {e}")
+                sim_report = SimulationReport(
+                    skipped=True, skip_reason=f"Sidecar error: {e}"
+                )
+
     # Merge results back into state
     for idx in range(len(sub_tasks)):
         if idx in results:
@@ -275,5 +305,14 @@ def execute_parallel_subtasks(
     state["completed_sub_tasks"] = completed_count
     state["current_sub_task_index"] = len(sub_tasks)
     state["parallel_execution_errors"] = errors
+
+    # Merge simulation results into state for the aggregator/critic
+    if sim_report is not None and not sim_report.skipped:
+        state["simulation_report"] = sim_report.report
+        state["simulation_conflicts"] = sim_report.conflicts
+        state["simulation_risk_level"] = sim_report.risk_level
+        state["simulation_skipped"] = False
+    else:
+        state["simulation_skipped"] = True
 
     return state

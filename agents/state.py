@@ -133,6 +133,12 @@ class AgentState(TypedDict, total=False):
     # ===== PARALLEL EXECUTION =====
     parallel_execution_errors: List[Dict[str, Any]]  # Errors from parallel sub-tasks
 
+    # ===== SIMULATION (MiroFish-inspired integration prediction) =====
+    simulation_report: Optional[str]  # Integration risk report from sidecar sim
+    simulation_conflicts: List[Dict[str, str]]  # Structured [{level, description}]
+    simulation_risk_level: str  # "low", "medium", "high"
+    simulation_skipped: bool  # True if hardware/config gated out
+
     # Timing information
     start_time: str
     end_time: Optional[str]
@@ -220,6 +226,12 @@ def create_initial_state(
 
         # Parallel execution
         parallel_execution_errors=[],
+
+        # Simulation
+        simulation_report=None,
+        simulation_conflicts=[],
+        simulation_risk_level="",
+        simulation_skipped=False,
 
         # Complexity tiering
         complexity_tier="",
@@ -347,10 +359,14 @@ def get_context_for_node(state: AgentState, node_name: str) -> Dict[str, Any]:
         context["spec_critic_score"] = state.get("spec_critic_score", 0)
 
     elif node_name == "aggregator":
-        # Aggregator needs: sub-tasks, strategy, and the original request
+        # Aggregator needs: sub-tasks, strategy, original request, and simulation
         context["sub_tasks"] = state.get("sub_tasks", [])
         context["aggregation_strategy"] = state.get("aggregation_strategy", "merge")
         context["specification"] = state.get("specification", "")
+        context["simulation_report"] = state.get("simulation_report")
+        context["simulation_conflicts"] = state.get("simulation_conflicts", [])
+        context["simulation_risk_level"] = state.get("simulation_risk_level", "")
+        context["simulation_skipped"] = state.get("simulation_skipped", True)
 
     return context
 

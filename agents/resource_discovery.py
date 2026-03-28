@@ -228,6 +228,76 @@ def _discover_docker() -> tuple:
 
 # ── Public API ──────────────────────────────────────────────────────
 
+@dataclass(frozen=True)
+class GpuRealtimeInfo:
+    """Real-time GPU metrics from nvidia-smi."""
+
+    index: int
+    free_vram_mb: int
+    used_vram_mb: int
+    total_vram_mb: int
+    utilization_pct: int
+    temperature_c: int
+    power_draw_w: Optional[int] = None
+
+
+def query_gpu_realtime() -> List[GpuRealtimeInfo]:
+    """Query nvidia-smi for real-time GPU metrics.
+
+    Unlike discover_system() which runs once at startup, this can be
+    called at any point to get current GPU state for runtime decisions.
+
+    Returns empty list if no GPU or nvidia-smi unavailable.
+    """
+    output = _run_cmd(
+        [
+            "nvidia-smi",
+            "--query-gpu=index,memory.free,memory.used,memory.total,"
+            "utilization.gpu,temperature.gpu,power.draw",
+            "--format=csv,noheader,nounits",
+        ],
+        timeout=5,
+    )
+    if output is None:
+        return []
+
+    results: List[GpuRealtimeInfo] = []
+    for line in output.splitlines():
+        parts = [p.strip() for p in line.split(",")]
+        if len(parts) < 7:
+            continue
+        try:
+            # power.draw can be "[N/A]" on some systems
+            power_raw = parts[6].strip()
+            if power_raw in ("[N/A]", "N/A", "[Not Supported]", ""):
+                power_w: Optional[int] = None
+            else:
+                power_w = int(float(power_raw))
+
+            results.append(GpuRealtimeInfo(
+                index=int(parts[0]),
+                free_vram_mb=int(parts[1]),
+                used_vram_mb=int(parts[2]),
+                total_vram_mb=int(parts[3]),
+                utilization_pct=int(parts[4]),
+                temperature_c=int(parts[5]),
+                power_draw_w=power_w,
+            ))
+        except (ValueError, IndexError) as e:
+            logger.debug("Failed to parse nvidia-smi realtime line: %r: %s", line, e)
+
+    return results
+
+
+def get_free_vram_mb() -> Optional[int]:
+    """Quick helper: total free VRAM across all GPUs, or None."""
+    infos = query_gpu_realtime()
+    if not infos:
+        return None
+    total_free = sum(g.free_vram_mb for g in infos)
+    return total_free if total_free > 0 else None
+
+
 def discover_system() -> SystemProfile:
     """Probe host hardware and return an immutable SystemProfile.
 

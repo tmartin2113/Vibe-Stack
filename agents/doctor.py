@@ -404,43 +404,6 @@ def check_docker_gpu() -> CheckResult:
         return CheckResult("Docker GPU", "warn", f"Check failed: {e}")
 
 
-def check_firecrawl() -> CheckResult:
-    """Check Firecrawl API availability."""
-    api_key = os.environ.get("FIRECRAWL_API_KEY", "")
-    if not api_key:
-        return CheckResult(
-            "Firecrawl", "warn",
-            "FIRECRAWL_API_KEY not set (web_scrape/web_crawl/web_search tools disabled)",
-            detail="Set FIRECRAWL_API_KEY env var. Get a key at https://firecrawl.dev",
-        )
-
-    try:
-        from firecrawl import FirecrawlApp  # type: ignore[import-untyped]
-    except ImportError:
-        return CheckResult(
-            "Firecrawl", "warn",
-            "firecrawl-py package not installed",
-            detail="pip install 'vibe[firecrawl]'",
-        )
-
-    try:
-        app = FirecrawlApp(api_key=api_key)
-        # Lightweight check: scrape a tiny page
-        result = app.scrape_url("https://example.com", params={
-            "formats": ["markdown"],
-            "timeout": 10000,
-        })
-        if result and (result.get("markdown") or result.get("html")):
-            return CheckResult("Firecrawl", "ok",
-                               "API key valid, scraping operational")
-        return CheckResult("Firecrawl", "warn",
-                           "API responded but returned no content")
-    except Exception as e:
-        return CheckResult("Firecrawl", "fail",
-                           f"API check failed: {e}",
-                           detail="Verify your FIRECRAWL_API_KEY is valid")
-
-
 def check_memory() -> CheckResult:
     """Check persistent memory store health."""
     try:
@@ -572,7 +535,6 @@ def run_doctor(config: Any) -> DoctorReport:
     report.add(check_messenger(config))
     report.add(check_disk_usage())
     report.add(check_python_deps())
-    report.add(check_firecrawl())
     report.add(check_memory())
     report.add(check_message_store())
 
