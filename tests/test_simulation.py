@@ -171,17 +171,14 @@ class TestProbeeFreeVram:
 
     def test_nvidia_smi_fallback(self):
         sim = _reload_sim(VIBE_SIM_ENABLED="true")
-        mock_result = MagicMock()
-        mock_result.returncode = 0
-        mock_result.stdout = "4096\n"
 
-        with patch("subprocess.run", return_value=mock_result):
+        with patch("agents.resource_discovery.get_free_vram_mb", return_value=4096):
             free = sim._probe_free_vram(None, mode="clarification")
             assert free == 4096
 
     def test_nvidia_smi_unavailable(self):
         sim = _reload_sim(VIBE_SIM_ENABLED="true")
-        with patch("subprocess.run", side_effect=FileNotFoundError):
+        with patch("agents.resource_discovery.get_free_vram_mb", return_value=None):
             free = sim._probe_free_vram(None, mode="sidecar")
             assert free is None
 

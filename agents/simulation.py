@@ -274,18 +274,23 @@ def _probe_free_vram(
 ) -> Optional[int]:
     """Return free VRAM in MB, or None if no GPU available.
 
-    For **sidecar** mode, tries nvidia-smi for real-time free memory
-    first (since specialists are actively consuming KV cache and the
-    static SystemProfile total is unreliable).  Falls back to a
-    conservative 20% heuristic if nvidia-smi isn't available.
+    For **sidecar** mode, uses real-time nvidia-smi data via
+    resource_discovery for accurate free memory (since specialists are
+    actively consuming KV cache and the static SystemProfile total is
+    unreliable).  Falls back to a conservative heuristic if the
+    real-time probe fails.
 
     For **clarification** mode, the GPU is idle so the static estimate
     is fine — uses 35% of total as the free estimate.
     """
-    # Try real-time nvidia-smi probe first for sidecar mode
-    # (clarification mode can use the cheaper static estimate)
+    # Try real-time probe first for sidecar mode via resource_discovery
+    # (avoids duplicating nvidia-smi logic)
     if mode == "sidecar":
-        realtime = _nvidia_smi_free_mb()
+        try:
+            from .resource_discovery import get_free_vram_mb
+            realtime = get_free_vram_mb()
+        except ImportError:
+            realtime = _nvidia_smi_free_mb()
         if realtime is not None:
             return realtime
 
@@ -308,31 +313,21 @@ def _probe_free_vram(
             return estimated_free
         return None
 
-    # No SystemProfile — fall back to nvidia-smi
+    # No SystemProfile — fall back to real-time probe
     return _nvidia_smi_free_mb()
 
 
 def _nvidia_smi_free_mb() -> Optional[int]:
-    """Query nvidia-smi for real-time free GPU memory in MB.
+    """Query real-time free GPU memory in MB via resource_discovery.
 
-    Returns None if nvidia-smi is unavailable or reports no free memory.
+    Delegates to resource_discovery.get_free_vram_mb() to avoid
+    duplicating nvidia-smi invocation logic.
+
+    Returns None if no GPU or nvidia-smi unavailable.
     """
-    try:
-        import subprocess
-        result = subprocess.run(
-            ["nvidia-smi", "--query-gpu=memory.free", "--format=csv,noheader,nounits"],
-            capture_output=True, text=True, timeout=5,
-        )
-        if result.returncode == 0 and result.stdout.strip():
-            free_mb = sum(
-                int(line.strip())
-                for line in result.stdout.strip().splitlines()
-                if line.strip().isdigit()
-            )
-            return free_mb if free_mb > 0 else None
-    except (FileNotFoundError, subprocess.TimeoutExpired, ValueError, OSError):
-        pass
-    return None
+    # Import here to avoid circular imports (simulation <-> resource_discovery)
+    from .resource_discovery import get_free_vram_mb
+    return get_free_vram_mb()
 
 
 # ── Adapter registration ───────────────────────────────────────────

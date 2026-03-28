@@ -219,6 +219,17 @@ class SpendingConfig:
 
 
 @dataclass
+class BackendPoolConfig:
+    """Backend pool configuration for multi-backend failover / load balancing."""
+
+    strategy: str = "failover"  # "failover", "round_robin", "least_loaded"
+    max_consecutive_failures: int = 3
+    recovery_timeout: int = 60  # seconds before probing an open circuit
+    fallback_urls: List[str] = field(default_factory=list)  # ["host:port", ...]
+    fallback_backend_type: str = "vllm"  # "vllm", "openai", "anthropic"
+
+
+@dataclass
 class MessageStoreConfig:
     """MessageStore (V2 inter-agent messaging) configuration.
 
@@ -273,6 +284,7 @@ class SystemConfig:
     cache: CacheConfig = field(default_factory=CacheConfig)
     spending: SpendingConfig = field(default_factory=SpendingConfig)
     messages: MessageStoreConfig = field(default_factory=MessageStoreConfig)
+    backend_pool: BackendPoolConfig = field(default_factory=BackendPoolConfig)
 
     # Logging
     log_level: str = "INFO"
@@ -340,6 +352,19 @@ class SystemConfig:
             val = os.getenv(env_key)
             if val is not None:
                 setattr(config.messages, attr, val.lower() not in ("false", "0", "no"))
+
+        # Backend pool env overrides
+        fallback_urls = os.getenv("VIBE_FALLBACK_URLS")
+        if fallback_urls:
+            config.backend_pool.fallback_urls = [
+                u.strip() for u in fallback_urls.split(",") if u.strip()
+            ]
+        fallback_type = os.getenv("VIBE_FALLBACK_BACKEND_TYPE")
+        if fallback_type:
+            config.backend_pool.fallback_backend_type = fallback_type
+        pool_strategy = os.getenv("VIBE_BACKEND_POOL_STRATEGY")
+        if pool_strategy:
+            config.backend_pool.strategy = pool_strategy
 
         return config
 
