@@ -56,6 +56,11 @@ _SIM_ENABLED = os.getenv("VIBE_SIM_ENABLED", "true").lower() not in (
     "false", "0", "no",
 )
 
+# Skill vetting: set VIBE_SIM_VET_SKILLS=false to skip offline skill vetting.
+_VET_SKILLS_ENABLED = os.getenv("VIBE_SIM_VET_SKILLS", "true").lower() not in (
+    "false", "0", "no",
+)
+
 # Startup delay (seconds) for the parallel sidecar so specialists
 # get a head-start on KV cache allocation.
 _SIDECAR_DELAY_SECONDS = float(os.getenv("VIBE_SIM_SIDECAR_DELAY", "2.0"))
@@ -357,13 +362,14 @@ def register_simulation_adapters(
     Called once during WorkflowFactory._ensure_initialised().
     Each adapter is a lightweight wrapper — no extra model loading.
     """
-    for name, prompt, config in _SIM_ADAPTER_DEFS + _STAKEHOLDER_ADAPTER_DEFS:
+    all_defs = _SIM_ADAPTER_DEFS + _STAKEHOLDER_ADAPTER_DEFS + _SKILL_VET_ADAPTER_DEFS
+    for name, prompt, config in all_defs:
         adapter = PromptAdapter(name, prompt, base_model, config=config)
         registry.register(adapter)
 
     logger.info(
         "Registered %d simulation adapters",
-        len(_SIM_ADAPTER_DEFS) + len(_STAKEHOLDER_ADAPTER_DEFS),
+        len(all_defs),
     )
 
 
@@ -840,3 +846,213 @@ def format_clarification_for_spec(
         lines.append(f"**A:** {a}\n")
 
     return "\n".join(lines)
+
+
+# ── Integration Point 3: Offline Skill Vetting ──────────────────
+
+SKILL_VET_SPECIALIST_PROMPT = """\
+You are an AI specialist executing a task using a skill definition. \
+Given the skill instructions and a task description, produce a short \
+code/text output that follows the skill's workflow steps. \
+Keep your output concise (under 400 words)."""
+
+SKILL_VET_CRITIC_PROMPT = """\
+You are a quality critic. Given a specialist's output for a task, \
+score it 0-100 and provide brief feedback. Output exactly:
+SCORE: <number>
+FEEDBACK: <one-line summary>"""
+
+SKILL_VET_TASK_GEN_PROMPT = """\
+You are a task generator. Given a task type, produce 3-5 realistic \
+one-paragraph task descriptions that a user might submit. \
+Output each task on its own line prefixed with "TASK: "."""
+
+_SKILL_VET_ADAPTER_DEFS = [
+    ("sim_vet_specialist", SKILL_VET_SPECIALIST_PROMPT, {"temperature": 0.4, "max_tokens": _SIM_MAX_TOKENS}),
+    ("sim_vet_critic", SKILL_VET_CRITIC_PROMPT, {"temperature": 0.1, "max_tokens": 200}),
+    ("sim_vet_task_gen", SKILL_VET_TASK_GEN_PROMPT, {"temperature": 0.7, "max_tokens": _SIM_MAX_TOKENS}),
+]
+
+
+@dataclass
+class VettingResult:
+    """Result of an offline skill vetting simulation."""
+    avg_score: float = 0.0
+    feedback_summary: str = ""
+    per_task_scores: List[float] = field(default_factory=list)
+    tasks_evaluated: int = 0
+    elapsed_seconds: float = 0.0
+    skipped: bool = False
+    skip_reason: str = ""
+
+
+def vet_skill_with_simulation(
+    skill_content: str,
+    task_type: str,
+    adapter_registry: AdapterRegistry,
+    system_profile: Optional[Any] = None,
+) -> VettingResult:
+    """Offline vetting of a skill via synthetic task simulation.
+
+    Generates 3-5 synthetic task descriptions for the given task_type,
+    then for each task simulates a specialist using the skill and a
+    critic evaluating the output.  Returns the average score and a
+    feedback summary.
+
+    Hardware-aware: uses ``assess_simulation_budget(mode="clarification")``
+    since vetting runs offline with no KV contention.
+
+    Args:
+        skill_content: The SKILL.md content to vet.
+        task_type:     The task type the skill targets.
+        adapter_registry: Shared adapter registry (must have sim_vet_* adapters).
+        system_profile: Optional SystemProfile for hardware gating.
+
+    Returns:
+        VettingResult with average score and feedback summary.
+    """
+    if not _VET_SKILLS_ENABLED:
+        return VettingResult(skipped=True, skip_reason="Disabled via VIBE_SIM_VET_SKILLS=false")
+
+    budget = assess_simulation_budget(system_profile, mode="clarification")
+    if not budget.enabled:
+        return VettingResult(skipped=True, skip_reason=budget.reason)
+
+    start = time.monotonic()
+
+    # ── Step 1: Generate synthetic tasks ──
+    task_gen = adapter_registry.get("sim_vet_task_gen")
+    if task_gen is None:
+        return VettingResult(
+            skipped=True,
+            skip_reason="sim_vet_task_gen adapter not registered",
+        )
+
+    try:
+        gen_prompt = (
+            f"Task type: {task_type.replace('_', ' ')}\n\n"
+            f"Generate 3-5 realistic task descriptions for this task type."
+        )
+        gen_response = task_gen.generate(gen_prompt, max_tokens=budget.max_tokens)
+    except Exception as e:
+        logger.warning(f"[SkillVet] Task generation failed: {e}")
+        return VettingResult(
+            skipped=True,
+            skip_reason=f"Task generation failed: {e}",
+            elapsed_seconds=time.monotonic() - start,
+        )
+
+    # Parse "TASK: ..." lines
+    synthetic_tasks = _parse_synthetic_tasks(gen_response or "")
+    if not synthetic_tasks:
+        return VettingResult(
+            skipped=True,
+            skip_reason="No synthetic tasks generated",
+            elapsed_seconds=time.monotonic() - start,
+        )
+
+    # Cap to budget rounds
+    synthetic_tasks = synthetic_tasks[:budget.max_rounds]
+
+    # ── Step 2: For each task, simulate specialist + critic ──
+    specialist_adapter = adapter_registry.get("sim_vet_specialist")
+    critic_adapter = adapter_registry.get("sim_vet_critic")
+
+    if specialist_adapter is None or critic_adapter is None:
+        return VettingResult(
+            skipped=True,
+            skip_reason="sim_vet_specialist or sim_vet_critic adapter not registered",
+            elapsed_seconds=time.monotonic() - start,
+        )
+
+    scores: List[float] = []
+    feedbacks: List[str] = []
+
+    for task_desc in synthetic_tasks:
+        try:
+            # Specialist generates output using the skill
+            spec_prompt = (
+                f"## Skill Instructions\n{skill_content[:1500]}\n\n"
+                f"## Task\n{task_desc}\n\n"
+                f"Follow the skill's workflow to complete this task."
+            )
+            specialist_output = specialist_adapter.generate(
+                spec_prompt, max_tokens=budget.max_tokens
+            )
+            if not specialist_output or not specialist_output.strip():
+                continue
+
+            # Critic evaluates the output
+            critic_prompt = (
+                f"Task: {task_desc}\n\n"
+                f"Specialist output:\n{specialist_output.strip()[:1000]}\n\n"
+                f"Score this output 0-100 and provide feedback."
+            )
+            critic_response = critic_adapter.generate(
+                critic_prompt, max_tokens=200
+            )
+            score, feedback = _parse_vet_critic_response(critic_response or "")
+            if score is not None:
+                scores.append(score)
+                if feedback:
+                    feedbacks.append(feedback)
+        except Exception as e:
+            logger.warning(f"[SkillVet] Evaluation round failed: {e}")
+
+    elapsed = time.monotonic() - start
+
+    if not scores:
+        return VettingResult(
+            skipped=True,
+            skip_reason="All evaluation rounds failed",
+            elapsed_seconds=elapsed,
+        )
+
+    avg_score = sum(scores) / len(scores)
+    feedback_summary = "; ".join(feedbacks) if feedbacks else "No feedback collected"
+
+    logger.info(
+        f"[SkillVet] {task_type}: avg_score={avg_score:.1f} "
+        f"({len(scores)} tasks evaluated) in {elapsed:.1f}s"
+    )
+
+    return VettingResult(
+        avg_score=avg_score,
+        feedback_summary=feedback_summary,
+        per_task_scores=scores,
+        tasks_evaluated=len(scores),
+        elapsed_seconds=elapsed,
+    )
+
+
+def _parse_synthetic_tasks(response: str) -> List[str]:
+    """Extract 'TASK: ...' lines from the task generator response."""
+    tasks = []
+    for line in response.splitlines():
+        line = line.strip()
+        if line.upper().startswith("TASK:"):
+            task = line[5:].strip()
+            if task:
+                tasks.append(task)
+    return tasks
+
+
+def _parse_vet_critic_response(response: str) -> Tuple[Optional[float], str]:
+    """Parse 'SCORE: N' and 'FEEDBACK: ...' from the critic response."""
+    import re
+    score = None
+    feedback = ""
+
+    score_match = re.search(r"SCORE:\s*(\d+)", response, re.IGNORECASE)
+    if score_match:
+        try:
+            score = float(score_match.group(1))
+            score = max(0.0, min(100.0, score))
+        except ValueError:
+            pass
+
+    feedback_match = re.search(r"FEEDBACK:\s*(.+)", response, re.IGNORECASE)
+    if feedback_match:
+        feedback = feedback_match.group(1).strip()
+
+    return score, feedback

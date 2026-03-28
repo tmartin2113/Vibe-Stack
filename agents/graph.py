@@ -480,6 +480,7 @@ def create_agent_graph(adapter_registry: AdapterRegistry, tool_registry: Optiona
             skill_registry=shared_skill_registry,
             outcome_store=shared_outcome_store,
             base_model=base_model,
+            adapter_registry=adapter_registry,
         )
 
     workflow.add_node("skill_generator", skill_generator_wrapper)

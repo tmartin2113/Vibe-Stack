@@ -68,6 +68,7 @@ class SkillGeneratorNode:
         skill_registry: SkillRegistry,
         outcome_store: Optional[SkillOutcomeStore] = None,
         base_model: Any = None,
+        adapter_registry: Any = None,
     ):
         """
         Initialize skill generator.
@@ -78,11 +79,16 @@ class SkillGeneratorNode:
                            If None, falls back to pure-template generation.
             base_model:     LLM backend for generating tailored workflows.
                            If None, falls back to static templates.
+            adapter_registry: Optional AdapterRegistry for simulation-based
+                           skill vetting.  When provided and VIBE_SIM_VET_SKILLS
+                           is enabled, newly generated skills are vetted
+                           offline before use.
         """
         self.name = "skill_generator"
         self.skill_registry = skill_registry
         self.outcome_store = outcome_store
         self.base_model = base_model
+        self.adapter_registry = adapter_registry
         self._skill_template = self._load_skill_template()
 
     @classmethod
@@ -220,7 +226,76 @@ class SkillGeneratorNode:
             )
             logger.info(f"✅ Generated new ephemeral skill: {skill_name}")
 
+        # ── Offline skill vetting via simulation ──
+        self._vet_and_maybe_refine(
+            skill_name=skill_name,
+            skill_content=skill_content,
+            task_type=task_type,
+            specification=specification,
+            skill_path=skill_path,
+        )
+
         return skill_name, skill_path
+
+    def _vet_and_maybe_refine(
+        self,
+        skill_name: str,
+        skill_content: str,
+        task_type: str,
+        specification: str,
+        skill_path: "Path",
+    ) -> None:
+        """Run offline simulation vetting and refine if score is low.
+
+        No-op when adapter_registry is not available or vetting is disabled.
+        """
+        if self.adapter_registry is None:
+            return
+
+        try:
+            from .simulation import vet_skill_with_simulation, _VET_SKILLS_ENABLED
+        except ImportError:
+            return
+
+        if not _VET_SKILLS_ENABLED:
+            return
+
+        try:
+            result = vet_skill_with_simulation(
+                skill_content=skill_content,
+                task_type=task_type,
+                adapter_registry=self.adapter_registry,
+            )
+        except Exception as e:
+            logger.warning(f"Skill vetting failed for {skill_name}: {e}")
+            return
+
+        if result.skipped:
+            logger.debug(
+                f"Skill vetting skipped for {skill_name}: {result.skip_reason}"
+            )
+            return
+
+        logger.info(
+            f"Skill vetting for {skill_name}: avg_score={result.avg_score:.1f}, "
+            f"tasks={result.tasks_evaluated}, elapsed={result.elapsed_seconds:.1f}s"
+        )
+
+        if result.avg_score < REFINEMENT_THRESHOLD and result.feedback_summary:
+            logger.info(
+                f"Vetting score {result.avg_score:.1f} < {REFINEMENT_THRESHOLD} "
+                f"for {skill_name}, triggering immediate refinement"
+            )
+            refined = self.refine_skill(
+                skill_name=skill_name,
+                task_type=task_type,
+                original_content=skill_content,
+                score=int(result.avg_score),
+                feedback=result.feedback_summary,
+                specification=specification,
+            )
+            if refined:
+                logger.info(f"Refined {skill_name} after vetting")
 
     # ------------------------------------------------------------------
     # Skill content generation (LLM-driven with template fallback)
@@ -850,6 +925,7 @@ def generate_skills(
     skill_registry: SkillRegistry,
     outcome_store: Optional[SkillOutcomeStore] = None,
     base_model: Any = None,
+    adapter_registry: Any = None,
 ) -> AgentState:
     """
     Convenience function for graph integration.
@@ -859,11 +935,13 @@ def generate_skills(
         skill_registry: Shared SkillRegistry instance
         outcome_store:  Optional SkillOutcomeStore for RAG
         base_model:     Optional LLM backend for tailored generation
+        adapter_registry: Optional AdapterRegistry for simulation-based vetting
 
     Returns:
         Updated state with generated skills
     """
     generator = SkillGeneratorNode(
-        skill_registry, outcome_store=outcome_store, base_model=base_model
+        skill_registry, outcome_store=outcome_store, base_model=base_model,
+        adapter_registry=adapter_registry,
     )
     return generator.execute(state)
