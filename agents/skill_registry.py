@@ -77,19 +77,19 @@ class SkillRegistry(
     """
 
     # Promotion criteria
-    MIN_USAGE_FOR_PROMOTION = 3
-    MIN_AVG_SCORE_FOR_PROMOTION = 85
+    MIN_USAGE_FOR_PROMOTION = int(os.getenv("VIBE_SKILL_MIN_USAGE_FOR_PROMOTION", "3"))
+    MIN_AVG_SCORE_FOR_PROMOTION = int(os.getenv("VIBE_SKILL_MIN_AVG_SCORE_FOR_PROMOTION", "85"))
 
     # Confidence thresholds for tier selection
     # These are tuned for keyword-based matching; raise when semantic
     # (embedding) matching is implemented.
-    OFFICIAL_CONFIDENCE_THRESHOLD = 0.4
-    LOCAL_CONFIDENCE_THRESHOLD = 0.35
-    TEMP_CONFIDENCE_THRESHOLD = 0.35  # Same as local — retained temp skills are proven
+    OFFICIAL_CONFIDENCE_THRESHOLD = float(os.getenv("VIBE_SKILL_OFFICIAL_CONFIDENCE", "0.4"))
+    LOCAL_CONFIDENCE_THRESHOLD = float(os.getenv("VIBE_SKILL_LOCAL_CONFIDENCE", "0.35"))
+    TEMP_CONFIDENCE_THRESHOLD = float(os.getenv("VIBE_SKILL_TEMP_CONFIDENCE", "0.35"))  # Same as local — retained temp skills are proven
 
     # TTL-based retention (days since last use before eviction)
-    TEMP_SKILL_TTL_DAYS = 7        # Ephemeral skills kept 7 days after last use
-    OFFICIAL_SKILL_TTL_DAYS = 30   # Cached GitHub skills evicted after 30 days unused
+    TEMP_SKILL_TTL_DAYS = int(os.getenv("VIBE_SKILL_TEMP_TTL_DAYS", "7"))        # Ephemeral skills kept 7 days after last use
+    OFFICIAL_SKILL_TTL_DAYS = int(os.getenv("VIBE_SKILL_OFFICIAL_TTL_DAYS", "30"))   # Cached GitHub skills evicted after 30 days unused
 
     def __init__(self, vibe_skills_dir: str = "vibe_skills",
                  security: Optional[SkillSecurity] = None,

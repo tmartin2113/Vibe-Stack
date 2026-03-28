@@ -35,10 +35,10 @@ class PythonExecutor(Tool):
     """
 
     # Resource limits for child process (applied on Unix via preexec_fn)
-    RLIMIT_CPU_SECONDS = 30       # Max CPU time (seconds)
-    RLIMIT_MEMORY_BYTES = 256 * 1024 * 1024  # 256 MB address space
-    RLIMIT_FSIZE_BYTES = 10 * 1024 * 1024    # 10 MB max file creation size
-    RLIMIT_NPROC = 32             # Max child processes (prevent fork bomb)
+    RLIMIT_CPU_SECONDS = int(os.getenv("VIBE_EXEC_CPU_LIMIT_SECONDS", "30"))       # Max CPU time (seconds)
+    RLIMIT_MEMORY_BYTES = int(os.getenv("VIBE_EXEC_MEMORY_LIMIT_MB", "256")) * 1024 * 1024  # 256 MB address space
+    RLIMIT_FSIZE_BYTES = int(os.getenv("VIBE_EXEC_FSIZE_LIMIT_MB", "10")) * 1024 * 1024    # 10 MB max file creation size
+    RLIMIT_NPROC = int(os.getenv("VIBE_EXEC_NPROC_LIMIT", "32"))             # Max child processes (prevent fork bomb)
 
     # Minimal environment for child process
     _ALLOWED_ENV_KEYS = {"PATH", "HOME", "LANG", "TMPDIR", "LC_ALL", "LC_CTYPE"}
