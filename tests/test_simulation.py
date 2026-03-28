@@ -83,7 +83,8 @@ class TestAssessSimulationBudget:
     def test_sidecar_disabled_on_22gb(self):
         sim = _reload_sim(VIBE_SIM_ENABLED="true")
         profile = MockProfile(has_gpu=True, total_vram_mb=22528)
-        budget = sim.assess_simulation_budget(profile, mode="sidecar")
+        with patch("agents.resource_discovery.get_free_vram_mb", return_value=None):
+            budget = sim.assess_simulation_budget(profile, mode="sidecar")
         # 22GB * 0.15 = ~3.4GB < 6GB threshold → disabled
         assert not budget.enabled
         assert "Sidecar disabled" in budget.reason
@@ -91,23 +92,25 @@ class TestAssessSimulationBudget:
     def test_sidecar_enabled_on_48gb(self):
         sim = _reload_sim(VIBE_SIM_ENABLED="true")
         profile = MockProfile(has_gpu=True, total_vram_mb=49152)
-        budget = sim.assess_simulation_budget(profile, mode="sidecar")
+        with patch("agents.resource_discovery.get_free_vram_mb", return_value=None):
+            budget = sim.assess_simulation_budget(profile, mode="sidecar")
         # 48GB * 0.15 = ~7.4GB > 6GB threshold → enabled
         assert budget.enabled
 
     def test_sidecar_scales_rounds_with_vram(self):
         sim = _reload_sim(VIBE_SIM_ENABLED="true")
-        # ~7.4GB free → constrained (max 2 rounds)
-        profile = MockProfile(has_gpu=True, total_vram_mb=49152)
-        budget = sim.assess_simulation_budget(profile, mode="sidecar")
-        assert budget.enabled
-        assert budget.max_rounds <= 2
+        with patch("agents.resource_discovery.get_free_vram_mb", return_value=None):
+            # ~7.4GB free → constrained (max 2 rounds)
+            profile = MockProfile(has_gpu=True, total_vram_mb=49152)
+            budget = sim.assess_simulation_budget(profile, mode="sidecar")
+            assert budget.enabled
+            assert budget.max_rounds <= 2
 
-        # ~16GB free → ample (max 3 rounds)
-        profile_large = MockProfile(has_gpu=True, total_vram_mb=110000)
-        budget_large = sim.assess_simulation_budget(profile_large, mode="sidecar")
-        assert budget_large.enabled
-        assert budget_large.max_rounds >= 3
+            # ~16GB free → ample (max 3 rounds)
+            profile_large = MockProfile(has_gpu=True, total_vram_mb=110000)
+            budget_large = sim.assess_simulation_budget(profile_large, mode="sidecar")
+            assert budget_large.enabled
+            assert budget_large.max_rounds >= 3
 
     def test_clarification_always_enabled_on_22gb(self):
         sim = _reload_sim(VIBE_SIM_ENABLED="true")
@@ -124,14 +127,16 @@ class TestAssessSimulationBudget:
 
     def test_cpu_only_sidecar(self):
         sim = _reload_sim(VIBE_SIM_ENABLED="true")
-        budget = sim.assess_simulation_budget(None, mode="sidecar")
+        with patch("agents.resource_discovery.get_free_vram_mb", return_value=None):
+            budget = sim.assess_simulation_budget(None, mode="sidecar")
         assert budget.enabled
         assert budget.max_rounds <= 2
         assert "CPU-only" in budget.reason or "throughput" in budget.reason
 
     def test_cpu_only_clarification(self):
         sim = _reload_sim(VIBE_SIM_ENABLED="true")
-        budget = sim.assess_simulation_budget(None, mode="clarification")
+        with patch("agents.resource_discovery.get_free_vram_mb", return_value=None):
+            budget = sim.assess_simulation_budget(None, mode="clarification")
         assert budget.enabled
         assert budget.max_rounds <= 2
 
@@ -152,7 +157,8 @@ class TestProbeeFreeVram:
     def test_sidecar_uses_15_percent(self):
         sim = _reload_sim(VIBE_SIM_ENABLED="true")
         profile = MockProfile(has_gpu=True, total_vram_mb=24000)
-        free = sim._probe_free_vram(profile, mode="sidecar")
+        with patch("agents.resource_discovery.get_free_vram_mb", return_value=None):
+            free = sim._probe_free_vram(profile, mode="sidecar")
         # 15% of 24000 = 3600
         assert free == int(24000 * 0.15)
 
@@ -166,7 +172,8 @@ class TestProbeeFreeVram:
     def test_no_gpu_returns_none(self):
         sim = _reload_sim(VIBE_SIM_ENABLED="true")
         profile = MockProfile(has_gpu=False)
-        free = sim._probe_free_vram(profile, mode="sidecar")
+        with patch("agents.resource_discovery.get_free_vram_mb", return_value=None):
+            free = sim._probe_free_vram(profile, mode="sidecar")
         assert free is None
 
     def test_nvidia_smi_fallback(self):

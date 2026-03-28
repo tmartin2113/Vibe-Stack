@@ -14,7 +14,8 @@ if (fs.existsSync(envPath)) {
   }
 }
 
-const agentId = process.argv[2] || "265313f8-0e64-458f-9332-65bae6aa1a20";
+const agentId = process.argv[2] || process.env.PAPERCLIP_AGENT_ID;
+if (!agentId) { console.error("Usage: node trigger-heartbeat.js <agent-id> OR set PAPERCLIP_AGENT_ID"); process.exit(1); }
 const PASSWORD = process.env.PAPERCLIP_ADMIN_PASSWORD;
 
 function req(method, urlPath, cookie, body) {
@@ -35,7 +36,8 @@ function req(method, urlPath, cookie, body) {
 }
 
 (async () => {
-  const email = process.env.PAPERCLIP_ADMIN_EMAIL || "tmartin2113@gmail.com";
+  const email = process.env.PAPERCLIP_ADMIN_EMAIL;
+  if (!email) { console.error("PAPERCLIP_ADMIN_EMAIL not set"); process.exit(1); }
   const signin = await req("POST", "/api/auth/sign-in/email", "", { email, password: PASSWORD });
   if (signin.status !== 200) {
     console.error("Sign-in failed:", signin.status, JSON.stringify(signin.body));

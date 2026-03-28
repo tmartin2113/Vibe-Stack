@@ -13,7 +13,8 @@ if (fs.existsSync(envPath)) {
 }
 
 const PASSWORD = process.env.PAPERCLIP_ADMIN_PASSWORD;
-const companyId = "ddc70828-3757-40bf-8ace-853d8c469426";
+const companyId = process.env.PAPERCLIP_COMPANY_ID;
+if (!companyId) { console.error("PAPERCLIP_COMPANY_ID not set"); process.exit(1); }
 
 function req(method, urlPath, cookie, body) {
   return new Promise((resolve, reject) => {
@@ -39,7 +40,7 @@ function req(method, urlPath, cookie, body) {
 (async () => {
   // 1. Sign in
   const signin = await req("POST", "/api/auth/sign-in/email", "", {
-    email: "tmartin2113@gmail.com", password: PASSWORD,
+    email: process.env.PAPERCLIP_ADMIN_EMAIL, password: PASSWORD,
   });
   if (signin.status !== 200) { console.error("Sign-in failed:", signin.status); process.exit(1); }
   const cookie = signin.cookies.map((c) => c.split(";")[0]).join("; ");

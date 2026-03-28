@@ -162,7 +162,7 @@ Infrastructure only: Paperclip + vLLM + OpenSandbox. The agent is NOT a long-run
 
 ```bash
 # Python tests
-python -m pytest tests/ -x -o "addopts="
+python -m pytest tests/ -x -m "not e2e" --no-header -q
 ```
 
 ### Test Coverage
