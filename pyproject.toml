@@ -42,9 +42,6 @@ sandbox = [
     "opensandbox>=0.1.4",
     "opensandbox-code-interpreter>=0.1.2",
 ]
-firecrawl = [
-    "firecrawl-py>=1.0.0",
-]
 tools = [
     "beautifulsoup4>=4.12.0",
     "gitpython>=3.1.0",
@@ -165,9 +162,6 @@ ignore_missing_imports = true
 module = "opensandbox.*"
 ignore_missing_imports = true
 
-[[tool.mypy.overrides]]
-module = "firecrawl.*"
-ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
 module = "code_interpreter.*"

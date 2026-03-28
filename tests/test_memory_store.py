@@ -581,7 +581,7 @@ class TestRegistryIntegration:
     def test_memory_tools_always_present(self):
         """Memory tools should be registered regardless of other settings."""
         from agents.tools.registry import create_default_tool_registry
-        # Sandboxed pool (mocked), no egress, no firecrawl key
+        # Sandboxed pool (mocked), no egress, no infra env vars
         with patch.dict(os.environ, {}, clear=True):
             registry = create_default_tool_registry(sandbox_pool=MagicMock(), network_egress=False)
         tool_names = registry.list_tools()
@@ -693,11 +693,10 @@ class TestDoctorIncludesMemory:
              patch("agents.doctor.check_messenger") as m8, \
              patch("agents.doctor.check_disk_usage") as m9, \
              patch("agents.doctor.check_python_deps") as m10, \
-             patch("agents.doctor.check_firecrawl") as m11, \
              patch("agents.doctor.check_hardware") as m12:
             # Each mock returns a CheckResult
             from agents.doctor import CheckResult
-            for m in [m1, m2, m3, m4, m6, m7, m8, m9, m10, m11, m12]:
+            for m in [m1, m2, m3, m4, m6, m7, m8, m9, m10, m12]:
                 m.return_value = CheckResult("mock", "ok", "mock check")
 
             with patch("agents.doctor.check_memory") as m_memory:

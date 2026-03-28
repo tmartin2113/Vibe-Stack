@@ -44,9 +44,6 @@ class SandboxConfig:
     # Network
     network_egress: bool = False  # Allow outbound network in sandboxes
 
-    # Firecrawl (web scraping API — requires network_egress=True to take effect)
-    firecrawl_api_key: str = ""
-
     # File access — colon-separated list of directories the agent may read/write.
     # Empty string means use the built-in defaults (/home/user/Vibe, /tmp).
     allowed_file_dirs: str = ""
@@ -83,7 +80,6 @@ class SandboxConfig:
             "VIBE_SANDBOX_GPU": ("gpu_enabled", _parse_bool),
             "VIBE_SANDBOX_GPU_IDS": ("gpu_device_ids", str),
             "VIBE_SANDBOX_EGRESS": ("network_egress", _parse_bool),
-            "FIRECRAWL_API_KEY": ("firecrawl_api_key", str),
             "VIBE_ALLOWED_FILE_DIRS": ("allowed_file_dirs", str),
         }
         for env_key, (attr, converter) in env_map.items():

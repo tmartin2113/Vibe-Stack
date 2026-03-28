@@ -1271,39 +1271,6 @@ class TestDoctorCheckDockerGPU:
             assert result.status == "warn"
 
 
-class TestDoctorCheckFirecrawl:
-    """Cover lines 409-439, 469-470: check_firecrawl paths."""
-
-    def test_firecrawl_no_api_key(self):
-        from agents.doctor import check_firecrawl
-
-        with patch.dict(os.environ, {}, clear=False):
-            # Remove FIRECRAWL_API_KEY if present
-            env_copy = os.environ.copy()
-            env_copy.pop("FIRECRAWL_API_KEY", None)
-            with patch.dict(os.environ, env_copy, clear=True):
-                result = check_firecrawl()
-                assert result.status == "warn"
-                assert "FIRECRAWL_API_KEY not set" in result.summary
-
-    def test_firecrawl_package_missing(self):
-        from agents.doctor import check_firecrawl
-
-        import builtins
-        real_import = builtins.__import__
-
-        def fake_import(name, *args, **kwargs):
-            if name == "firecrawl":
-                raise ImportError("no firecrawl")
-            return real_import(name, *args, **kwargs)
-
-        with patch.dict(os.environ, {"FIRECRAWL_API_KEY": "test-key"}, clear=False), \
-             patch("builtins.__import__", side_effect=fake_import):
-            result = check_firecrawl()
-            assert result.status == "warn"
-            assert "not installed" in result.summary
-
-
 class TestDoctorCheckMemory:
     """Cover lines 469-470: check_memory error path."""
 
