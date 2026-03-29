@@ -239,23 +239,25 @@ class SpendingTracker:
         """Record a cost event and evaluate circuit breaker thresholds."""
         now = _utcnow_iso()
         ph = self._ph
+        insert_sql = f"""
+            INSERT INTO cost_events (
+                timestamp, agent_id, agent_name, run_id, issue_id,
+                provider, model, input_tokens, output_tokens,
+                cost_cents, status, tokens_per_second, generation_duration_ms
+            ) VALUES ({ph}, {ph}, {ph}, {ph}, {ph}, {ph}, {ph}, {ph}, {ph}, {ph}, {ph}, {ph}, {ph})
+        """
+        params = (now, agent_id, agent_name, run_id, issue_id,
+                  provider, model, input_tokens, output_tokens,
+                  cost_cents, status, tokens_per_second, generation_duration_ms)
         with self._lock:
             try:
-                self._exec(
-                    f"""
-                    INSERT INTO cost_events (
-                        timestamp, agent_id, agent_name, run_id, issue_id,
-                        provider, model, input_tokens, output_tokens,
-                        cost_cents, status, tokens_per_second, generation_duration_ms
-                    ) VALUES ({ph}, {ph}, {ph}, {ph}, {ph}, {ph}, {ph}, {ph}, {ph}, {ph}, {ph}, {ph}, {ph})
-                    """,
-                    (now, agent_id, agent_name, run_id, issue_id,
-                     provider, model, input_tokens, output_tokens,
-                     cost_cents, status, tokens_per_second, generation_duration_ms),
-                )
-
-                # Evaluate thresholds (may trip breaker)
-                self._evaluate_thresholds()
+                if self.storage_backend is not None:
+                    with self.storage_backend.transaction() as txn:
+                        txn.execute(insert_sql, params)
+                        self._evaluate_thresholds(txn=txn)
+                else:
+                    self._exec(insert_sql, params)
+                    self._evaluate_thresholds()
             except Exception as e:
                 logger.warning("Failed to record spending event: %s", e)
 
@@ -347,47 +349,75 @@ class SpendingTracker:
     # Threshold Evaluation
     # ------------------------------------------------------------------
 
-    def _evaluate_thresholds(self) -> None:
-        """Evaluate all thresholds and trip breaker if any are violated."""
+    def _evaluate_thresholds(self, txn=None) -> None:
+        """Evaluate all thresholds and trip breaker if any are violated.
+
+        Args:
+            txn: Optional transactional backend. When provided, queries and
+                 writes go through the transaction instead of separate
+                 pool connections.
+        """
         ph = self._ph
         now = _utcnow().replace(tzinfo=None)
         window_start = (now - timedelta(seconds=self.window_seconds)).isoformat()
 
         # 1. Spend velocity: SUM(cost_cents) in window
-        row = self._query_one(
-            f"SELECT COALESCE(SUM(cost_cents), 0) as total FROM cost_events "
-            f"WHERE timestamp >= {ph}",
-            (window_start,),
-        )
+        if txn is not None:
+            row = txn.fetchone_dict(
+                f"SELECT COALESCE(SUM(cost_cents), 0) as total FROM cost_events "
+                f"WHERE timestamp >= {ph}",
+                (window_start,),
+            )
+        else:
+            row = self._query_one(
+                f"SELECT COALESCE(SUM(cost_cents), 0) as total FROM cost_events "
+                f"WHERE timestamp >= {ph}",
+                (window_start,),
+            )
         total_cents = row["total"] if row else 0
 
         if total_cents > self.max_cents_per_window:
             self._trip_breaker(
                 f"Spend velocity {total_cents}c exceeds {self.max_cents_per_window}c "
                 f"in {self.window_seconds}s window",
+                txn=txn,
             )
             return
 
         # 2. Heartbeat frequency: COUNT of non-idle in window
-        row = self._query_one(
-            f"SELECT COUNT(*) as cnt FROM cost_events "
-            f"WHERE timestamp >= {ph} AND status != 'idle'",
-            (window_start,),
-        )
+        if txn is not None:
+            row = txn.fetchone_dict(
+                f"SELECT COUNT(*) as cnt FROM cost_events "
+                f"WHERE timestamp >= {ph} AND status != 'idle'",
+                (window_start,),
+            )
+        else:
+            row = self._query_one(
+                f"SELECT COUNT(*) as cnt FROM cost_events "
+                f"WHERE timestamp >= {ph} AND status != 'idle'",
+                (window_start,),
+            )
         non_idle_count = row["cnt"] if row else 0
 
         if non_idle_count > self.max_heartbeats_per_window:
             self._trip_breaker(
                 f"Heartbeat frequency {non_idle_count} non-idle exceeds "
                 f"{self.max_heartbeats_per_window} in {self.window_seconds}s window",
+                txn=txn,
             )
             return
 
         # 3. Consecutive non-idle streak
-        rows = self._query_all(
-            f"SELECT status FROM cost_events ORDER BY id DESC LIMIT {ph}",
-            (self.max_consecutive_non_idle,),
-        )
+        if txn is not None:
+            rows = txn.fetchall_dict(
+                f"SELECT status FROM cost_events ORDER BY id DESC LIMIT {ph}",
+                (self.max_consecutive_non_idle,),
+            )
+        else:
+            rows = self._query_all(
+                f"SELECT status FROM cost_events ORDER BY id DESC LIMIT {ph}",
+                (self.max_consecutive_non_idle,),
+            )
 
         if (
             len(rows) >= self.max_consecutive_non_idle
@@ -396,18 +426,32 @@ class SpendingTracker:
             self._trip_breaker(
                 f"Consecutive non-idle streak: {len(rows)} heartbeats "
                 f"(threshold: {self.max_consecutive_non_idle})",
+                txn=txn,
             )
 
-    def _trip_breaker(self, reason: str) -> None:
-        """Trip the circuit breaker to OPEN state."""
+    def _trip_breaker(self, reason: str, txn=None) -> None:
+        """Trip the circuit breaker to OPEN state.
+
+        Args:
+            reason: Human-readable reason for tripping.
+            txn: Optional transactional backend. When provided, queries and
+                 writes go through the transaction instead of separate
+                 pool connections.
+        """
         ph = self._ph
         now = _utcnow().replace(tzinfo=None)
 
         # Get current trip count for exponential backoff
-        row = self._query_one(
-            f"SELECT trip_count, state FROM circuit_breaker WHERE scope = {ph}",
-            (self.scope,),
-        )
+        if txn is not None:
+            row = txn.fetchone_dict(
+                f"SELECT trip_count, state FROM circuit_breaker WHERE scope = {ph}",
+                (self.scope,),
+            )
+        else:
+            row = self._query_one(
+                f"SELECT trip_count, state FROM circuit_breaker WHERE scope = {ph}",
+                (self.scope,),
+            )
 
         if row and row["state"] == BreakerState.OPEN.value:
             # Already open -- don't re-trip
@@ -423,8 +467,7 @@ class SpendingTracker:
         )
         cooldown_until = (now + timedelta(seconds=cooldown)).isoformat()
 
-        self._exec(
-            f"""
+        upsert_sql = f"""
             INSERT INTO circuit_breaker (scope, state, opened_at, reason, cooldown_until, trip_count)
             VALUES ({ph}, {ph}, {ph}, {ph}, {ph}, {ph})
             ON CONFLICT(scope) DO UPDATE SET
@@ -433,9 +476,14 @@ class SpendingTracker:
                 reason = excluded.reason,
                 cooldown_until = excluded.cooldown_until,
                 trip_count = excluded.trip_count
-            """,
-            (self.scope, BreakerState.OPEN.value, now.isoformat(), reason, cooldown_until, new_trip_count),
-        )
+        """
+        upsert_params = (self.scope, BreakerState.OPEN.value, now.isoformat(), reason, cooldown_until, new_trip_count)
+
+        if txn is not None:
+            txn.execute(upsert_sql, upsert_params)
+        else:
+            self._exec(upsert_sql, upsert_params)
+
         logger.warning(
             "Circuit breaker TRIPPED (trip #%d, cooldown %ds): %s",
             new_trip_count, cooldown, reason,

@@ -238,9 +238,43 @@ class MessageStore:
         finally:
             conn.close()
 
+    # Default embedding dimension (nomic-embed-text = 768).
+    # Override via subclass or instance attribute if your model differs.
+    EMBEDDING_DIM = 768
+
     def _init_db(self):
         if self.storage_backend is not None:
             self.storage_backend.execute_script(self._SCHEMA_DDL)
+            # Create Postgres FTS index if supported
+            if self.storage_backend.supports_fts:
+                try:
+                    self.storage_backend.execute(
+                        "CREATE INDEX IF NOT EXISTS idx_messages_content_fts "
+                        "ON messages USING GIN (to_tsvector('english', content))"
+                    )
+                except Exception as e:
+                    logger.debug("FTS index creation skipped: %s", e)
+            # Create pgvector embeddings table if supported
+            if self.storage_backend.supports_vector:
+                try:
+                    self.storage_backend.execute(
+                        "CREATE EXTENSION IF NOT EXISTS vector"
+                    )
+                    dim = self.EMBEDDING_DIM
+                    self.storage_backend.execute(
+                        "CREATE TABLE IF NOT EXISTS message_embeddings ("
+                        "    message_id TEXT PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,"
+                        f"    embedding vector({dim}),"
+                        "    model TEXT NOT NULL,"
+                        "    created_at TEXT NOT NULL"
+                        ")"
+                    )
+                    self.storage_backend.execute(
+                        "CREATE INDEX IF NOT EXISTS idx_message_embeddings_vector "
+                        "ON message_embeddings USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100)"
+                    )
+                except Exception as e:
+                    logger.debug("pgvector setup skipped: %s", e)
             return
 
         with self._connect() as conn:
@@ -472,7 +506,33 @@ class MessageStore:
     def _store_embedding(self, message_id: str, content: str) -> None:
         """Generate and store embedding for a message. Best-effort."""
         if self.storage_backend is not None:
-            logger.debug("Embedding storage not available with external storage backend")
+            if not self.storage_backend.supports_vector:
+                logger.debug("Embedding storage not available with external storage backend")
+                return
+            try:
+                embedder = self._get_embedder()
+                vec = embedder.embed(content)
+                if vec is None:
+                    return
+                vec_str = "[" + ",".join(str(x) for x in vec) + "]"
+                ph = self._ph
+                self._exec(
+                    f"INSERT INTO message_embeddings "
+                    f"    (message_id, embedding, model, created_at) "
+                    f"VALUES ({ph}, {ph}::vector, {ph}, {ph}) "
+                    f"ON CONFLICT (message_id) DO UPDATE SET "
+                    f"    embedding = EXCLUDED.embedding, "
+                    f"    model = EXCLUDED.model, "
+                    f"    created_at = EXCLUDED.created_at",
+                    (
+                        message_id,
+                        vec_str,
+                        embedder.model,
+                        datetime.now(timezone.utc).isoformat(),
+                    ),
+                )
+            except Exception as e:
+                logger.debug(f"Embedding storage failed for {message_id}: {e}")
             return
         try:
             embedder = self._get_embedder()
@@ -502,8 +562,52 @@ class MessageStore:
         Returns count of newly embedded messages.
         """
         if self.storage_backend is not None:
-            logger.debug("Embedding backfill not available with external storage backend")
-            return 0
+            if not self.storage_backend.supports_vector:
+                logger.debug("Embedding backfill not available with external storage backend")
+                return 0
+
+            embedder = self._get_embedder()
+            if not embedder.is_available():
+                return 0
+
+            ph = self._ph
+            count = 0
+            with self._lock:
+                rows = self._query_all(
+                    f"""SELECT m.id, m.content FROM messages m
+                       LEFT JOIN message_embeddings e ON m.id = e.message_id
+                       WHERE e.message_id IS NULL
+                       ORDER BY m.created_at
+                       LIMIT {ph}""",
+                    (batch_size,),
+                )
+
+                if not rows:
+                    return 0
+
+                texts = [row["content"] for row in rows]
+                ids = [row["id"] for row in rows]
+                vectors = embedder.embed_batch(texts)
+                now = datetime.now(timezone.utc).isoformat()
+
+                for mid, vec in zip(ids, vectors):
+                    if vec is not None:
+                        vec_str = "[" + ",".join(str(x) for x in vec) + "]"
+                        self._exec(
+                            f"INSERT INTO message_embeddings "
+                            f"    (message_id, embedding, model, created_at) "
+                            f"VALUES ({ph}, {ph}::vector, {ph}, {ph}) "
+                            f"ON CONFLICT (message_id) DO UPDATE SET "
+                            f"    embedding = EXCLUDED.embedding, "
+                            f"    model = EXCLUDED.model, "
+                            f"    created_at = EXCLUDED.created_at",
+                            (mid, vec_str, embedder.model, now),
+                        )
+                        count += 1
+
+            if count:
+                logger.info("Backfilled %d/%d message embeddings", count, len(rows))
+            return count
 
         embedder = self._get_embedder()
         if not embedder.is_available():
@@ -660,8 +764,27 @@ class MessageStore:
             return []
 
         if self.storage_backend is not None:
-            logger.debug("FTS search not available with external storage backend")
-            return []
+            if not self.storage_backend.supports_fts:
+                logger.debug("FTS search not available with this storage backend")
+                return []
+            # Postgres tsvector search with ranking
+            ph = self._ph
+            max_results = max(1, min(max_results, 200))
+            now = datetime.now(timezone.utc).isoformat()
+            rows = self._query_all(
+                f"SELECT *, ts_rank(to_tsvector('english', content), plainto_tsquery('english', {ph})) as score "
+                f"FROM messages "
+                f"WHERE to_tsvector('english', content) @@ plainto_tsquery('english', {ph}) "
+                f"AND (expires_at IS NULL OR expires_at >= {ph}) "
+                f"ORDER BY score DESC LIMIT {ph}",
+                (query, query, now, max_results),
+            )
+            messages = []
+            for r in rows:
+                msg = self._row_to_message(r)
+                msg.score = float(r["score"])
+                messages.append(msg)
+            return messages
 
         # Escape FTS5 special characters
         safe_query = re.sub(r'[^\w\s]', ' ', query).strip()
@@ -701,8 +824,33 @@ class MessageStore:
     ) -> List[Message]:
         """Semantic search using cosine similarity on embeddings."""
         if self.storage_backend is not None:
-            logger.debug("Semantic search not available with external storage backend")
-            return []
+            if not self.storage_backend.supports_vector:
+                logger.debug("Semantic search not available with this storage backend")
+                return []
+            # pgvector cosine distance search
+            if not self._embedder:
+                self._embedder = self._get_embedder()
+            query_vec = self._embedder.embed(query)
+            if query_vec is None:
+                return []
+            vec_str = "[" + ",".join(str(x) for x in query_vec) + "]"
+            ph = self._ph
+            now = datetime.now(timezone.utc).isoformat()
+            rows = self._query_all(
+                f"SELECT m.*, 1 - (e.embedding <=> {ph}::vector) as score "
+                f"FROM messages m "
+                f"JOIN message_embeddings e ON m.id = e.message_id "
+                f"WHERE m.expires_at IS NULL OR m.expires_at >= {ph} "
+                f"ORDER BY e.embedding <=> {ph}::vector "
+                f"LIMIT {ph}",
+                (vec_str, now, vec_str, max_results),
+            )
+            messages = []
+            for r in rows:
+                msg = self._row_to_message(r)
+                msg.score = float(r["score"])
+                messages.append(msg)
+            return messages
 
         embedder = self._get_embedder()
         query_vec = embedder.embed(query)

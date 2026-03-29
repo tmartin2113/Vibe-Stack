@@ -251,10 +251,42 @@ class MemoryStore:
         finally:
             conn.close()
 
+    # Default embedding dimension for pgvector (nomic-embed-text = 768).
+    # Override via subclass or constructor if using a different model.
+    EMBEDDING_DIM = 768
+
     def _init_db(self):
         """Create tables, FTS5 virtual table, and embeddings table."""
         if self.storage_backend is not None:
             self.storage_backend.execute_script(self._SCHEMA_DDL)
+            # Create Postgres FTS index if supported
+            if self.storage_backend.supports_fts:
+                try:
+                    self.storage_backend.execute(
+                        "CREATE INDEX IF NOT EXISTS idx_memories_content_fts "
+                        "ON memories USING GIN (to_tsvector('english', content))"
+                    )
+                except Exception as e:
+                    logger.debug("FTS index creation skipped: %s", e)
+            # Create pgvector embeddings table if supported
+            if self.storage_backend.supports_vector:
+                try:
+                    self.storage_backend.execute("CREATE EXTENSION IF NOT EXISTS vector")
+                    dim = self.EMBEDDING_DIM
+                    self.storage_backend.execute(
+                        "CREATE TABLE IF NOT EXISTS memory_embeddings ("
+                        "    memory_id INTEGER PRIMARY KEY REFERENCES memories(id) ON DELETE CASCADE,"
+                        f"    embedding vector({dim}),"
+                        "    model TEXT NOT NULL,"
+                        "    created_at TEXT NOT NULL"
+                        ")"
+                    )
+                    self.storage_backend.execute(
+                        "CREATE INDEX IF NOT EXISTS idx_memory_embeddings_vector "
+                        "ON memory_embeddings USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100)"
+                    )
+                except Exception as e:
+                    logger.debug("pgvector setup skipped: %s", e)
             return
 
         with self._connect() as conn:
@@ -420,54 +452,92 @@ class MemoryStore:
         ph = self._ph
 
         if self.storage_backend is not None:
-            # FTS5 not available; fall back to LIKE
-            like_param = f"%{query.strip()}%"
-            conditions = [f"content LIKE {ph}"]
-            params: list = [like_param]
+            if self.storage_backend.supports_fts:
+                # Postgres tsvector search with ranking
+                conditions = [f"to_tsvector('english', content) @@ plainto_tsquery('english', {ph})"]
+                params: list = [query]
+                if tag_filter:
+                    conditions.append(f"tags LIKE {ph}")
+                    params.append(f"%{tag_filter}%")
+                if source_filter:
+                    conditions.append(f"source = {ph}")
+                    params.append(source_filter)
+                where = " AND ".join(conditions)
+                rows = self._query_all(
+                    f"SELECT id, content, source, tags, created_at, updated_at, access_count, "
+                    f"ts_rank(to_tsvector('english', content), plainto_tsquery('english', {ph})) as score "
+                    f"FROM memories WHERE {where} "
+                    f"ORDER BY score DESC LIMIT {ph}",
+                    tuple(params + [query] + [max_results]),
+                )
+                # Update access counts
+                for r in rows:
+                    self._exec(
+                        f"UPDATE memories SET access_count = access_count + 1 WHERE id = {ph}",
+                        (r["id"],),
+                    )
+                results = []
+                for row in rows:
+                    results.append(MemoryEntry(
+                        memory_id=row["id"],
+                        content=row["content"],
+                        source=row["source"],
+                        tags=row["tags"],
+                        created_at=row["created_at"],
+                        updated_at=row["updated_at"],
+                        access_count=row["access_count"],
+                        score=row["score"],
+                    ))
+                return results
+            else:
+                # LIKE fallback for backends without FTS
+                like_param = f"%{query.strip()}%"
+                conditions = [f"content LIKE {ph}"]
+                params: list = [like_param]
 
-            if tag_filter:
-                conditions.append(f"LOWER(tags) LIKE {ph}")
-                params.append(f"%{tag_filter.lower()}%")
+                if tag_filter:
+                    conditions.append(f"LOWER(tags) LIKE {ph}")
+                    params.append(f"%{tag_filter.lower()}%")
 
-            if source_filter:
-                conditions.append(f"source LIKE {ph}")
-                params.append(f"{source_filter}%")
+                if source_filter:
+                    conditions.append(f"source LIKE {ph}")
+                    params.append(f"{source_filter}%")
 
-            where_clause = " AND ".join(conditions)
+                where_clause = " AND ".join(conditions)
 
-            rows = self._query_all(
-                f"SELECT id, content, source, tags, created_at, updated_at, access_count "
-                f"FROM memories WHERE {where_clause} "
-                f"ORDER BY updated_at DESC LIMIT {ph}",
-                tuple(params + [max_results]),
-            )
-
-            results = []
-            memory_ids = []
-            for row in rows:
-                results.append(MemoryEntry(
-                    memory_id=row["id"],
-                    content=row["content"],
-                    source=row["source"],
-                    tags=row["tags"],
-                    created_at=row["created_at"],
-                    updated_at=row["updated_at"],
-                    access_count=row["access_count"],
-                    score=0.0,
-                ))
-                memory_ids.append(row["id"])
-
-            # Bump access counts for returned results
-            if memory_ids:
-                now = datetime.utcnow().isoformat() + "Z"
-                placeholders = ",".join(ph for _ in memory_ids)
-                self._exec(
-                    f"UPDATE memories SET access_count = access_count + 1, "
-                    f"updated_at = {ph} WHERE id IN ({placeholders})",
-                    tuple([now] + memory_ids),
+                rows = self._query_all(
+                    f"SELECT id, content, source, tags, created_at, updated_at, access_count "
+                    f"FROM memories WHERE {where_clause} "
+                    f"ORDER BY updated_at DESC LIMIT {ph}",
+                    tuple(params + [max_results]),
                 )
 
-            return results
+                results = []
+                memory_ids = []
+                for row in rows:
+                    results.append(MemoryEntry(
+                        memory_id=row["id"],
+                        content=row["content"],
+                        source=row["source"],
+                        tags=row["tags"],
+                        created_at=row["created_at"],
+                        updated_at=row["updated_at"],
+                        access_count=row["access_count"],
+                        score=0.0,
+                    ))
+                    memory_ids.append(row["id"])
+
+                # Bump access counts for returned results
+                if memory_ids:
+                    now = datetime.utcnow().isoformat() + "Z"
+                    placeholders = ",".join(ph for _ in memory_ids)
+                    self._exec(
+                        f"UPDATE memories SET access_count = access_count + 1, "
+                        f"updated_at = {ph} WHERE id IN ({placeholders})",
+                        tuple([now] + memory_ids),
+                    )
+
+                return results
 
         # SQLite path: use FTS5
         # Build FTS5 query: quote each token to avoid syntax errors
@@ -701,8 +771,49 @@ class MemoryStore:
             Number of embeddings generated.
         """
         if self.storage_backend is not None:
-            logger.debug("backfill_embeddings: skipped (embeddings are SQLite-only)")
-            return 0
+            if not self.storage_backend.supports_vector:
+                logger.debug("backfill_embeddings: skipped (backend does not support vectors)")
+                return 0
+
+            embedder = self._get_embedder()
+            if embedder is None:
+                return 0
+
+            ph = self._ph
+            count = 0
+            with self._lock:
+                rows = self._query_all(
+                    f"SELECT m.id, m.content FROM memories m "
+                    f"LEFT JOIN memory_embeddings e ON m.id = e.memory_id "
+                    f"WHERE e.memory_id IS NULL "
+                    f"ORDER BY m.id LIMIT {ph}",
+                    (batch_size,),
+                )
+
+                if not rows:
+                    return 0
+
+                texts = [row["content"] for row in rows]
+                ids = [row["id"] for row in rows]
+                vectors = embedder.embed_batch(texts)
+                now = datetime.utcnow().isoformat() + "Z"
+
+                for mid, vec in zip(ids, vectors):
+                    if vec is not None:
+                        vec_str = "[" + ",".join(str(x) for x in vec) + "]"
+                        self._exec(
+                            f"INSERT INTO memory_embeddings "
+                            f"(memory_id, embedding, model, created_at) "
+                            f"VALUES ({ph}, {ph}::vector, {ph}, {ph}) "
+                            f"ON CONFLICT (memory_id) DO UPDATE SET "
+                            f"embedding = EXCLUDED.embedding, model = EXCLUDED.model, "
+                            f"created_at = EXCLUDED.created_at",
+                            (mid, vec_str, embedder.model, now),
+                        )
+                        count += 1
+
+            logger.info(f"Backfilled {count}/{len(rows)} embeddings")
+            return count
 
         embedder = self._get_embedder()
         if embedder is None:
@@ -768,8 +879,54 @@ class MemoryStore:
             return []
 
         if self.storage_backend is not None:
-            logger.debug("semantic_recall: skipped (embeddings are SQLite-only)")
-            return []
+            if not self.storage_backend.supports_vector:
+                logger.debug("Semantic search not available with this storage backend")
+                return []
+            if not self._embedder:
+                return []
+            query_vec = self._embedder.embed(query)
+            if query_vec is None:
+                return []
+            vec_str = "[" + ",".join(str(x) for x in query_vec) + "]"
+
+            max_results = max(1, min(max_results, 50))
+
+            conditions = ["1=1"]
+            params_list: list = []
+            if tag_filter:
+                conditions.append(f"m.tags LIKE {ph}")
+                params_list.append(f"%{tag_filter}%")
+            if source_filter:
+                conditions.append(f"m.source = {ph}")
+                params_list.append(source_filter)
+            where = " AND ".join(conditions)
+
+            rows = self._query_all(
+                f"SELECT m.id, m.content, m.source, m.tags, m.created_at, m.updated_at, "
+                f"m.access_count, 1 - (e.embedding <=> {ph}::vector) as score "
+                f"FROM memories m JOIN memory_embeddings e ON m.id = e.memory_id "
+                f"WHERE {where} AND 1 - (e.embedding <=> {ph}::vector) >= {ph} "
+                f"ORDER BY e.embedding <=> {ph}::vector LIMIT {ph}",
+                tuple([vec_str] + params_list + [vec_str, min_similarity, vec_str, max_results]),
+            )
+            for r in rows:
+                self._exec(
+                    f"UPDATE memories SET access_count = access_count + 1 WHERE id = {ph}",
+                    (r["id"],),
+                )
+            results = []
+            for row in rows:
+                results.append(MemoryEntry(
+                    memory_id=row["id"],
+                    content=row["content"],
+                    source=row["source"],
+                    tags=row["tags"],
+                    created_at=row["created_at"],
+                    updated_at=row["updated_at"],
+                    access_count=row["access_count"],
+                    score=row["score"],
+                ))
+            return results
 
         embedder = self._get_embedder()
         if embedder is None:

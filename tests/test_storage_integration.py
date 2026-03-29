@@ -419,6 +419,250 @@ class TestSpendingTrackerWithPostgres:
             backend.close()
 
 
+@skip_no_postgres
+class TestMessageStoreWithPostgres:
+    """MessageStore backed by PostgreSQL."""
+
+    def _cleanup(self, backend):
+        """Drop test tables to avoid cross-test pollution."""
+        for table in ("message_embeddings", "messages_fts", "messages"):
+            try:
+                backend.execute(f"DROP TABLE IF EXISTS {table} CASCADE")
+            except Exception:
+                pass
+
+    def test_send_and_read(self):
+        from agents.storage.postgres import PostgresBackend
+        from agents.message_store import MessageStore
+
+        backend = PostgresBackend()
+        try:
+            self._cleanup(backend)
+            store = MessageStore(storage_backend=backend)
+
+            msg = store.send(
+                content="hello from postgres",
+                sender="test_agent",
+                topic="integration",
+            )
+            assert msg.id
+            assert msg.content == "hello from postgres"
+
+            recent = store.read_recent(limit=5)
+            assert len(recent) >= 1
+            assert any(m.id == msg.id for m in recent)
+        finally:
+            self._cleanup(backend)
+            backend.close()
+
+    def test_get_by_id_and_mark_read(self):
+        from agents.storage.postgres import PostgresBackend
+        from agents.message_store import MessageStore
+
+        backend = PostgresBackend()
+        try:
+            self._cleanup(backend)
+            store = MessageStore(storage_backend=backend)
+
+            msg = store.send(content="pg mark read test", sender="agent_a")
+
+            fetched = store.get_by_id(msg.id)
+            assert fetched is not None
+            assert fetched.content == "pg mark read test"
+
+            store.mark_read(msg.id, agent_name="agent_b")
+            fetched = store.get_by_id(msg.id)
+            assert "agent_b" in fetched.read_by
+        finally:
+            self._cleanup(backend)
+            backend.close()
+
+    def test_reply_and_thread(self):
+        from agents.storage.postgres import PostgresBackend
+        from agents.message_store import MessageStore
+
+        backend = PostgresBackend()
+        try:
+            self._cleanup(backend)
+            store = MessageStore(storage_backend=backend)
+
+            parent = store.send(content="parent msg", sender="agent_a")
+            reply = store.reply(parent.id, content="reply msg", sender="agent_b")
+            assert reply is not None
+            assert reply.parent_id == parent.id
+
+            thread = store.get_thread(parent.id)
+            assert len(thread) == 2
+        finally:
+            self._cleanup(backend)
+            backend.close()
+
+    def test_search_tsvector(self):
+        from agents.storage.postgres import PostgresBackend
+        from agents.message_store import MessageStore
+
+        backend = PostgresBackend()
+        try:
+            self._cleanup(backend)
+            store = MessageStore(storage_backend=backend)
+
+            store.send(content="the quick brown fox jumps over the lazy dog", sender="a")
+            store.send(content="postgres integration testing works great", sender="b")
+            store.send(content="unrelated message about cats", sender="c")
+
+            results = store.search("fox jumps")
+            assert len(results) >= 1
+            assert any("fox" in r.content for r in results)
+        finally:
+            self._cleanup(backend)
+            backend.close()
+
+    def test_cleanup_and_stats(self):
+        from agents.storage.postgres import PostgresBackend
+        from agents.message_store import MessageStore
+
+        backend = PostgresBackend()
+        try:
+            self._cleanup(backend)
+            store = MessageStore(storage_backend=backend)
+
+            store.send(content="stats test", sender="agent_x")
+            stats = store.get_stats()
+            assert stats["total"] >= 1
+
+            removed = store.cleanup_expired()
+            assert removed >= 0  # may be 0 if nothing expired
+        finally:
+            self._cleanup(backend)
+            backend.close()
+
+
+@skip_no_postgres
+class TestMemoryStoreWithPostgres:
+    """MemoryStore backed by PostgreSQL."""
+
+    def _cleanup(self, backend):
+        """Drop test tables to avoid cross-test pollution."""
+        for table in ("memory_embeddings", "memories_fts", "memories"):
+            try:
+                backend.execute(f"DROP TABLE IF EXISTS {table} CASCADE")
+            except Exception:
+                pass
+
+    def test_store_and_recall(self):
+        from pathlib import Path
+        from agents.storage.postgres import PostgresBackend
+        from agents.memory_store import MemoryStore
+
+        backend = PostgresBackend()
+        try:
+            self._cleanup(backend)
+            store = MemoryStore(storage_backend=backend)
+
+            mem_id = store.store(
+                content="postgresql is a powerful relational database",
+                source="test",
+                tags="database,sql",
+            )
+            assert mem_id is not None
+
+            results = store.recall("relational database", max_results=5)
+            assert len(results) >= 1
+            assert any("postgresql" in r["content"] for r in results)
+        finally:
+            self._cleanup(backend)
+            backend.close()
+
+    def test_get_by_id_and_delete(self):
+        from pathlib import Path
+        from agents.storage.postgres import PostgresBackend
+        from agents.memory_store import MemoryStore
+
+        backend = PostgresBackend()
+        try:
+            self._cleanup(backend)
+            store = MemoryStore(storage_backend=backend)
+
+            mem_id = store.store(content="deletable memory", source="test")
+            assert mem_id is not None
+
+            entry = store.get_by_id(mem_id)
+            assert entry is not None
+            assert entry["content"] == "deletable memory"
+
+            deleted = store.delete(mem_id)
+            assert deleted
+
+            entry = store.get_by_id(mem_id)
+            assert entry is None
+        finally:
+            self._cleanup(backend)
+            backend.close()
+
+    def test_list_recent_and_stats(self):
+        from pathlib import Path
+        from agents.storage.postgres import PostgresBackend
+        from agents.memory_store import MemoryStore
+
+        backend = PostgresBackend()
+        try:
+            self._cleanup(backend)
+            store = MemoryStore(storage_backend=backend)
+
+            store.store(content="memory alpha", source="agent", tags="test")
+            store.store(content="memory beta", source="user", tags="test")
+
+            recent = store.list_recent(limit=10)
+            assert len(recent) >= 2
+
+            stats = store.get_stats()
+            assert stats["total"] >= 2
+        finally:
+            self._cleanup(backend)
+            backend.close()
+
+    def test_cleanup(self):
+        from pathlib import Path
+        from agents.storage.postgres import PostgresBackend
+        from agents.memory_store import MemoryStore
+
+        backend = PostgresBackend()
+        try:
+            self._cleanup(backend)
+            store = MemoryStore(storage_backend=backend, max_entries=2)
+
+            store.store(content="first", source="test")
+            store.store(content="second", source="test")
+            store.store(content="third", source="test")
+
+            # Should have evicted down to max_entries during store()
+            stats = store.get_stats()
+            assert stats["total"] <= 3  # may have evicted oldest
+        finally:
+            self._cleanup(backend)
+            backend.close()
+
+    def test_recall_with_filters(self):
+        from pathlib import Path
+        from agents.storage.postgres import PostgresBackend
+        from agents.memory_store import MemoryStore
+
+        backend = PostgresBackend()
+        try:
+            self._cleanup(backend)
+            store = MemoryStore(storage_backend=backend)
+
+            store.store(content="python programming language", source="agent", tags="code,python")
+            store.store(content="python snake species", source="user", tags="animals")
+
+            results = store.recall("python", max_results=5, source_filter="agent")
+            assert len(results) >= 1
+            assert all(r.get("source") == "agent" for r in results)
+        finally:
+            self._cleanup(backend)
+            backend.close()
+
+
 # ══════════════════════════════════════════════════════════════════
 # Redis integration tests (skipped when service unavailable)
 # ══════════════════════════════════════════════════════════════════

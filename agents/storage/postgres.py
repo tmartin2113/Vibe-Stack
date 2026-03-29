@@ -11,6 +11,7 @@ import json
 import logging
 import os
 import threading
+from contextlib import contextmanager
 from typing import Any, List, Optional, Sequence, Tuple
 
 try:
@@ -73,6 +74,7 @@ class PostgresBackend(StorageBackend):
             maxconn=max_connections,
             **params,
         )
+        self._max_connections = max_connections
         self._local = threading.local()
 
         logger.info(
@@ -82,11 +84,37 @@ class PostgresBackend(StorageBackend):
 
     def _getconn(self):
         """Get a connection from the pool."""
-        return self._pool.getconn()
+        conn = self._pool.getconn()
+        # Pool monitoring: warn when utilization > 80%
+        used = len(self._pool._used)
+        total = self._max_connections
+        if total > 0 and used / total > 0.8:
+            logger.warning(
+                "PostgresBackend pool utilization high: %d/%d connections in use (%.0f%%)",
+                used, total, used / total * 100,
+            )
+        return conn
 
     def _putconn(self, conn):
         """Return a connection to the pool."""
         self._pool.putconn(conn)
+
+    @contextmanager
+    def transaction(self):
+        """Context manager for explicit transactions.
+
+        Gets a connection from the pool, yields a transactional backend view,
+        and commits on success / rolls back on exception.
+        """
+        conn = self._getconn()
+        try:
+            yield _TransactionalBackend(conn, self._psycopg2)
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            self._putconn(conn)
 
     # ── StorageBackend interface ──
 
@@ -204,3 +232,45 @@ class PostgresBackend(StorageBackend):
 
     def __repr__(self) -> str:
         return "PostgresBackend()"
+
+
+class _TransactionalBackend:
+    """Lightweight backend view that reuses a single connection.
+
+    Used inside ``PostgresBackend.transaction()`` so that every SQL
+    statement within the context manager runs on the same connection
+    (and therefore the same database transaction) without checking
+    connections in and out of the pool.
+    """
+
+    def __init__(self, conn, _psycopg2_module):
+        self._conn = conn
+        self._psycopg2 = _psycopg2_module
+
+    def execute(self, sql: str, params: Sequence = ()) -> None:
+        with self._conn.cursor() as cur:
+            cur.execute(sql, params)
+
+    def fetchone(self, sql: str, params: Sequence = ()) -> Optional[Tuple]:
+        with self._conn.cursor() as cur:
+            cur.execute(sql, params)
+            return cur.fetchone()
+
+    def fetchall(self, sql: str, params: Sequence = ()) -> List[Tuple]:
+        with self._conn.cursor() as cur:
+            cur.execute(sql, params)
+            return cur.fetchall()
+
+    def fetchone_dict(self, sql: str, params: Sequence = ()):
+        with self._conn.cursor(cursor_factory=self._psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(sql, params)
+            return cur.fetchone()
+
+    def fetchall_dict(self, sql: str, params: Sequence = ()) -> list:
+        with self._conn.cursor(cursor_factory=self._psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(sql, params)
+            return cur.fetchall()
+
+    def fetchval(self, sql: str, params: Sequence = ()) -> Any:
+        row = self.fetchone(sql, params)
+        return row[0] if row else None
