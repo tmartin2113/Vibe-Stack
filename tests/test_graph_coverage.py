@@ -982,7 +982,7 @@ class TestPrintWorkflowSummary:
 class TestStreamWorkflow:
     """Tests for stream_workflow."""
 
-    @patch("agents.graph.run_workflow")
+    @patch("agents.graph_runners.run_workflow")
     def test_stream_workflow_no_rich_fallback(self, mock_run):
         """Lines 1059-1061: falls back to run_workflow when rich not available."""
         mock_run.return_value = create_initial_state("test")
@@ -1291,7 +1291,7 @@ class TestWrapperFunctionBodies:
         route_to_specialist is imported at module level (graph.py line 56),
         so we patch it on the graph module namespace.
         """
-        with patch("agents.graph.route_to_specialist") as mock_route:
+        with patch("agents.graph_nodes.route_to_specialist") as mock_route:
             mock_route.return_value = create_initial_state("test")
             app = self._build_graph()
             router_fn = app._nodes["router"]
@@ -1365,7 +1365,7 @@ class TestWrapperFunctionBodies:
         execute_parallel_subtasks is imported at module level (line 61),
         so we patch it on the graph module namespace.
         """
-        with patch("agents.graph.execute_parallel_subtasks") as mock_exec:
+        with patch("agents.graph_nodes.execute_parallel_subtasks") as mock_exec:
             mock_exec.return_value = create_initial_state("test")
             app = self._build_graph()
             par_fn = app._nodes["parallel_subtasks"]
@@ -1379,7 +1379,7 @@ class TestWrapperFunctionBodies:
         aggregate_outputs is imported at module level (line 57),
         so we patch it on the graph module namespace.
         """
-        with patch("agents.graph.aggregate_outputs") as mock_agg:
+        with patch("agents.graph_nodes.aggregate_outputs") as mock_agg:
             mock_agg.return_value = create_initial_state("test")
             app = self._build_graph()
             agg_fn = app._nodes["aggregator"]

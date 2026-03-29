@@ -737,9 +737,9 @@ class TestGraphEdgeWiring:
         assert '"parallel_subtasks"' in source
 
     def test_import_exists(self):
-        """execute_parallel_subtasks is imported in graph.py."""
-        from agents import graph as graph_module
-        source = open(graph_module.__file__).read()
+        """execute_parallel_subtasks is imported in graph_nodes.py (used by graph.py)."""
+        from agents import graph_nodes as graph_nodes_module
+        source = open(graph_nodes_module.__file__).read()
         assert "from .parallel_subtasks import execute_parallel_subtasks" in source
 
 
