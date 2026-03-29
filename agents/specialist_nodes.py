@@ -445,7 +445,7 @@ If you're satisfied with the results, provide your final output without more too
 
             except Exception as e:
                 # If tool calling fails, log error and continue with current output
-                logger.error(f"Tool calling error in iteration {tool_iteration}: {e}")
+                logger.error(f"Tool calling error in iteration {tool_iteration}: {e}", exc_info=True)
                 tool_results_history.append({
                     "tool": "error",
                     "params": {},
@@ -786,7 +786,7 @@ If satisfied, provide final output without more tool calls."""
                     tool_iteration += 1
 
                 except Exception as e:
-                    logger.error(f"Tool calling error in sub-task {current_index}, iteration {tool_iteration}: {e}")
+                    logger.error(f"Tool calling error in sub-task {current_index}, iteration {tool_iteration}: {e}", exc_info=True)
                     tool_results_history.append({
                         "tool": "error",
                         "params": {},

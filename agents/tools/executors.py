@@ -40,6 +40,11 @@ class PythonExecutor(Tool):
     RLIMIT_FSIZE_BYTES = int(os.getenv("VIBE_EXEC_FSIZE_LIMIT_MB", "10")) * 1024 * 1024    # 10 MB max file creation size
     RLIMIT_NPROC = int(os.getenv("VIBE_EXEC_NPROC_LIMIT", "32"))             # Max child processes (prevent fork bomb)
 
+    if RLIMIT_CPU_SECONDS < 1:
+        raise ValueError(f"VIBE_EXEC_CPU_LIMIT_SECONDS must be >= 1, got {RLIMIT_CPU_SECONDS}")
+    if RLIMIT_NPROC < 1:
+        raise ValueError(f"VIBE_EXEC_NPROC_LIMIT must be >= 1, got {RLIMIT_NPROC}")
+
     # Minimal environment for child process
     _ALLOWED_ENV_KEYS = {"PATH", "HOME", "LANG", "TMPDIR", "LC_ALL", "LC_CTYPE"}
 

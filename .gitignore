@@ -71,5 +71,3 @@ training/data/
 # llama.cpp
 llama.cpp/
 
-# GitHub workflows (requires workflow scope to push)
-.github/workflows/

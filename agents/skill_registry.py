@@ -91,6 +91,11 @@ class SkillRegistry(
     MIN_USAGE_FOR_PROMOTION = int(os.getenv("VIBE_SKILL_MIN_USAGE_FOR_PROMOTION", "3"))
     MIN_AVG_SCORE_FOR_PROMOTION = int(os.getenv("VIBE_SKILL_MIN_AVG_SCORE_FOR_PROMOTION", "85"))
 
+    if MIN_USAGE_FOR_PROMOTION < 1:
+        raise ValueError(f"VIBE_SKILL_MIN_USAGE_FOR_PROMOTION must be >= 1, got {MIN_USAGE_FOR_PROMOTION}")
+    if MIN_AVG_SCORE_FOR_PROMOTION < 0 or MIN_AVG_SCORE_FOR_PROMOTION > 100:
+        raise ValueError(f"VIBE_SKILL_MIN_AVG_SCORE_FOR_PROMOTION must be 0-100, got {MIN_AVG_SCORE_FOR_PROMOTION}")
+
     # Confidence thresholds for tier selection
     # These are tuned for keyword-based matching; raise when semantic
     # (embedding) matching is implemented.

@@ -40,6 +40,7 @@ from typing import Optional, Any
 import logging
 
 from .cancellation import CancellationToken
+from .config import SystemConfig
 from .graph_engine import (
     Workflow,
     CompiledWorkflow,
@@ -120,7 +121,7 @@ def sub_output_and_more_check(state: AgentState) -> str:
         return "aggregate"
 
 
-def create_agent_graph(adapter_registry: AdapterRegistry, tool_registry: Optional[ToolRegistry] = None, config: Any = None, base_model: Any = None, cancellation_token: Optional[CancellationToken] = None, sandbox_pool: Any = None):
+def create_agent_graph(adapter_registry: AdapterRegistry, tool_registry: Optional[ToolRegistry] = None, config: Optional[SystemConfig] = None, base_model: Any = None, cancellation_token: Optional[CancellationToken] = None, sandbox_pool: Any = None):
     """
     Create the workflow with multi-specialist architecture.
 
