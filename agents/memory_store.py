@@ -208,6 +208,49 @@ class MemoryStore:
             return self.storage_backend.placeholder
         return "?"
 
+    # ── Data-access helpers (route through storage_backend or SQLite) ─
+
+    def _exec(self, sql: str, params: tuple = ()) -> None:
+        """Execute a write statement through the appropriate backend."""
+        if self.storage_backend is not None:
+            self.storage_backend.execute(sql, params)
+            return
+        conn = sqlite3.connect(self._db_path, timeout=15)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA foreign_keys=ON")
+        try:
+            conn.execute(sql, params)
+            conn.commit()
+        finally:
+            conn.close()
+
+    def _query_one(self, sql: str, params: tuple = ()):
+        """Fetch one row as a dict-like object, or None."""
+        if self.storage_backend is not None:
+            return self.storage_backend.fetchone_dict(sql, params)
+        conn = sqlite3.connect(self._db_path, timeout=15)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA foreign_keys=ON")
+        try:
+            return conn.execute(sql, params).fetchone()
+        finally:
+            conn.close()
+
+    def _query_all(self, sql: str, params: tuple = ()) -> list:
+        """Fetch all rows as dict-like objects."""
+        if self.storage_backend is not None:
+            return self.storage_backend.fetchall_dict(sql, params)
+        conn = sqlite3.connect(self._db_path, timeout=15)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA foreign_keys=ON")
+        try:
+            return conn.execute(sql, params).fetchall()
+        finally:
+            conn.close()
+
     def _init_db(self):
         """Create tables, FTS5 virtual table, and embeddings table."""
         if self.storage_backend is not None:
@@ -288,38 +331,63 @@ class MemoryStore:
         tags = tags.strip() if tags else ""
 
         now = datetime.utcnow().isoformat() + "Z"
+        ph = self._ph
 
         with self._lock:
-            with self._connect() as conn:
-                cursor = conn.execute(
-                    """INSERT INTO memories (content, source, tags, created_at, updated_at)
-                       VALUES (?, ?, ?, ?, ?)""",
+            if self.storage_backend is not None:
+                # Use RETURNING id for backends that support it (Postgres),
+                # fall back to fetchone for SQLiteBackend.
+                row = self.storage_backend.fetchone(
+                    f"INSERT INTO memories (content, source, tags, created_at, updated_at) "
+                    f"VALUES ({ph}, {ph}, {ph}, {ph}, {ph}) RETURNING id",
                     (content, source, tags, now, now),
                 )
-                memory_id = cursor.lastrowid
-
-                # Generate and store embedding (best-effort)
-                embedder = self._get_embedder()
-                if embedder is not None:
-                    vec = embedder.embed(content)
-                    if vec is not None:
-                        conn.execute(
-                            """INSERT OR REPLACE INTO memory_embeddings
-                               (memory_id, embedding, model, created_at)
-                               VALUES (?, ?, ?, ?)""",
-                            (memory_id, json.dumps(vec), embedder.model, now),
-                        )
+                memory_id = row[0] if row else None
 
                 # FIFO eviction if over capacity
-                count = conn.execute("SELECT COUNT(*) FROM memories").fetchone()[0]
+                count_row = self._query_one(
+                    "SELECT COUNT(*) as total FROM memories"
+                )
+                count = count_row["total"] if count_row else 0
                 if count > self._max_entries:
                     excess = count - self._max_entries
-                    conn.execute(
-                        """DELETE FROM memories WHERE id IN (
-                               SELECT id FROM memories ORDER BY updated_at ASC LIMIT ?
-                           )""",
+                    self._exec(
+                        f"DELETE FROM memories WHERE id IN ("
+                        f"SELECT id FROM memories ORDER BY updated_at ASC LIMIT {ph}"
+                        f")",
                         (excess,),
                     )
+            else:
+                with self._connect() as conn:
+                    cursor = conn.execute(
+                        f"INSERT INTO memories (content, source, tags, created_at, updated_at) "
+                        f"VALUES ({ph}, {ph}, {ph}, {ph}, {ph})",
+                        (content, source, tags, now, now),
+                    )
+                    memory_id = cursor.lastrowid
+
+                    # Generate and store embedding (best-effort)
+                    embedder = self._get_embedder()
+                    if embedder is not None:
+                        vec = embedder.embed(content)
+                        if vec is not None:
+                            conn.execute(
+                                f"INSERT OR REPLACE INTO memory_embeddings "
+                                f"(memory_id, embedding, model, created_at) "
+                                f"VALUES ({ph}, {ph}, {ph}, {ph})",
+                                (memory_id, json.dumps(vec), embedder.model, now),
+                            )
+
+                    # FIFO eviction if over capacity
+                    count = conn.execute("SELECT COUNT(*) FROM memories").fetchone()[0]
+                    if count > self._max_entries:
+                        excess = count - self._max_entries
+                        conn.execute(
+                            f"DELETE FROM memories WHERE id IN ("
+                            f"SELECT id FROM memories ORDER BY updated_at ASC LIMIT {ph}"
+                            f")",
+                            (excess,),
+                        )
 
         logger.debug(f"Stored memory #{memory_id}: {content[:80]}...")
         return memory_id
@@ -349,7 +417,59 @@ class MemoryStore:
             return []
 
         max_results = max(1, min(max_results, 50))
+        ph = self._ph
 
+        if self.storage_backend is not None:
+            # FTS5 not available; fall back to LIKE
+            like_param = f"%{query.strip()}%"
+            conditions = [f"content LIKE {ph}"]
+            params: list = [like_param]
+
+            if tag_filter:
+                conditions.append(f"LOWER(tags) LIKE {ph}")
+                params.append(f"%{tag_filter.lower()}%")
+
+            if source_filter:
+                conditions.append(f"source LIKE {ph}")
+                params.append(f"{source_filter}%")
+
+            where_clause = " AND ".join(conditions)
+
+            rows = self._query_all(
+                f"SELECT id, content, source, tags, created_at, updated_at, access_count "
+                f"FROM memories WHERE {where_clause} "
+                f"ORDER BY updated_at DESC LIMIT {ph}",
+                tuple(params + [max_results]),
+            )
+
+            results = []
+            memory_ids = []
+            for row in rows:
+                results.append(MemoryEntry(
+                    memory_id=row["id"],
+                    content=row["content"],
+                    source=row["source"],
+                    tags=row["tags"],
+                    created_at=row["created_at"],
+                    updated_at=row["updated_at"],
+                    access_count=row["access_count"],
+                    score=0.0,
+                ))
+                memory_ids.append(row["id"])
+
+            # Bump access counts for returned results
+            if memory_ids:
+                now = datetime.utcnow().isoformat() + "Z"
+                placeholders = ",".join(ph for _ in memory_ids)
+                self._exec(
+                    f"UPDATE memories SET access_count = access_count + 1, "
+                    f"updated_at = {ph} WHERE id IN ({placeholders})",
+                    tuple([now] + memory_ids),
+                )
+
+            return results
+
+        # SQLite path: use FTS5
         # Build FTS5 query: quote each token to avoid syntax errors
         tokens = query.strip().split()
         fts_query = " OR ".join(f'"{t}"' for t in tokens if t)
@@ -410,13 +530,13 @@ class MemoryStore:
 
     def get_by_id(self, memory_id: int) -> Optional[MemoryEntry]:
         """Retrieve a single memory by its ID."""
-        with self._connect() as conn:
-            row = conn.execute(
-                """SELECT id, content, source, tags, created_at,
-                          updated_at, access_count
-                   FROM memories WHERE id = ?""",
-                (memory_id,),
-            ).fetchone()
+        ph = self._ph
+        row = self._query_one(
+            f"SELECT id, content, source, tags, created_at, "
+            f"updated_at, access_count "
+            f"FROM memories WHERE id = {ph}",
+            (memory_id,),
+        )
         if row is None:
             return None
         return MemoryEntry(
@@ -431,53 +551,70 @@ class MemoryStore:
 
     def delete(self, memory_id: int) -> bool:
         """Delete a memory by its ID. Returns True if it existed."""
+        ph = self._ph
         with self._lock:
-            with self._connect() as conn:
-                cursor = conn.execute(
-                    "DELETE FROM memories WHERE id = ?", (memory_id,)
+            if self.storage_backend is not None:
+                # Check existence first, then delete
+                row = self._query_one(
+                    f"SELECT 1 FROM memories WHERE id = {ph}",
+                    (memory_id,),
                 )
-                return cursor.rowcount > 0
+                if row is None:
+                    return False
+                self._exec(
+                    f"DELETE FROM memories WHERE id = {ph}", (memory_id,)
+                )
+                return True
+            else:
+                with self._connect() as conn:
+                    cursor = conn.execute(
+                        f"DELETE FROM memories WHERE id = {ph}", (memory_id,)
+                    )
+                    return cursor.rowcount > 0
 
     def get_stats(self) -> Dict[str, Any]:
         """Return summary statistics about the memory store."""
-        with self._connect() as conn:
-            total = conn.execute("SELECT COUNT(*) FROM memories").fetchone()[0]
-            if total == 0:
-                return {"total": 0, "by_source": {}, "by_tag": {}}
+        ph = self._ph
 
-            # Count by source type
-            source_rows = conn.execute(
-                """SELECT
-                       CASE
-                           WHEN source LIKE 'url:%' THEN 'web'
-                           WHEN source LIKE 'file:%' THEN 'file'
-                           WHEN source LIKE 'tool:%' THEN 'tool'
-                           ELSE source
-                       END AS source_type,
-                       COUNT(*) AS cnt
-                   FROM memories GROUP BY source_type"""
-            ).fetchall()
-            by_source = {row["source_type"]: row["cnt"] for row in source_rows}
+        total_row = self._query_one("SELECT COUNT(*) as total FROM memories")
+        total = total_row["total"] if total_row else 0
+        if total == 0:
+            return {"total": 0, "by_source": {}, "by_tag": {}}
 
-            # Most common tags
-            tag_counts: Dict[str, int] = {}
-            tag_rows = conn.execute("SELECT tags FROM memories WHERE tags != ''").fetchall()
-            for row in tag_rows:
-                for tag in row["tags"].split():
-                    tag_counts[tag] = tag_counts.get(tag, 0) + 1
-            # Top 10 tags
-            top_tags = dict(sorted(tag_counts.items(), key=lambda x: -x[1])[:10])
+        # Count by source type
+        source_rows = self._query_all(
+            """SELECT
+                   CASE
+                       WHEN source LIKE 'url:%' THEN 'web'
+                       WHEN source LIKE 'file:%' THEN 'file'
+                       WHEN source LIKE 'tool:%' THEN 'tool'
+                       ELSE source
+                   END AS source_type,
+                   COUNT(*) AS cnt
+               FROM memories GROUP BY source_type"""
+        )
+        by_source = {row["source_type"]: row["cnt"] for row in source_rows}
 
-            # Most accessed
-            most_accessed = conn.execute(
-                "SELECT id, content, access_count FROM memories "
-                "ORDER BY access_count DESC LIMIT 5"
-            ).fetchall()
+        # Most common tags
+        tag_counts: Dict[str, int] = {}
+        tag_rows = self._query_all("SELECT tags FROM memories WHERE tags != ''")
+        for row in tag_rows:
+            for tag in row["tags"].split():
+                tag_counts[tag] = tag_counts.get(tag, 0) + 1
+        # Top 10 tags
+        top_tags = dict(sorted(tag_counts.items(), key=lambda x: -x[1])[:10])
 
-            # Embedding coverage
-            embedded = conn.execute(
-                "SELECT COUNT(*) FROM memory_embeddings"
-            ).fetchone()[0]
+        # Most accessed
+        most_accessed = self._query_all(
+            "SELECT id, content, access_count FROM memories "
+            "ORDER BY access_count DESC LIMIT 5"
+        )
+
+        # Embedding coverage
+        embedded_row = self._query_one(
+            "SELECT COUNT(*) as total FROM memory_embeddings"
+        )
+        embedded = embedded_row["total"] if embedded_row else 0
 
         return {
             "total": total,
@@ -492,14 +629,14 @@ class MemoryStore:
 
     def list_recent(self, limit: int = 10) -> List[MemoryEntry]:
         """Return the most recently updated memories."""
+        ph = self._ph
         limit = max(1, min(limit, 100))
-        with self._connect() as conn:
-            rows = conn.execute(
-                """SELECT id, content, source, tags, created_at,
-                          updated_at, access_count
-                   FROM memories ORDER BY updated_at DESC LIMIT ?""",
-                (limit,),
-            ).fetchall()
+        rows = self._query_all(
+            f"SELECT id, content, source, tags, created_at, "
+            f"updated_at, access_count "
+            f"FROM memories ORDER BY updated_at DESC LIMIT {ph}",
+            (limit,),
+        )
         return [
             MemoryEntry(
                 memory_id=row["id"],
@@ -523,20 +660,21 @@ class MemoryStore:
         Returns:
             Number of memories deleted.
         """
+        ph = self._ph
         keep = keep or self._max_entries
         with self._lock:
-            with self._connect() as conn:
-                count = conn.execute("SELECT COUNT(*) FROM memories").fetchone()[0]
-                if count <= keep:
-                    return 0
-                excess = count - keep
-                conn.execute(
-                    """DELETE FROM memories WHERE id IN (
-                           SELECT id FROM memories ORDER BY updated_at ASC LIMIT ?
-                       )""",
-                    (excess,),
-                )
-                return excess
+            count_row = self._query_one("SELECT COUNT(*) as total FROM memories")
+            count = count_row["total"] if count_row else 0
+            if count <= keep:
+                return 0
+            excess = count - keep
+            self._exec(
+                f"DELETE FROM memories WHERE id IN ("
+                f"SELECT id FROM memories ORDER BY updated_at ASC LIMIT {ph}"
+                f")",
+                (excess,),
+            )
+            return excess
 
     # ── Embeddings / Semantic Search ─────────────────────────────────
 
@@ -562,6 +700,10 @@ class MemoryStore:
         Returns:
             Number of embeddings generated.
         """
+        if self.storage_backend is not None:
+            logger.debug("backfill_embeddings: skipped (embeddings are SQLite-only)")
+            return 0
+
         embedder = self._get_embedder()
         if embedder is None:
             return 0
@@ -623,6 +765,10 @@ class MemoryStore:
             List of MemoryEntry objects sorted by similarity (best first).
         """
         if not query or not query.strip():
+            return []
+
+        if self.storage_backend is not None:
+            logger.debug("semantic_recall: skipped (embeddings are SQLite-only)")
             return []
 
         embedder = self._get_embedder()

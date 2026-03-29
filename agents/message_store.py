@@ -193,6 +193,51 @@ class MessageStore:
             return self.storage_backend.placeholder
         return "?"
 
+    # ------------------------------------------------------------------
+    # Data-access helpers (route through storage_backend or SQLite)
+    # ------------------------------------------------------------------
+
+    def _exec(self, sql: str, params: tuple = ()) -> None:
+        """Execute a write statement through the appropriate backend."""
+        if self.storage_backend is not None:
+            self.storage_backend.execute(sql, params)
+            return
+        conn = sqlite3.connect(self._db_path, timeout=15)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA foreign_keys=ON")
+        try:
+            conn.execute(sql, params)
+            conn.commit()
+        finally:
+            conn.close()
+
+    def _query_one(self, sql: str, params: tuple = ()):
+        """Fetch one row as a dict-like object, or None."""
+        if self.storage_backend is not None:
+            return self.storage_backend.fetchone_dict(sql, params)
+        conn = sqlite3.connect(self._db_path, timeout=15)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA foreign_keys=ON")
+        try:
+            return conn.execute(sql, params).fetchone()
+        finally:
+            conn.close()
+
+    def _query_all(self, sql: str, params: tuple = ()) -> list:
+        """Fetch all rows as dict-like objects."""
+        if self.storage_backend is not None:
+            return self.storage_backend.fetchall_dict(sql, params)
+        conn = sqlite3.connect(self._db_path, timeout=15)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA foreign_keys=ON")
+        try:
+            return conn.execute(sql, params).fetchall()
+        finally:
+            conn.close()
+
     def _init_db(self):
         if self.storage_backend is not None:
             self.storage_backend.execute_script(self._SCHEMA_DDL)
@@ -238,6 +283,7 @@ class MessageStore:
         ttl_seconds: int = DEFAULT_TTL_SECONDS,
     ) -> Message:
         """Post a new message. Returns the created Message."""
+        ph = self._ph
         msg = Message(
             sender=sender or _get_agent_name(),
             recipient=recipient,
@@ -256,36 +302,35 @@ class MessageStore:
             logger.debug("Metadata validation: %s", w)
 
         with self._lock:
-            with self._connect() as conn:
-                conn.execute(
-                    """
-                    INSERT INTO messages
-                        (id, sender, recipient, msg_type, topic, content,
-                         metadata_json, parent_id, issue_id,
-                         paperclip_comment_id, ttl_seconds, created_at,
-                         expires_at, read_by)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        msg.id,
-                        msg.sender,
-                        msg.recipient,
-                        msg.msg_type.value,
-                        msg.topic,
-                        msg.content,
-                        json.dumps(msg.metadata),
-                        msg.parent_id,
-                        msg.issue_id,
-                        msg.paperclip_comment_id,
-                        msg.ttl_seconds,
-                        msg.created_at,
-                        msg.expires_at,
-                        json.dumps(msg.read_by),
-                    ),
-                )
+            self._exec(
+                f"""
+                INSERT INTO messages
+                    (id, sender, recipient, msg_type, topic, content,
+                     metadata_json, parent_id, issue_id,
+                     paperclip_comment_id, ttl_seconds, created_at,
+                     expires_at, read_by)
+                VALUES ({ph}, {ph}, {ph}, {ph}, {ph}, {ph}, {ph}, {ph}, {ph}, {ph}, {ph}, {ph}, {ph}, {ph})
+                """,
+                (
+                    msg.id,
+                    msg.sender,
+                    msg.recipient,
+                    msg.msg_type.value,
+                    msg.topic,
+                    msg.content,
+                    json.dumps(msg.metadata),
+                    msg.parent_id,
+                    msg.issue_id,
+                    msg.paperclip_comment_id,
+                    msg.ttl_seconds,
+                    msg.created_at,
+                    msg.expires_at,
+                    json.dumps(msg.read_by),
+                ),
+            )
 
-                # FIFO eviction
-                self._evict_if_needed(conn)
+            # FIFO eviction
+            self._evict_if_needed()
 
             # Generate embedding (outside lock — network I/O)
             self._store_embedding(msg.id, msg.content)
@@ -305,12 +350,12 @@ class MessageStore:
         metadata: Optional[Dict[str, Any]] = None,
     ) -> Message:
         """Reply to an existing message. Inherits topic/issue from parent."""
-        with self._connect() as conn:
-            row = conn.execute(
-                "SELECT * FROM messages WHERE id = ?", (parent_id,)
-            ).fetchone()
-            if not row:
-                raise ValueError(f"Parent message {parent_id} not found")
+        ph = self._ph
+        row = self._query_one(
+            f"SELECT * FROM messages WHERE id = {ph}", (parent_id,)
+        )
+        if not row:
+            raise ValueError(f"Parent message {parent_id} not found")
 
         parent = self._row_to_message(row)
         # Find thread root
@@ -330,22 +375,22 @@ class MessageStore:
 
     def mark_read(self, message_id: str, agent_name: Optional[str] = None) -> None:
         """Mark a message as read by the given agent."""
+        ph = self._ph
         agent = agent_name or _get_agent_name()
         with self._lock:
-            with self._connect() as conn:
-                row = conn.execute(
-                    "SELECT read_by FROM messages WHERE id = ?",
-                    (message_id,),
-                ).fetchone()
-                if not row:
-                    return
-                read_by = json.loads(row["read_by"] or "[]")
-                if agent not in read_by:
-                    read_by.append(agent)
-                    conn.execute(
-                        "UPDATE messages SET read_by = ? WHERE id = ?",
-                        (json.dumps(read_by), message_id),
-                    )
+            row = self._query_one(
+                f"SELECT read_by FROM messages WHERE id = {ph}",
+                (message_id,),
+            )
+            if not row:
+                return
+            read_by = json.loads(row["read_by"] or "[]")
+            if agent not in read_by:
+                read_by.append(agent)
+                self._exec(
+                    f"UPDATE messages SET read_by = {ph} WHERE id = {ph}",
+                    (json.dumps(read_by), message_id),
+                )
 
     def mark_many_read(
         self, message_ids: List[str], agent_name: Optional[str] = None
@@ -358,42 +403,65 @@ class MessageStore:
         self, message_id: str, comment_id: str
     ) -> None:
         """Update the Paperclip comment ID after dual-write."""
+        ph = self._ph
         with self._lock:
-            with self._connect() as conn:
-                conn.execute(
-                    "UPDATE messages SET paperclip_comment_id = ? WHERE id = ?",
-                    (comment_id, message_id),
-                )
+            self._exec(
+                f"UPDATE messages SET paperclip_comment_id = {ph} WHERE id = {ph}",
+                (comment_id, message_id),
+            )
 
     def cleanup_expired(self) -> int:
         """Delete expired messages. Returns count deleted."""
+        ph = self._ph
         now = datetime.now(timezone.utc).isoformat()
         with self._lock:
-            with self._connect() as conn:
-                cursor = conn.execute(
-                    """
-                    DELETE FROM messages
-                    WHERE expires_at IS NOT NULL AND expires_at < ?
-                    """,
+            if self.storage_backend is not None:
+                # Backend path: SELECT COUNT first, then DELETE
+                row = self._query_one(
+                    f"SELECT COUNT(*) as cnt FROM messages "
+                    f"WHERE expires_at IS NOT NULL AND expires_at < {ph}",
                     (now,),
                 )
-                count = cursor.rowcount
+                count = row["cnt"] if row else 0
+                if count > 0:
+                    self._exec(
+                        f"DELETE FROM messages "
+                        f"WHERE expires_at IS NOT NULL AND expires_at < {ph}",
+                        (now,),
+                    )
+            else:
+                conn = sqlite3.connect(self._db_path, timeout=15)
+                conn.row_factory = sqlite3.Row
+                conn.execute("PRAGMA journal_mode=WAL")
+                conn.execute("PRAGMA foreign_keys=ON")
+                try:
+                    cursor = conn.execute(
+                        """
+                        DELETE FROM messages
+                        WHERE expires_at IS NOT NULL AND expires_at < ?
+                        """,
+                        (now,),
+                    )
+                    conn.commit()
+                    count = cursor.rowcount
+                finally:
+                    conn.close()
         if count > 0:
             logger.info(f"Cleaned up {count} expired messages")
         return count
 
-    def _evict_if_needed(self, conn: sqlite3.Connection) -> int:
+    def _evict_if_needed(self) -> int:
         """FIFO eviction when over MAX_MESSAGES. Must be called within lock."""
-        count = conn.execute("SELECT COUNT(*) as cnt FROM messages").fetchone()[
-            "cnt"
-        ]
+        ph = self._ph
+        row = self._query_one("SELECT COUNT(*) as cnt FROM messages")
+        count = row["cnt"]
         if count <= self.MAX_MESSAGES:
             return 0
         excess = count - self.MAX_MESSAGES
-        conn.execute(
-            """
+        self._exec(
+            f"""
             DELETE FROM messages WHERE id IN (
-                SELECT id FROM messages ORDER BY created_at ASC LIMIT ?
+                SELECT id FROM messages ORDER BY created_at ASC LIMIT {ph}
             )
             """,
             (excess,),
@@ -403,25 +471,28 @@ class MessageStore:
 
     def _store_embedding(self, message_id: str, content: str) -> None:
         """Generate and store embedding for a message. Best-effort."""
+        if self.storage_backend is not None:
+            logger.debug("Embedding storage not available with external storage backend")
+            return
         try:
             embedder = self._get_embedder()
             vec = embedder.embed(content)
             if vec is None:
                 return
-            with self._connect() as conn:
-                conn.execute(
-                    """
-                    INSERT OR REPLACE INTO message_embeddings
-                        (message_id, embedding, model, created_at)
-                    VALUES (?, ?, ?, ?)
-                    """,
-                    (
-                        message_id,
-                        json.dumps(vec),
-                        embedder.model,
-                        datetime.now(timezone.utc).isoformat(),
-                    ),
-                )
+            ph = self._ph
+            self._exec(
+                f"""
+                INSERT OR REPLACE INTO message_embeddings
+                    (message_id, embedding, model, created_at)
+                VALUES ({ph}, {ph}, {ph}, {ph})
+                """,
+                (
+                    message_id,
+                    json.dumps(vec),
+                    embedder.model,
+                    datetime.now(timezone.utc).isoformat(),
+                ),
+            )
         except Exception as e:
             logger.debug(f"Embedding storage failed for {message_id}: {e}")
 
@@ -430,39 +501,43 @@ class MessageStore:
 
         Returns count of newly embedded messages.
         """
+        if self.storage_backend is not None:
+            logger.debug("Embedding backfill not available with external storage backend")
+            return 0
+
         embedder = self._get_embedder()
         if not embedder.is_available():
             return 0
 
+        ph = self._ph
         count = 0
         with self._lock:
-            with self._connect() as conn:
-                rows = conn.execute(
-                    """SELECT m.id, m.content FROM messages m
-                       LEFT JOIN message_embeddings e ON m.id = e.message_id
-                       WHERE e.message_id IS NULL
-                       ORDER BY m.created_at
-                       LIMIT ?""",
-                    (batch_size,),
-                ).fetchall()
+            rows = self._query_all(
+                f"""SELECT m.id, m.content FROM messages m
+                   LEFT JOIN message_embeddings e ON m.id = e.message_id
+                   WHERE e.message_id IS NULL
+                   ORDER BY m.created_at
+                   LIMIT {ph}""",
+                (batch_size,),
+            )
 
-                if not rows:
-                    return 0
+            if not rows:
+                return 0
 
-                texts = [row["content"] for row in rows]
-                ids = [row["id"] for row in rows]
-                vectors = embedder.embed_batch(texts)
-                now = datetime.now(timezone.utc).isoformat()
+            texts = [row["content"] for row in rows]
+            ids = [row["id"] for row in rows]
+            vectors = embedder.embed_batch(texts)
+            now = datetime.now(timezone.utc).isoformat()
 
-                for mid, vec in zip(ids, vectors):
-                    if vec is not None:
-                        conn.execute(
-                            """INSERT OR REPLACE INTO message_embeddings
-                               (message_id, embedding, model, created_at)
-                               VALUES (?, ?, ?, ?)""",
-                            (mid, json.dumps(vec), embedder.model, now),
-                        )
-                        count += 1
+            for mid, vec in zip(ids, vectors):
+                if vec is not None:
+                    self._exec(
+                        f"""INSERT OR REPLACE INTO message_embeddings
+                           (message_id, embedding, model, created_at)
+                           VALUES ({ph}, {ph}, {ph}, {ph})""",
+                        (mid, json.dumps(vec), embedder.model, now),
+                    )
+                    count += 1
 
         if count:
             logger.info("Backfilled %d/%d message embeddings", count, len(rows))
@@ -479,43 +554,43 @@ class MessageStore:
         include_expired: bool = False,
     ) -> List[Message]:
         """Read recent messages with optional filters."""
+        ph = self._ph
         conditions = []
         params: List[Any] = []
 
         if not include_expired:
             now = datetime.now(timezone.utc).isoformat()
             conditions.append(
-                "(expires_at IS NULL OR expires_at >= ?)"
+                f"(expires_at IS NULL OR expires_at >= {ph})"
             )
             params.append(now)
 
         if recipient:
-            conditions.append("(recipient = ? OR recipient = '*')")
+            conditions.append(f"(recipient = {ph} OR recipient = '*')")
             params.append(recipient)
 
         if type_filter:
-            placeholders = ",".join("?" * len(type_filter))
+            placeholders = ",".join(ph for _ in type_filter)
             conditions.append(f"msg_type IN ({placeholders})")
             params.extend(t.value for t in type_filter)
 
         if topic:
-            conditions.append("topic = ?")
+            conditions.append(f"topic = {ph}")
             params.append(topic)
 
         where = " AND ".join(conditions) if conditions else "1=1"
         limit = max(1, min(limit, 500))
         params.append(limit)
 
-        with self._connect() as conn:
-            rows = conn.execute(
-                f"""
-                SELECT * FROM messages
-                WHERE {where}
-                ORDER BY created_at DESC
-                LIMIT ?
-                """,
-                params,
-            ).fetchall()
+        rows = self._query_all(
+            f"""
+            SELECT * FROM messages
+            WHERE {where}
+            ORDER BY created_at DESC
+            LIMIT {ph}
+            """,
+            tuple(params),
+        )
 
         return [self._row_to_message(r) for r in reversed(rows)]
 
@@ -525,54 +600,54 @@ class MessageStore:
         limit: int = 50,
     ) -> List[Message]:
         """Get messages not yet read by the given agent."""
+        ph = self._ph
         agent = agent_name or _get_agent_name()
         now = datetime.now(timezone.utc).isoformat()
 
-        with self._connect() as conn:
-            rows = conn.execute(
-                """
-                SELECT * FROM messages
-                WHERE (recipient = ? OR recipient = '*')
-                  AND (expires_at IS NULL OR expires_at >= ?)
-                  AND read_by NOT LIKE ?
-                ORDER BY created_at DESC
-                LIMIT ?
-                """,
-                (agent, now, f'%"{agent}"%', limit),
-            ).fetchall()
+        rows = self._query_all(
+            f"""
+            SELECT * FROM messages
+            WHERE (recipient = {ph} OR recipient = '*')
+              AND (expires_at IS NULL OR expires_at >= {ph})
+              AND read_by NOT LIKE {ph}
+            ORDER BY created_at DESC
+            LIMIT {ph}
+            """,
+            (agent, now, f'%"{agent}"%', limit),
+        )
 
         return [self._row_to_message(r) for r in reversed(rows)]
 
     def get_thread(self, message_id: str) -> List[Message]:
         """Get all messages in a thread (by root parent_id)."""
-        with self._connect() as conn:
-            # Find root: if message_id is a root, parent_id is NULL
-            row = conn.execute(
-                "SELECT parent_id FROM messages WHERE id = ?",
-                (message_id,),
-            ).fetchone()
-            if not row:
-                return []
+        ph = self._ph
+        # Find root: if message_id is a root, parent_id is NULL
+        row = self._query_one(
+            f"SELECT parent_id FROM messages WHERE id = {ph}",
+            (message_id,),
+        )
+        if not row:
+            return []
 
-            root_id = row["parent_id"] or message_id
+        root_id = row["parent_id"] or message_id
 
-            rows = conn.execute(
-                """
-                SELECT * FROM messages
-                WHERE id = ? OR parent_id = ?
-                ORDER BY created_at ASC
-                """,
-                (root_id, root_id),
-            ).fetchall()
+        rows = self._query_all(
+            f"""
+            SELECT * FROM messages
+            WHERE id = {ph} OR parent_id = {ph}
+            ORDER BY created_at ASC
+            """,
+            (root_id, root_id),
+        )
 
         return [self._row_to_message(r) for r in rows]
 
     def get_by_id(self, message_id: str) -> Optional[Message]:
         """Get a single message by ID."""
-        with self._connect() as conn:
-            row = conn.execute(
-                "SELECT * FROM messages WHERE id = ?", (message_id,)
-            ).fetchone()
+        ph = self._ph
+        row = self._query_one(
+            f"SELECT * FROM messages WHERE id = {ph}", (message_id,)
+        )
         if not row:
             return None
         return self._row_to_message(row)
@@ -582,6 +657,10 @@ class MessageStore:
     def search(self, query: str, max_results: int = 20) -> List[Message]:
         """Full-text search using FTS5 BM25 ranking."""
         if not query.strip():
+            return []
+
+        if self.storage_backend is not None:
+            logger.debug("FTS search not available with external storage backend")
             return []
 
         # Escape FTS5 special characters
@@ -621,6 +700,10 @@ class MessageStore:
         self, query: str, max_results: int = 10
     ) -> List[Message]:
         """Semantic search using cosine similarity on embeddings."""
+        if self.storage_backend is not None:
+            logger.debug("Semantic search not available with external storage backend")
+            return []
+
         embedder = self._get_embedder()
         query_vec = embedder.embed(query)
         if query_vec is None:
@@ -743,25 +826,30 @@ class MessageStore:
 
     def get_stats(self) -> Dict[str, Any]:
         """Return statistics about the message store."""
-        with self._connect() as conn:
-            total = conn.execute(
-                "SELECT COUNT(*) as cnt FROM messages"
-            ).fetchone()["cnt"]
-            by_type = conn.execute(
-                """
-                SELECT msg_type, COUNT(*) as cnt
-                FROM messages GROUP BY msg_type
-                """
-            ).fetchall()
-            threads = conn.execute(
-                """
-                SELECT COUNT(DISTINCT COALESCE(parent_id, id)) as cnt
-                FROM messages
-                """
-            ).fetchone()["cnt"]
-            embedding_count = conn.execute(
-                "SELECT COUNT(*) as cnt FROM message_embeddings"
-            ).fetchone()["cnt"]
+        total_row = self._query_one(
+            "SELECT COUNT(*) as cnt FROM messages"
+        )
+        total = total_row["cnt"]
+
+        by_type = self._query_all(
+            """
+            SELECT msg_type, COUNT(*) as cnt
+            FROM messages GROUP BY msg_type
+            """
+        )
+
+        threads_row = self._query_one(
+            """
+            SELECT COUNT(DISTINCT COALESCE(parent_id, id)) as cnt
+            FROM messages
+            """
+        )
+        threads = threads_row["cnt"]
+
+        embedding_count_row = self._query_one(
+            "SELECT COUNT(*) as cnt FROM message_embeddings"
+        )
+        embedding_count = embedding_count_row["cnt"]
 
         return {
             "total_messages": total,

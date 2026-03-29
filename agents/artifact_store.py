@@ -166,6 +166,42 @@ class ArtifactStore:
         return "?"
 
     # ------------------------------------------------------------------
+    # Data-access helpers (route through storage_backend or SQLite)
+    # ------------------------------------------------------------------
+
+    def _exec(self, sql: str, params: tuple = ()) -> None:
+        """Execute a write statement through the appropriate backend."""
+        if self.storage_backend is not None:
+            self.storage_backend.execute(sql, params)
+            return
+        conn = self._connect()
+        try:
+            conn.execute(sql, params)
+            conn.commit()
+        finally:
+            conn.close()
+
+    def _query_one(self, sql: str, params: tuple = ()):
+        """Fetch one row as a dict-like object, or None."""
+        if self.storage_backend is not None:
+            return self.storage_backend.fetchone_dict(sql, params)
+        conn = self._connect()
+        try:
+            return conn.execute(sql, params).fetchone()
+        finally:
+            conn.close()
+
+    def _query_all(self, sql: str, params: tuple = ()) -> list:
+        """Fetch all rows as dict-like objects."""
+        if self.storage_backend is not None:
+            return self.storage_backend.fetchall_dict(sql, params)
+        conn = self._connect()
+        try:
+            return conn.execute(sql, params).fetchall()
+        finally:
+            conn.close()
+
+    # ------------------------------------------------------------------
     # Cache key computation
     # ------------------------------------------------------------------
 
@@ -219,16 +255,12 @@ class ArtifactStore:
         Returns:
             CacheEntry on hit, None on miss.
         """
+        ph = self._ph
         try:
-            conn = self._connect()
-        except Exception as e:
-            logger.warning(f"Cache lookup failed (connection): {e}")
-            return None
-        try:
-            row = conn.execute(
-                "SELECT * FROM artifacts WHERE cache_key = ?",
+            row = self._query_one(
+                f"SELECT * FROM artifacts WHERE cache_key = {ph}",
                 (cache_key,),
-            ).fetchone()
+            )
 
             if row is None:
                 return None
@@ -239,23 +271,21 @@ class ArtifactStore:
             ttl = row["ttl_seconds"]
             if ttl > 0 and datetime.utcnow() - created > timedelta(seconds=ttl):
                 # Expired — delete and return miss
-                conn.execute(
-                    "DELETE FROM artifacts WHERE cache_key = ?",
+                self._exec(
+                    f"DELETE FROM artifacts WHERE cache_key = {ph}",
                     (cache_key,),
                 )
-                conn.commit()
                 logger.debug(f"Cache entry expired: {cache_key[:12]}...")
                 return None
 
             # Update access metadata
             now = datetime.utcnow().isoformat()
             new_count = row["access_count"] + 1
-            conn.execute(
-                "UPDATE artifacts SET last_accessed_at = ?, access_count = ? "
-                "WHERE cache_key = ?",
+            self._exec(
+                f"UPDATE artifacts SET last_accessed_at = {ph}, access_count = {ph} "
+                f"WHERE cache_key = {ph}",
                 (now, new_count, cache_key),
             )
-            conn.commit()
 
             return CacheEntry(
                 cache_key=row["cache_key"],
@@ -277,8 +307,6 @@ class ArtifactStore:
         except Exception as e:
             logger.warning(f"Cache lookup failed: {e}")
             return None
-        finally:
-            conn.close()
 
     # ------------------------------------------------------------------
     # Store (write path)
@@ -334,20 +362,16 @@ class ArtifactStore:
 
         ttl = ttl_seconds if ttl_seconds is not None else self.default_ttl_seconds
         now = datetime.utcnow().isoformat()
+        ph = self._ph
 
         with self._lock:
             try:
-                conn = self._connect()
-            except Exception as e:
-                logger.warning(f"Cache store failed (connection): {e}")
-                return False
-            try:
                 # Check if a higher-scoring entry already exists
-                existing = conn.execute(
-                    "SELECT final_score, output_critic_score FROM artifacts "
-                    "WHERE cache_key = ?",
+                existing = self._query_one(
+                    f"SELECT final_score, output_critic_score FROM artifacts "
+                    f"WHERE cache_key = {ph}",
                     (cache_key,),
-                ).fetchone()
+                )
 
                 if existing:
                     existing_score = (
@@ -362,15 +386,15 @@ class ArtifactStore:
                         )
                         return False
 
-                conn.execute(
-                    """
+                self._exec(
+                    f"""
                     INSERT OR REPLACE INTO artifacts (
                         cache_key, specification, specialist_output,
                         output_critic_score, final_score, tool_calls_json,
                         task_type, specialist_adapter, skills_hash,
                         num_iterations, created_at, last_accessed_at,
                         access_count, ttl_seconds
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)
+                    ) VALUES ({ph}, {ph}, {ph}, {ph}, {ph}, {ph}, {ph}, {ph}, {ph}, {ph}, {ph}, {ph}, 0, {ph})
                     """,
                     (
                         cache_key,
@@ -388,10 +412,9 @@ class ArtifactStore:
                         ttl,
                     ),
                 )
-                conn.commit()
 
                 # LRU eviction if over capacity
-                self._evict_if_needed(conn)
+                self._evict_if_needed()
 
                 logger.info(
                     f"Cached artifact: {cache_key[:12]}... "
@@ -402,24 +425,20 @@ class ArtifactStore:
             except Exception as e:
                 logger.warning(f"Cache store failed: {e}")
                 return False
-            finally:
-                conn.close()
 
     # ------------------------------------------------------------------
     # Eviction
     # ------------------------------------------------------------------
 
-    def _evict_if_needed(self, conn: sqlite3.Connection) -> int:
+    def _evict_if_needed(self) -> int:
         """
         Evict least-recently-used entries if over max_entries.
-
-        Args:
-            conn: Active SQLite connection.
 
         Returns:
             Number of entries evicted.
         """
-        count_row = conn.execute("SELECT COUNT(*) as cnt FROM artifacts").fetchone()
+        ph = self._ph
+        count_row = self._query_one("SELECT COUNT(*) as cnt FROM artifacts")
         count = count_row["cnt"] if count_row else 0
 
         if count <= self.max_entries:
@@ -427,17 +446,16 @@ class ArtifactStore:
 
         excess = count - self.max_entries
         # Delete oldest-accessed entries first
-        conn.execute(
-            """
+        self._exec(
+            f"""
             DELETE FROM artifacts WHERE cache_key IN (
                 SELECT cache_key FROM artifacts
                 ORDER BY last_accessed_at ASC
-                LIMIT ?
+                LIMIT {ph}
             )
             """,
             (excess,),
         )
-        conn.commit()
         logger.debug(f"Evicted {excess} cache entries (LRU)")
         return excess
 
@@ -449,28 +467,49 @@ class ArtifactStore:
         Returns:
             Number of entries removed.
         """
-        conn = self._connect()
+        ph = self._ph
         try:
             now = datetime.utcnow().isoformat()
-            # SQLite datetime comparison works on ISO strings
-            cursor = conn.execute(
-                """
-                DELETE FROM artifacts
-                WHERE ttl_seconds > 0
-                  AND datetime(created_at) < datetime(?, '-' || ttl_seconds || ' seconds')
-                """,
-                (now,),
-            )
-            conn.commit()
-            removed = cursor.rowcount
-            if removed > 0:
-                logger.info(f"Cleaned up {removed} expired cache entries")
-            return removed
+            if self.storage_backend is not None:
+                # storage_backend: use SELECT COUNT then DELETE
+                count = self.storage_backend.fetchval(
+                    f"SELECT COUNT(*) FROM artifacts "
+                    f"WHERE ttl_seconds > 0 "
+                    f"  AND datetime(created_at) < datetime({ph}, '-' || ttl_seconds || ' seconds')",
+                    (now,),
+                )
+                count = count or 0
+                if count > 0:
+                    self._exec(
+                        f"DELETE FROM artifacts "
+                        f"WHERE ttl_seconds > 0 "
+                        f"  AND datetime(created_at) < datetime({ph}, '-' || ttl_seconds || ' seconds')",
+                        (now,),
+                    )
+                    logger.info(f"Cleaned up {count} expired cache entries")
+                return count
+
+            # SQLite: use cursor.rowcount
+            conn = self._connect()
+            try:
+                cursor = conn.execute(
+                    """
+                    DELETE FROM artifacts
+                    WHERE ttl_seconds > 0
+                      AND datetime(created_at) < datetime(?, '-' || ttl_seconds || ' seconds')
+                    """,
+                    (now,),
+                )
+                conn.commit()
+                removed = cursor.rowcount
+                if removed > 0:
+                    logger.info(f"Cleaned up {removed} expired cache entries")
+                return removed
+            finally:
+                conn.close()
         except Exception as e:
             logger.warning(f"Cache cleanup failed: {e}")
             return 0
-        finally:
-            conn.close()
 
     # ------------------------------------------------------------------
     # Invalidation
@@ -478,6 +517,21 @@ class ArtifactStore:
 
     def invalidate(self, cache_key: str) -> bool:
         """Remove a specific cache entry."""
+        ph = self._ph
+        if self.storage_backend is not None:
+            # storage_backend: use SELECT COUNT then DELETE
+            count = self.storage_backend.fetchval(
+                f"SELECT COUNT(*) FROM artifacts WHERE cache_key = {ph}",
+                (cache_key,),
+            )
+            count = count or 0
+            if count > 0:
+                self._exec(
+                    f"DELETE FROM artifacts WHERE cache_key = {ph}",
+                    (cache_key,),
+                )
+            return count > 0
+
         conn = self._connect()
         try:
             cursor = conn.execute(
@@ -491,6 +545,20 @@ class ArtifactStore:
 
     def invalidate_by_task_type(self, task_type: str) -> int:
         """Remove all cache entries for a given task type."""
+        ph = self._ph
+        if self.storage_backend is not None:
+            count = self.storage_backend.fetchval(
+                f"SELECT COUNT(*) FROM artifacts WHERE task_type = {ph}",
+                (task_type,),
+            )
+            count = count or 0
+            if count > 0:
+                self._exec(
+                    f"DELETE FROM artifacts WHERE task_type = {ph}",
+                    (task_type,),
+                )
+            return count
+
         conn = self._connect()
         try:
             cursor = conn.execute(
@@ -504,6 +572,16 @@ class ArtifactStore:
 
     def clear(self) -> int:
         """Remove all cache entries."""
+        ph = self._ph
+        if self.storage_backend is not None:
+            count = self.storage_backend.fetchval(
+                "SELECT COUNT(*) FROM artifacts",
+            )
+            count = count or 0
+            if count > 0:
+                self._exec("DELETE FROM artifacts")
+            return count
+
         conn = self._connect()
         try:
             cursor = conn.execute("DELETE FROM artifacts")
@@ -518,11 +596,12 @@ class ArtifactStore:
 
     def get_stats(self) -> Dict[str, Any]:
         """Return summary statistics about the cache."""
-        conn = self._connect()
+        ph = self._ph
         try:
-            total = conn.execute(
+            total_row = self._query_one(
                 "SELECT COUNT(*) as cnt FROM artifacts"
-            ).fetchone()["cnt"]
+            )
+            total = total_row["cnt"] if total_row else 0
 
             if total == 0:
                 return {
@@ -534,7 +613,7 @@ class ArtifactStore:
                 }
 
             # Aggregate by task type
-            rows = conn.execute(
+            rows = self._query_all(
                 """
                 SELECT task_type,
                        COUNT(*) as cnt,
@@ -544,7 +623,7 @@ class ArtifactStore:
                 FROM artifacts
                 GROUP BY task_type
                 """
-            ).fetchall()
+            )
 
             by_type = {}
             total_hits = 0
@@ -557,12 +636,14 @@ class ArtifactStore:
                 }
                 total_hits += row["total_hits"]
 
-            oldest = conn.execute(
+            oldest_row = self._query_one(
                 "SELECT MIN(created_at) as val FROM artifacts"
-            ).fetchone()["val"]
-            newest = conn.execute(
+            )
+            oldest = oldest_row["val"] if oldest_row else None
+            newest_row = self._query_one(
                 "SELECT MAX(created_at) as val FROM artifacts"
-            ).fetchone()["val"]
+            )
+            newest = newest_row["val"] if newest_row else None
 
             return {
                 "total_entries": total,
@@ -575,5 +656,3 @@ class ArtifactStore:
         except Exception as e:
             logger.warning(f"Cache stats failed: {e}")
             return {"total_entries": 0, "error": str(e)}
-        finally:
-            conn.close()

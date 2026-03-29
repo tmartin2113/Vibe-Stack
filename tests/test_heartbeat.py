@@ -2126,7 +2126,7 @@ def test_heartbeat_calls_artifact_cache_cleanup(monkeypatch, tmp_path):
         cleanup_called = True
         return 0
 
-    def mock_evict(self, conn):
+    def mock_evict(self):
         nonlocal evict_called
         evict_called = True
         return 0
