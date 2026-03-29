@@ -216,6 +216,15 @@ jobs:
           cache-to: type=gha,scope=server,mode=max
           platforms: linux/amd64
 
+      # TODO: Remove trivyignore once paperclip rebuilds with Go >= 1.25.7
+      - name: Create Trivy ignore for paperclip Go CVEs
+        run: |
+          cat > .trivyignore <<'IGNORE'
+          # Go stdlib CVEs — fix requires rebuilding paperclip with Go >= 1.25.7
+          CVE-2024-24790
+          CVE-2025-68121
+          IGNORE
+
       - name: Scan image with Trivy
         uses: aquasecurity/trivy-action@v0.35.0
         with:
@@ -224,6 +233,7 @@ jobs:
           exit-code: 1
           format: table
           ignore-unfixed: true
+          trivyignores: .trivyignore
 
   deerflow:
     needs: [scan, test]
