@@ -24,6 +24,9 @@ RUN pip install --no-cache-dir -r requirements.txt \
 
 COPY main.py .
 
+RUN useradd -r -u 1000 -m runner && chown -R runner:runner /app
+USER runner
+
 EXPOSE 9000
 # Staging port range
 EXPOSE 8100-8119
