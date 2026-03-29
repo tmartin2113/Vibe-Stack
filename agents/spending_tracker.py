@@ -1,5 +1,5 @@
 """
-Spending Tracker & Circuit Breaker — SQLite-backed local cost ledger.
+Spending Tracker & Circuit Breaker — pluggable-backend cost ledger.
 
 Tracks per-heartbeat cost events and implements a circuit breaker that
 trips when spending velocity, heartbeat frequency, or consecutive
@@ -10,10 +10,9 @@ Circuit breaker states:
     OPEN    — tripped, heartbeats return immediately with retry_after
     HALF_OPEN — after cooldown, one probe heartbeat allowed through
 
-Design follows the same patterns as artifact_store.py:
-    - SQLite + WAL mode
-    - Per-call connections (thread-safe, no shared cursors)
-    - Database at ~/.vibe/spending_ledger.db
+Storage:
+    - Default: SQLite + WAL mode at ~/.vibe/spending_ledger.db
+    - Optional: any StorageBackend (e.g. PostgresBackend for multi-node)
 """
 
 import logging
@@ -72,11 +71,11 @@ class SpendingSummary:
 
 class SpendingTracker:
     """
-    SQLite-backed spending ledger with circuit breaker.
+    Pluggable-backend spending ledger with circuit breaker.
 
     Thread-safe via per-call connections and self._lock for all
     read-modify-write operations. Uses WAL mode for concurrent
-    read/write performance.
+    read/write performance when backed by SQLite.
     """
 
     def __init__(
@@ -183,6 +182,42 @@ class SpendingTracker:
         return "?"
 
     # ------------------------------------------------------------------
+    # Data-access helpers (route through storage_backend or SQLite)
+    # ------------------------------------------------------------------
+
+    def _exec(self, sql: str, params: tuple = ()) -> None:
+        """Execute a write statement through the appropriate backend."""
+        if self.storage_backend is not None:
+            self.storage_backend.execute(sql, params)
+            return
+        conn = self._connect()
+        try:
+            conn.execute(sql, params)
+            conn.commit()
+        finally:
+            conn.close()
+
+    def _query_one(self, sql: str, params: tuple = ()):
+        """Fetch one row as a dict-like object, or None."""
+        if self.storage_backend is not None:
+            return self.storage_backend.fetchone_dict(sql, params)
+        conn = self._connect()
+        try:
+            return conn.execute(sql, params).fetchone()
+        finally:
+            conn.close()
+
+    def _query_all(self, sql: str, params: tuple = ()) -> list:
+        """Fetch all rows as dict-like objects."""
+        if self.storage_backend is not None:
+            return self.storage_backend.fetchall_dict(sql, params)
+        conn = self._connect()
+        try:
+            return conn.execute(sql, params).fetchall()
+        finally:
+            conn.close()
+
+    # ------------------------------------------------------------------
     # Event Recording
     # ------------------------------------------------------------------
 
@@ -203,29 +238,26 @@ class SpendingTracker:
     ) -> None:
         """Record a cost event and evaluate circuit breaker thresholds."""
         now = _utcnow_iso()
+        ph = self._ph
         with self._lock:
-            conn = self._connect()
             try:
-                conn.execute(
-                    """
+                self._exec(
+                    f"""
                     INSERT INTO cost_events (
                         timestamp, agent_id, agent_name, run_id, issue_id,
                         provider, model, input_tokens, output_tokens,
                         cost_cents, status, tokens_per_second, generation_duration_ms
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES ({ph}, {ph}, {ph}, {ph}, {ph}, {ph}, {ph}, {ph}, {ph}, {ph}, {ph}, {ph}, {ph})
                     """,
                     (now, agent_id, agent_name, run_id, issue_id,
                      provider, model, input_tokens, output_tokens,
                      cost_cents, status, tokens_per_second, generation_duration_ms),
                 )
-                conn.commit()
 
                 # Evaluate thresholds (may trip breaker)
-                self._evaluate_thresholds(conn)
+                self._evaluate_thresholds()
             except Exception as e:
                 logger.warning("Failed to record spending event: %s", e)
-            finally:
-                conn.close()
 
     # ------------------------------------------------------------------
     # Circuit Breaker Check
@@ -242,13 +274,13 @@ class SpendingTracker:
 
         Thread-safe: holds self._lock for the entire read-modify-write.
         """
+        ph = self._ph
         with self._lock:
-            conn = self._connect()
             try:
-                row = conn.execute(
-                    "SELECT * FROM circuit_breaker WHERE scope = ?",
+                row = self._query_one(
+                    f"SELECT * FROM circuit_breaker WHERE scope = {ph}",
                     (self.scope,),
-                ).fetchone()
+                )
 
                 if row is None or row["state"] == BreakerState.CLOSED.value:
                     return None
@@ -262,12 +294,11 @@ class SpendingTracker:
                         cooldown_dt = datetime.fromisoformat(cooldown_until)
                         if now >= cooldown_dt:
                             # Transition to HALF_OPEN — allow probe
-                            conn.execute(
-                                "UPDATE circuit_breaker SET state = ? WHERE scope = ?",
+                            self._exec(
+                                f"UPDATE circuit_breaker SET state = {ph} WHERE scope = {ph}",
                                 (BreakerState.HALF_OPEN.value, self.scope),
                             )
-                            conn.commit()
-                            logger.info("Circuit breaker → HALF_OPEN (cooldown expired)")
+                            logger.info("Circuit breaker -> HALF_OPEN (cooldown expired)")
                             return None  # Allow probe through
 
                         retry_after = max(1, int((cooldown_dt - now).total_seconds()))
@@ -290,102 +321,96 @@ class SpendingTracker:
             except Exception as e:
                 logger.warning("Circuit breaker check failed: %s", e)
                 return None
-            finally:
-                conn.close()
 
         return None
 
     def close_breaker_after_probe(self) -> None:
         """Called after a successful HALF_OPEN probe to transition to CLOSED."""
+        ph = self._ph
         with self._lock:
-            conn = self._connect()
             try:
-                row = conn.execute(
-                    "SELECT state FROM circuit_breaker WHERE scope = ?",
+                row = self._query_one(
+                    f"SELECT state FROM circuit_breaker WHERE scope = {ph}",
                     (self.scope,),
-                ).fetchone()
+                )
                 if row and row["state"] == BreakerState.HALF_OPEN.value:
-                    conn.execute(
-                        "UPDATE circuit_breaker SET state = ?, reason = '', "
-                        "opened_at = '', cooldown_until = '' WHERE scope = ?",
+                    self._exec(
+                        f"UPDATE circuit_breaker SET state = {ph}, reason = '', "
+                        f"opened_at = '', cooldown_until = '' WHERE scope = {ph}",
                         (BreakerState.CLOSED.value, self.scope),
                     )
-                    conn.commit()
-                    logger.info("Circuit breaker → CLOSED (probe succeeded)")
+                    logger.info("Circuit breaker -> CLOSED (probe succeeded)")
             except Exception as e:
                 logger.warning("Failed to close breaker after probe: %s", e)
-            finally:
-                conn.close()
 
     # ------------------------------------------------------------------
     # Threshold Evaluation
     # ------------------------------------------------------------------
 
-    def _evaluate_thresholds(self, conn: sqlite3.Connection) -> None:
+    def _evaluate_thresholds(self) -> None:
         """Evaluate all thresholds and trip breaker if any are violated."""
+        ph = self._ph
         now = _utcnow().replace(tzinfo=None)
         window_start = (now - timedelta(seconds=self.window_seconds)).isoformat()
 
         # 1. Spend velocity: SUM(cost_cents) in window
-        row = conn.execute(
-            "SELECT COALESCE(SUM(cost_cents), 0) as total FROM cost_events "
-            "WHERE timestamp >= ?",
+        row = self._query_one(
+            f"SELECT COALESCE(SUM(cost_cents), 0) as total FROM cost_events "
+            f"WHERE timestamp >= {ph}",
             (window_start,),
-        ).fetchone()
+        )
         total_cents = row["total"] if row else 0
 
         if total_cents > self.max_cents_per_window:
             self._trip_breaker(
-                conn,
                 f"Spend velocity {total_cents}c exceeds {self.max_cents_per_window}c "
                 f"in {self.window_seconds}s window",
             )
             return
 
         # 2. Heartbeat frequency: COUNT of non-idle in window
-        row = conn.execute(
-            "SELECT COUNT(*) as cnt FROM cost_events "
-            "WHERE timestamp >= ? AND status != 'idle'",
+        row = self._query_one(
+            f"SELECT COUNT(*) as cnt FROM cost_events "
+            f"WHERE timestamp >= {ph} AND status != 'idle'",
             (window_start,),
-        ).fetchone()
+        )
         non_idle_count = row["cnt"] if row else 0
 
         if non_idle_count > self.max_heartbeats_per_window:
             self._trip_breaker(
-                conn,
                 f"Heartbeat frequency {non_idle_count} non-idle exceeds "
                 f"{self.max_heartbeats_per_window} in {self.window_seconds}s window",
             )
             return
 
         # 3. Consecutive non-idle streak
-        rows = conn.execute(
-            "SELECT status FROM cost_events ORDER BY id DESC LIMIT ?",
+        rows = self._query_all(
+            f"SELECT status FROM cost_events ORDER BY id DESC LIMIT {ph}",
             (self.max_consecutive_non_idle,),
-        ).fetchall()
+        )
 
         if (
             len(rows) >= self.max_consecutive_non_idle
             and all(r["status"] != "idle" for r in rows)
         ):
             self._trip_breaker(
-                conn,
                 f"Consecutive non-idle streak: {len(rows)} heartbeats "
                 f"(threshold: {self.max_consecutive_non_idle})",
             )
 
-    def _trip_breaker(self, conn: sqlite3.Connection, reason: str) -> None:
+    def _trip_breaker(self, reason: str) -> None:
         """Trip the circuit breaker to OPEN state."""
+        ph = self._ph
         now = _utcnow().replace(tzinfo=None)
 
         # Get current trip count for exponential backoff
-        row = conn.execute(
-            "SELECT trip_count, state FROM circuit_breaker WHERE scope = ?",
+        row = self._query_one(
+            f"SELECT trip_count, state FROM circuit_breaker WHERE scope = {ph}",
             (self.scope,),
-        ).fetchone()
+        )
 
         if row and row["state"] == BreakerState.OPEN.value:
-            # Already open — don't re-trip
+            # Already open -- don't re-trip
             return
 
         old_trip_count = row["trip_count"] if row else 0
@@ -398,10 +423,10 @@ class SpendingTracker:
         )
         cooldown_until = (now + timedelta(seconds=cooldown)).isoformat()
 
-        conn.execute(
-            """
+        self._exec(
+            f"""
             INSERT INTO circuit_breaker (scope, state, opened_at, reason, cooldown_until, trip_count)
-            VALUES (?, ?, ?, ?, ?, ?)
+            VALUES ({ph}, {ph}, {ph}, {ph}, {ph}, {ph})
             ON CONFLICT(scope) DO UPDATE SET
                 state = excluded.state,
                 opened_at = excluded.opened_at,
@@ -411,7 +436,6 @@ class SpendingTracker:
             """,
             (self.scope, BreakerState.OPEN.value, now.isoformat(), reason, cooldown_until, new_trip_count),
         )
-        conn.commit()
         logger.warning(
             "Circuit breaker TRIPPED (trip #%d, cooldown %ds): %s",
             new_trip_count, cooldown, reason,
@@ -423,109 +447,116 @@ class SpendingTracker:
 
     def get_status(self) -> SpendingSummary:
         """Get current spending status and circuit breaker state."""
+        ph = self._ph
         with self._lock:
-            conn = self._connect()
-            try:
-                now = _utcnow().replace(tzinfo=None)
-                window_start = (now - timedelta(seconds=self.window_seconds)).isoformat()
+            now = _utcnow().replace(tzinfo=None)
+            window_start = (now - timedelta(seconds=self.window_seconds)).isoformat()
 
-                # Total cost in window
-                row = conn.execute(
-                    "SELECT COALESCE(SUM(cost_cents), 0) as total FROM cost_events "
-                    "WHERE timestamp >= ?",
-                    (window_start,),
-                ).fetchone()
-                total_cents = row["total"] if row else 0
+            # Total cost in window
+            row = self._query_one(
+                f"SELECT COALESCE(SUM(cost_cents), 0) as total FROM cost_events "
+                f"WHERE timestamp >= {ph}",
+                (window_start,),
+            )
+            total_cents = row["total"] if row else 0
 
-                # Total heartbeats in window
-                row = conn.execute(
-                    "SELECT COUNT(*) as cnt FROM cost_events WHERE timestamp >= ?",
-                    (window_start,),
-                ).fetchone()
-                total_heartbeats = row["cnt"] if row else 0
+            # Total heartbeats in window
+            row = self._query_one(
+                f"SELECT COUNT(*) as cnt FROM cost_events WHERE timestamp >= {ph}",
+                (window_start,),
+            )
+            total_heartbeats = row["cnt"] if row else 0
 
-                # Non-idle heartbeats in window
-                row = conn.execute(
-                    "SELECT COUNT(*) as cnt FROM cost_events "
-                    "WHERE timestamp >= ? AND status != 'idle'",
-                    (window_start,),
-                ).fetchone()
-                non_idle = row["cnt"] if row else 0
+            # Non-idle heartbeats in window
+            row = self._query_one(
+                f"SELECT COUNT(*) as cnt FROM cost_events "
+                f"WHERE timestamp >= {ph} AND status != 'idle'",
+                (window_start,),
+            )
+            non_idle = row["cnt"] if row else 0
 
-                # Consecutive non-idle streak (use same LIMIT as breaker evaluation)
-                rows = conn.execute(
-                    "SELECT status FROM cost_events ORDER BY id DESC LIMIT ?",
-                    (self.max_consecutive_non_idle,),
-                ).fetchall()
-                consecutive = 0
-                for r in rows:
-                    if r["status"] != "idle":
-                        consecutive += 1
-                    else:
-                        break
-
-                # Breaker state
-                breaker_row = conn.execute(
-                    "SELECT * FROM circuit_breaker WHERE scope = ?",
-                    (self.scope,),
-                ).fetchone()
-
-                if breaker_row:
-                    state = BreakerState(breaker_row["state"])
-                    retry_after = 0
-                    if state == BreakerState.OPEN and breaker_row["cooldown_until"]:
-                        cooldown_dt = datetime.fromisoformat(breaker_row["cooldown_until"])
-                        retry_after = max(0, int((cooldown_dt - now).total_seconds()))
-
-                    breaker = BreakerStatus(
-                        state=state,
-                        reason=breaker_row["reason"],
-                        opened_at=breaker_row["opened_at"],
-                        cooldown_until=breaker_row["cooldown_until"],
-                        trip_count=breaker_row["trip_count"],
-                        retry_after_seconds=retry_after,
-                    )
+            # Consecutive non-idle streak (use same LIMIT as breaker evaluation)
+            rows = self._query_all(
+                f"SELECT status FROM cost_events ORDER BY id DESC LIMIT {ph}",
+                (self.max_consecutive_non_idle,),
+            )
+            consecutive = 0
+            for r in rows:
+                if r["status"] != "idle":
+                    consecutive += 1
                 else:
-                    breaker = BreakerStatus(state=BreakerState.CLOSED)
+                    break
 
-                return SpendingSummary(
-                    window_seconds=self.window_seconds,
-                    total_cost_cents=total_cents,
-                    total_heartbeats=total_heartbeats,
-                    non_idle_heartbeats=non_idle,
-                    consecutive_non_idle=consecutive,
-                    breaker=breaker,
+            # Breaker state
+            breaker_row = self._query_one(
+                f"SELECT * FROM circuit_breaker WHERE scope = {ph}",
+                (self.scope,),
+            )
+
+            if breaker_row:
+                state = BreakerState(breaker_row["state"])
+                retry_after = 0
+                if state == BreakerState.OPEN and breaker_row["cooldown_until"]:
+                    cooldown_dt = datetime.fromisoformat(breaker_row["cooldown_until"])
+                    retry_after = max(0, int((cooldown_dt - now).total_seconds()))
+
+                breaker = BreakerStatus(
+                    state=state,
+                    reason=breaker_row["reason"],
+                    opened_at=breaker_row["opened_at"],
+                    cooldown_until=breaker_row["cooldown_until"],
+                    trip_count=breaker_row["trip_count"],
+                    retry_after_seconds=retry_after,
                 )
-            finally:
-                conn.close()
+            else:
+                breaker = BreakerStatus(state=BreakerState.CLOSED)
+
+            return SpendingSummary(
+                window_seconds=self.window_seconds,
+                total_cost_cents=total_cents,
+                total_heartbeats=total_heartbeats,
+                non_idle_heartbeats=non_idle,
+                consecutive_non_idle=consecutive,
+                breaker=breaker,
+            )
 
     def reset(self) -> None:
         """Reset the circuit breaker to CLOSED and clear trip count."""
+        ph = self._ph
         with self._lock:
-            conn = self._connect()
-            try:
-                conn.execute(
-                    """
-                    INSERT INTO circuit_breaker (scope, state, opened_at, reason, cooldown_until, trip_count)
-                    VALUES (?, 'closed', '', '', '', 0)
-                    ON CONFLICT(scope) DO UPDATE SET
-                        state = 'closed',
-                        opened_at = '',
-                        reason = '',
-                        cooldown_until = '',
-                        trip_count = 0
-                    """,
-                    (self.scope,),
-                )
-                conn.commit()
-                logger.info("Circuit breaker reset to CLOSED")
-            finally:
-                conn.close()
+            self._exec(
+                f"""
+                INSERT INTO circuit_breaker (scope, state, opened_at, reason, cooldown_until, trip_count)
+                VALUES ({ph}, 'closed', '', '', '', 0)
+                ON CONFLICT(scope) DO UPDATE SET
+                    state = 'closed',
+                    opened_at = '',
+                    reason = '',
+                    cooldown_until = '',
+                    trip_count = 0
+                """,
+                (self.scope,),
+            )
+            logger.info("Circuit breaker reset to CLOSED")
 
     def prune(self) -> int:
         """Remove cost events older than retention_days."""
+        ph = self._ph
         cutoff = (_utcnow().replace(tzinfo=None) - timedelta(days=self.retention_days)).isoformat()
         with self._lock:
+            if self.storage_backend is not None:
+                count = self.storage_backend.fetchval(
+                    f"SELECT COUNT(*) FROM cost_events WHERE timestamp < {ph}",
+                    (cutoff,),
+                )
+                count = count or 0
+                if count > 0:
+                    self.storage_backend.execute(
+                        f"DELETE FROM cost_events WHERE timestamp < {ph}",
+                        (cutoff,),
+                    )
+                    logger.info("Pruned %d old cost events", count)
+                return count
             conn = self._connect()
             try:
                 cursor = conn.execute(
@@ -542,12 +573,9 @@ class SpendingTracker:
 
     def get_recent_events(self, limit: int = 20) -> List[Dict[str, Any]]:
         """Get most recent cost events."""
-        conn = self._connect()
-        try:
-            rows = conn.execute(
-                "SELECT * FROM cost_events ORDER BY id DESC LIMIT ?",
-                (limit,),
-            ).fetchall()
-            return [dict(r) for r in rows]
-        finally:
-            conn.close()
+        ph = self._ph
+        rows = self._query_all(
+            f"SELECT * FROM cost_events ORDER BY id DESC LIMIT {ph}",
+            (limit,),
+        )
+        return [dict(r) for r in rows]

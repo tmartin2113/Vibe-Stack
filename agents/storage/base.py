@@ -79,6 +79,22 @@ class StorageBackend(ABC):
     def close(self) -> None:
         """Release all connections and resources."""
 
+    def fetchone_dict(self, sql: str, params: Sequence = ()):
+        """Execute a query and return one row as a dict-like object, or None.
+
+        Default delegates to fetchone(); backends should override to return
+        dict-compatible rows (e.g. RealDictRow, sqlite3.Row).
+        """
+        return self.fetchone(sql, params)
+
+    def fetchall_dict(self, sql: str, params: Sequence = ()) -> list:
+        """Execute a query and return all rows as dict-like objects.
+
+        Default delegates to fetchall(); backends should override to return
+        dict-compatible rows.
+        """
+        return self.fetchall(sql, params)
+
     @property
     def supports_fts(self) -> bool:
         """Whether this backend supports full-text search natively.

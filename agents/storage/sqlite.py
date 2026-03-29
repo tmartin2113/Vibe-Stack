@@ -92,6 +92,24 @@ class SQLiteBackend(StorageBackend):
         row = self.fetchone(sql, params)
         return row[0] if row else None
 
+    def fetchone_dict(self, sql: str, params: Sequence = ()):
+        conn = self._connect()
+        conn.row_factory = sqlite3.Row
+        try:
+            cursor = conn.execute(sql, params)
+            return cursor.fetchone()
+        finally:
+            conn.close()
+
+    def fetchall_dict(self, sql: str, params: Sequence = ()) -> list:
+        conn = self._connect()
+        conn.row_factory = sqlite3.Row
+        try:
+            cursor = conn.execute(sql, params)
+            return cursor.fetchall()
+        finally:
+            conn.close()
+
     def execute_script(self, sql: str) -> None:
         with self._write_lock:
             conn = self._connect()

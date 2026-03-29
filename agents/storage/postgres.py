@@ -152,6 +152,24 @@ class PostgresBackend(StorageBackend):
         finally:
             self._putconn(conn)
 
+    def fetchone_dict(self, sql: str, params: Sequence = ()):
+        conn = self._getconn()
+        try:
+            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                cur.execute(sql, params)
+                return cur.fetchone()
+        finally:
+            self._putconn(conn)
+
+    def fetchall_dict(self, sql: str, params: Sequence = ()) -> list:
+        conn = self._getconn()
+        try:
+            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                cur.execute(sql, params)
+                return cur.fetchall()
+        finally:
+            self._putconn(conn)
+
     def table_exists(self, table_name: str) -> bool:
         row = self.fetchone(
             "SELECT 1 FROM information_schema.tables "
