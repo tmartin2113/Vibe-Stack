@@ -59,10 +59,11 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - name: Scan Dockerfiles with Trivy (config)
+      - name: Scan Dockerfiles with Trivy (misconfig)
         uses: aquasecurity/trivy-action@v0.35.0
         with:
-          scan-type: config
+          scan-type: fs
+          scanners: misconfig
           scan-ref: .
           severity: HIGH,CRITICAL
           exit-code: 1
