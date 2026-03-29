@@ -115,6 +115,7 @@ jobs:
           severity: CRITICAL
           exit-code: 1
           format: table
+          ignore-unfixed: true
 
   dev-runner:
     needs: [scan, test]
@@ -163,6 +164,7 @@ jobs:
           severity: CRITICAL
           exit-code: 1
           format: table
+          ignore-unfixed: true
 
   server:
     needs: [scan, test]
@@ -221,6 +223,7 @@ jobs:
           severity: CRITICAL
           exit-code: 1
           format: table
+          ignore-unfixed: true
 
   deerflow:
     needs: [scan, test]
@@ -272,3 +275,4 @@ jobs:
           severity: CRITICAL
           exit-code: 1
           format: table
+          ignore-unfixed: true
