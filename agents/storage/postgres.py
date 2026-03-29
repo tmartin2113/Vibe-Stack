@@ -137,6 +137,10 @@ class PostgresBackend(StorageBackend):
         return row[0] if row else None
 
     def execute_script(self, sql: str) -> None:
+        # Translate SQLite-specific AUTOINCREMENT to PostgreSQL SERIAL
+        sql = sql.replace(
+            "INTEGER PRIMARY KEY AUTOINCREMENT", "SERIAL PRIMARY KEY"
+        )
         conn = self._getconn()
         try:
             with conn.cursor() as cur:
