@@ -330,7 +330,7 @@ class ArtifactStore:
         Store a result in the cache.
 
         Only stores if the score meets the minimum threshold.
-        Uses INSERT OR REPLACE to handle duplicates (higher score wins).
+        Uses INSERT ON CONFLICT to handle duplicates (higher score wins).
 
         Args:
             cache_key: Pre-computed SHA-256 key.
@@ -388,13 +388,27 @@ class ArtifactStore:
 
                 self._exec(
                     f"""
-                    INSERT OR REPLACE INTO artifacts (
+                    INSERT INTO artifacts (
                         cache_key, specification, specialist_output,
                         output_critic_score, final_score, tool_calls_json,
                         task_type, specialist_adapter, skills_hash,
                         num_iterations, created_at, last_accessed_at,
                         access_count, ttl_seconds
                     ) VALUES ({ph}, {ph}, {ph}, {ph}, {ph}, {ph}, {ph}, {ph}, {ph}, {ph}, {ph}, {ph}, 0, {ph})
+                    ON CONFLICT(cache_key) DO UPDATE SET
+                        specification = excluded.specification,
+                        specialist_output = excluded.specialist_output,
+                        output_critic_score = excluded.output_critic_score,
+                        final_score = excluded.final_score,
+                        tool_calls_json = excluded.tool_calls_json,
+                        task_type = excluded.task_type,
+                        specialist_adapter = excluded.specialist_adapter,
+                        skills_hash = excluded.skills_hash,
+                        num_iterations = excluded.num_iterations,
+                        created_at = excluded.created_at,
+                        last_accessed_at = excluded.last_accessed_at,
+                        access_count = 0,
+                        ttl_seconds = excluded.ttl_seconds
                     """,
                     (
                         cache_key,
