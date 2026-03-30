@@ -1,0 +1,188 @@
+# ══════════════════════════════════════════════════════════════════════════════
+# docker-compose.infra.yml — Infrastructure Layer
+#
+# This file defines supporting infrastructure services: search, browser
+# automation, source control, object storage, design tooling, and local
+# build helpers.
+#
+# These services are NOT started automatically. Use -f to merge with core:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.infra.yml up -d
+#
+# Or bring up infra only:
+#
+#   docker compose -f docker-compose.infra.yml up -d
+#
+# Related compose files:
+#   docker-compose.yml       — Core services: server, deerflow, vibe, tailscale
+#   docker-compose.gpu.yml   — GPU services: vllm, opensandbox, comfyui
+# ══════════════════════════════════════════════════════════════════════════════
+
+services:
+
+  # ── SearXNG (privacy-respecting metasearch engine) ─────────────────────────
+  searxng:
+    image: searxng/searxng:latest
+    restart: unless-stopped
+    ports:
+      - "8888:8080"
+    volumes:
+      - ./searxng/settings.yml:/etc/searxng/settings.yml:ro
+    environment:
+      - SEARXNG_SECRET=${SEARXNG_SECRET:-changeme}
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8080/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # ── Playwright (headless browser / automation server) ──────────────────────
+  playwright:
+    image: mcr.microsoft.com/playwright:v1.52.0-noble
+    restart: unless-stopped
+    ports:
+      - "3003:3003"
+    command: ["npx", "playwright", "run-server", "--port", "3003", "--host", "0.0.0.0"]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3003/json"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # ── Gitea (self-hosted Git service) ────────────────────────────────────────
+  gitea:
+    image: gitea/gitea:latest
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+      - "2223:22"
+    environment:
+      - GITEA__database__DB_TYPE=sqlite3
+      - GITEA__database__PATH=/data/gitea/gitea.db
+      - GITEA__server__ROOT_URL=http://localhost:3000
+      - GITEA__server__HTTP_PORT=3000
+      - GITEA__server__DOMAIN=localhost
+      - GITEA__security__INSTALL_LOCK=true
+      - GITEA__service__DISABLE_REGISTRATION=false
+      - GITEA__service__REQUIRE_SIGNIN_VIEW=false
+    volumes:
+      - gitea-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/v1/version"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # ── MinIO (S3-compatible object storage) ───────────────────────────────────
+  minio:
+    image: minio/minio:latest
+    restart: unless-stopped
+    ports:
+      - "9000:9000"
+      - "9002:9002"
+    command: server /data --console-address ":9002"
+    environment:
+      - MINIO_ROOT_USER=${MINIO_ROOT_USER:-vibe}
+      - MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD:-changeme123}
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # ── MinIO Init (one-shot bucket provisioning) ───────────────────────────────
+  minio-init:
+    image: minio/mc:latest
+    depends_on:
+      minio:
+        condition: service_healthy
+    restart: "no"
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set vibe http://minio:9000 $${MINIO_ROOT_USER:-vibe} $${MINIO_ROOT_PASSWORD:-changeme123} &&
+      mc mb --ignore-existing vibe/vibe-artifacts &&
+      echo 'Bucket vibe-artifacts ready'
+      "
+
+  # ── Penpot Frontend ─────────────────────────────────────────────────────────
+  penpot-frontend:
+    image: penpotapp/frontend:latest
+    restart: unless-stopped
+    ports:
+      - "9001:80"
+    depends_on:
+      - penpot-backend
+      - penpot-exporter
+    environment:
+      - PENPOT_FLAGS=enable-registration enable-login-with-password disable-email-verification
+    volumes:
+      - penpot-assets:/opt/data/assets
+
+  # ── Penpot Backend ──────────────────────────────────────────────────────────
+  penpot-backend:
+    image: penpotapp/backend:latest
+    restart: unless-stopped
+    depends_on:
+      - penpot-postgres
+      - penpot-redis
+    environment:
+      - PENPOT_FLAGS=enable-registration enable-login-with-password disable-email-verification disable-secure-session-cookies
+      - PENPOT_SECRET_KEY=${PENPOT_SECRET_KEY:-changeme}
+      - PENPOT_DATABASE_URI=postgresql://penpot-postgres/penpot
+      - PENPOT_DATABASE_USERNAME=penpot
+      - PENPOT_DATABASE_PASSWORD=penpot
+      - PENPOT_REDIS_URI=redis://penpot-redis/0
+      - PENPOT_ASSETS_STORAGE_BACKEND=assets-fs
+      - PENPOT_STORAGE_ASSETS_FS_DIRECTORY=/opt/data/assets
+      - PENPOT_TELEMETRY_ENABLED=false
+      - PENPOT_PUBLIC_URI=http://localhost:9001
+    volumes:
+      - penpot-assets:/opt/data/assets
+
+  # ── Penpot Exporter ─────────────────────────────────────────────────────────
+  penpot-exporter:
+    image: penpotapp/exporter:latest
+    restart: unless-stopped
+    depends_on:
+      - penpot-backend
+    environment:
+      - PENPOT_PUBLIC_URI=http://penpot-frontend
+      - PENPOT_REDIS_URI=redis://penpot-redis/0
+      - PENPOT_SECRET_KEY=${PENPOT_SECRET_KEY:-changeme}
+
+  # ── Penpot Postgres ─────────────────────────────────────────────────────────
+  penpot-postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      - POSTGRES_DB=penpot
+      - POSTGRES_USER=penpot
+      - POSTGRES_PASSWORD=penpot
+    volumes:
+      - penpot-postgres:/var/lib/postgresql/data
+
+  # ── Penpot Redis ────────────────────────────────────────────────────────────
+  penpot-redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+
+  # ── SSH Relay (local build) ─────────────────────────────────────────────────
+  ssh-relay:
+    build:
+      context: ./ssh-relay
+      dockerfile: Dockerfile
+
+  # ── Dev Runner (local build) ────────────────────────────────────────────────
+  dev-runner:
+    build:
+      context: ./dev-runner
+      dockerfile: Dockerfile
+
+volumes:
+  gitea-data:
+  minio-data:
+  penpot-assets:
+  penpot-postgres:
