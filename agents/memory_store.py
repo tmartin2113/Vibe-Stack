@@ -367,14 +367,19 @@ class MemoryStore:
 
         with self._lock:
             if self.storage_backend is not None:
-                # Use RETURNING id for backends that support it (Postgres),
-                # fall back to fetchone for SQLiteBackend.
-                row = self.storage_backend.fetchone(
+                # Insert then retrieve the new ID.
+                # Can't use fetchone for INSERT RETURNING because
+                # fetchone doesn't commit — use execute + fetchval.
+                self._exec(
                     f"INSERT INTO memories (content, source, tags, created_at, updated_at) "
-                    f"VALUES ({ph}, {ph}, {ph}, {ph}, {ph}) RETURNING id",
+                    f"VALUES ({ph}, {ph}, {ph}, {ph}, {ph})",
                     (content, source, tags, now, now),
                 )
-                memory_id = row[0] if row else None
+                row = self._query_one(
+                    f"SELECT id FROM memories WHERE content = {ph} AND created_at = {ph}",
+                    (content, now),
+                )
+                memory_id = row["id"] if row else None
 
                 # FIFO eviction if over capacity
                 count_row = self._query_one(

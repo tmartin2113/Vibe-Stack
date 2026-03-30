@@ -10,6 +10,7 @@ Connection string via VIBE_DATABASE_URL or individual PG* env vars.
 import json
 import logging
 import os
+import re
 import threading
 from contextlib import contextmanager
 from typing import Any, List, Optional, Sequence, Tuple
@@ -168,6 +169,13 @@ class PostgresBackend(StorageBackend):
         # Translate SQLite-specific AUTOINCREMENT to PostgreSQL SERIAL
         sql = sql.replace(
             "INTEGER PRIMARY KEY AUTOINCREMENT", "SERIAL PRIMARY KEY"
+        )
+        # Strip SQLite-specific FTS5 virtual tables and triggers
+        sql = re.sub(
+            r"CREATE\s+VIRTUAL\s+TABLE\s+.*?;", "", sql, flags=re.DOTALL | re.IGNORECASE
+        )
+        sql = re.sub(
+            r"CREATE\s+TRIGGER\s+.*?END\s*;", "", sql, flags=re.DOTALL | re.IGNORECASE
         )
         conn = self._getconn()
         try:
