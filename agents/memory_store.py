@@ -657,12 +657,14 @@ class MemoryStore:
             return {"total": 0, "by_source": {}, "by_tag": {}}
 
         # Count by source type
+        # Use %% to escape % in LIKE patterns when psycopg2 parses the SQL
+        pct = "%%" if self.storage_backend is not None else "%"
         source_rows = self._query_all(
-            """SELECT
+            f"""SELECT
                    CASE
-                       WHEN source LIKE 'url:%' THEN 'web'
-                       WHEN source LIKE 'file:%' THEN 'file'
-                       WHEN source LIKE 'tool:%' THEN 'tool'
+                       WHEN source LIKE 'url:{pct}' THEN 'web'
+                       WHEN source LIKE 'file:{pct}' THEN 'file'
+                       WHEN source LIKE 'tool:{pct}' THEN 'tool'
                        ELSE source
                    END AS source_type,
                    COUNT(*) AS cnt

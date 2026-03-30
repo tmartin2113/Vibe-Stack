@@ -528,7 +528,7 @@ class TestMessageStoreWithPostgres:
 
             store.send(content="stats test", sender="agent_x")
             stats = store.get_stats()
-            assert stats["total"] >= 1
+            assert stats["total_messages"] >= 1
 
             removed = store.cleanup_expired()
             assert removed >= 0  # may be 0 if nothing expired
@@ -568,7 +568,7 @@ class TestMemoryStoreWithPostgres:
 
             results = store.recall("relational database", max_results=5)
             assert len(results) >= 1
-            assert any("postgresql" in r["content"] for r in results)
+            assert any("postgresql" in r.content for r in results)
         finally:
             self._cleanup(backend)
             backend.close()
@@ -588,7 +588,7 @@ class TestMemoryStoreWithPostgres:
 
             entry = store.get_by_id(mem_id)
             assert entry is not None
-            assert entry["content"] == "deletable memory"
+            assert entry.content == "deletable memory"
 
             deleted = store.delete(mem_id)
             assert deleted
@@ -657,7 +657,7 @@ class TestMemoryStoreWithPostgres:
 
             results = store.recall("python", max_results=5, source_filter="agent")
             assert len(results) >= 1
-            assert all(r.get("source") == "agent" for r in results)
+            assert all(r.source == "agent" for r in results)
         finally:
             self._cleanup(backend)
             backend.close()
