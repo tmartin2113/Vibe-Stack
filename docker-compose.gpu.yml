@@ -1,0 +1,115 @@
+# ══════════════════════════════════════════════════════════════════════════════
+# docker-compose.gpu.yml — GPU Services
+#
+# Requires: NVIDIA GPU + nvidia-container-toolkit installed on the host.
+# Install guide: https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html
+#
+# These services are NOT started automatically. Use -f to merge with core:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d
+#
+# Or bring up GPU services only:
+#
+#   docker compose -f docker-compose.gpu.yml up -d
+#
+# Related compose files:
+#   docker-compose.yml       — Core services: server, deerflow, vibe, tailscale
+#   docker-compose.infra.yml — Infrastructure: gitea, minio, penpot, searxng, playwright
+# ══════════════════════════════════════════════════════════════════════════════
+
+services:
+
+  # ── vLLM (local OpenAI-compatible inference server) ────────────────────────
+  vllm:
+    image: vllm/vllm-openai:latest
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    command:
+      - ${VLLM_MODEL:-Qwen/Qwen3.5-9B}
+      - --host
+      - "0.0.0.0"
+      - --port
+      - "8000"
+      - --max-model-len
+      - "${VLLM_MAX_MODEL_LEN:-12288}"
+      - --gpu-memory-utilization
+      - "${VLLM_GPU_MEM_UTIL:-0.92}"
+      - --enable-prefix-caching
+      - --enable-chunked-prefill
+      - --max-num-seqs
+      - "${VLLM_MAX_NUM_SEQS:-4}"
+      - --trust-remote-code
+      - --enable-auto-tool-choice
+      - --tool-call-parser
+      - "${VLLM_TOOL_CALL_PARSER:-hermes}"
+      - --reasoning-parser
+      - "${VLLM_REASONING_PARSER:-qwen3}"
+    volumes:
+      - vllm-models:/root/.cache/huggingface
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          memory: ${VIBE_VLLM_MEMORY_LIMIT:-24G}
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  # ── OpenSandbox (secure code execution sandbox) ────────────────────────────
+  opensandbox:
+    image: opensandbox/server:v0.1.7
+    restart: unless-stopped
+    command: ["--config", "/root/.sandbox.toml"]
+    ports:
+      - "9090:8080"
+    volumes:
+      - ./sandbox/sandbox.toml:/root/.sandbox.toml:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./:/home/user/Vibe:ro
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/docs')"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    deploy:
+      resources:
+        limits:
+          memory: ${VIBE_SANDBOX_MEMORY_LIMIT:-4G}
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  # ── ComfyUI (image generation UI) ──────────────────────────────────────────
+  comfyui:
+    image: ghcr.io/ai-dock/comfyui:latest
+    restart: unless-stopped
+    profiles:
+      - gpu-comfyui
+    ports:
+      - "8188:8188"
+    environment:
+      - COMFYUI_PORT=8188
+    volumes:
+      - comfyui-data:/workspace
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+volumes:
+  vllm-models:
+  comfyui-data:
