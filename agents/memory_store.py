@@ -468,12 +468,14 @@ class MemoryStore:
                     conditions.append(f"source = {ph}")
                     params.append(source_filter)
                 where = " AND ".join(conditions)
+                # Params order must match SQL placeholder order:
+                # 1. ts_rank query (in SELECT), 2. WHERE conditions, 3. LIMIT
                 rows = self._query_all(
                     f"SELECT id, content, source, tags, created_at, updated_at, access_count, "
                     f"ts_rank(to_tsvector('english', content), plainto_tsquery('english', {ph})) as score "
                     f"FROM memories WHERE {where} "
                     f"ORDER BY score DESC LIMIT {ph}",
-                    tuple(params + [query] + [max_results]),
+                    tuple([query] + params + [max_results]),
                 )
                 # Update access counts
                 for r in rows:
