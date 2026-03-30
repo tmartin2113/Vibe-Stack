@@ -1,14 +1,17 @@
 # ══════════════════════════════════════════════════════════════
-# Developer Override — copy to docker-compose.override.yml
+# Developer Override — Local Source Builds
 # ══════════════════════════════════════════════════════════════
 #
-# This file adds local build contexts and source bind mounts
-# for development. Docker Compose automatically merges it with
-# docker-compose.yml when present.
+# Copy to docker-compose.override.yml to build server and DeerFlow
+# from local source instead of pulling GHCR images.
 #
-# Required env vars (set in .env):
-#   PAPERCLIP_SOURCE_DIR  — path to your local paperclip checkout
-#   HOME                  — your home directory (usually auto-set)
+# Required:
+#   PAPERCLIP_SOURCE_DIR — path to your local paperclip checkout
+#
+# Usage:
+#   cp docker-compose.override.yml.example docker-compose.override.yml
+#   # Edit PAPERCLIP_SOURCE_DIR in .env
+#   docker compose up -d --build
 
 services:
 
@@ -16,29 +19,14 @@ services:
     build:
       context: ${PAPERCLIP_SOURCE_DIR}
       dockerfile: Dockerfile
-    env_file: .env
-    environment:
-      - BETTER_AUTH_TRUSTED_ORIGINS=http://localhost:3100,https://${TAILSCALE_HOSTNAME:-localhost}
-    ports:
-      - "3100:3100"
-    # The embedded-postgres library passes --lc-messages=en_US.UTF-8 to initdb.
-    # Slim images don't ship that locale, so we install it before starting.
-    user: "0:0"
-    entrypoint:
-      - sh
-      - -c
-      - |
-        apt-get update -qq && apt-get install -y -qq locales > /dev/null 2>&1
-        sed -i 's/# en_US.UTF-8/en_US.UTF-8/' /etc/locale.gen
-        locale-gen en_US.UTF-8 > /dev/null 2>&1
-        chown -R node:node /paperclip
-        exec su -s /bin/sh node -c 'exec node --import ./server/node_modules/tsx/dist/loader.mjs server/dist/index.js'
+    # Mount dist directories for hot-reload during development
     volumes:
-      - paperclip-data:/paperclip
-      - ${HOME}/.claude:/paperclip/.claude
       - ${PAPERCLIP_SOURCE_DIR}/server/dist:/app/server/dist
-      - ${PAPERCLIP_SOURCE_DIR}/packages/db/src:/app/packages/db/src
-      - ${PAPERCLIP_SOURCE_DIR}/packages/shared/src:/app/packages/shared/src
+      - ${PAPERCLIP_SOURCE_DIR}/packages/db/dist:/app/packages/db/dist
+      - ${PAPERCLIP_SOURCE_DIR}/packages/shared/dist:/app/packages/shared/dist
+      - ${PAPERCLIP_SOURCE_DIR}/packages/adapters/deerflow/dist:/app/packages/adapters/deerflow/dist
+      - ${PAPERCLIP_SOURCE_DIR}/ui/dist:/app/ui/dist
+      - ${PAPERCLIP_SOURCE_DIR}/skills:/app/skills
 
   deerflow-langgraph:
     build:
@@ -57,194 +45,3 @@ services:
       - ${PAPERCLIP_SOURCE_DIR}/deerflow/backend/:/app/backend/
       - ${PAPERCLIP_SOURCE_DIR}/deerflow/config.yaml:/app/config.yaml:ro
       - ${PAPERCLIP_SOURCE_DIR}/deerflow/skills:/app/skills
-
-  ssh-relay:
-    build:
-      context: ./ssh-relay
-      dockerfile: Dockerfile
-
-  dev-runner:
-    build:
-      context: ./dev-runner
-      dockerfile: Dockerfile
-
-  # ── Infrastructure Services ──────────────────────────────────
-
-  searxng:
-    image: searxng/searxng:latest
-    restart: unless-stopped
-    ports:
-      - "8888:8080"
-    volumes:
-      - ./searxng/settings.yml:/etc/searxng/settings.yml:ro
-    environment:
-      - SEARXNG_SECRET=${SEARXNG_SECRET:-changeme}
-    healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8080/healthz"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-
-
-  playwright:
-    image: mcr.microsoft.com/playwright:v1.52.0-noble
-    restart: unless-stopped
-    ports:
-      - "3003:3003"
-    command: ["npx", "playwright", "run-server", "--port", "3003", "--host", "0.0.0.0"]
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3003/json"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-
-  penpot-frontend:
-    image: penpotapp/frontend:latest
-    restart: unless-stopped
-    ports:
-      - "9001:80"
-    depends_on:
-      - penpot-backend
-      - penpot-exporter
-    environment:
-      - PENPOT_FLAGS=enable-registration enable-login-with-password disable-email-verification
-    volumes:
-      - penpot-assets:/opt/data/assets
-
-  penpot-backend:
-    image: penpotapp/backend:latest
-    restart: unless-stopped
-    depends_on:
-      - penpot-postgres
-      - penpot-redis
-    environment:
-      - PENPOT_FLAGS=enable-registration enable-login-with-password disable-email-verification disable-secure-session-cookies
-      - PENPOT_SECRET_KEY=${PENPOT_SECRET_KEY:-changeme}
-      - PENPOT_DATABASE_URI=postgresql://penpot-postgres/penpot
-      - PENPOT_DATABASE_USERNAME=penpot
-      - PENPOT_DATABASE_PASSWORD=penpot
-      - PENPOT_REDIS_URI=redis://penpot-redis/0
-      - PENPOT_ASSETS_STORAGE_BACKEND=assets-fs
-      - PENPOT_STORAGE_ASSETS_FS_DIRECTORY=/opt/data/assets
-      - PENPOT_TELEMETRY_ENABLED=false
-      - PENPOT_PUBLIC_URI=http://localhost:9001
-    volumes:
-      - penpot-assets:/opt/data/assets
-
-  penpot-exporter:
-    image: penpotapp/exporter:latest
-    restart: unless-stopped
-    depends_on:
-      - penpot-backend
-    environment:
-      - PENPOT_PUBLIC_URI=http://penpot-frontend
-
-  penpot-postgres:
-    image: postgres:16-alpine
-    restart: unless-stopped
-    environment:
-      - POSTGRES_DB=penpot
-      - POSTGRES_USER=penpot
-      - POSTGRES_PASSWORD=penpot
-    volumes:
-      - penpot-postgres:/var/lib/postgresql/data
-
-  penpot-redis:
-    image: redis:7-alpine
-    restart: unless-stopped
-
-  comfyui:
-    image: ghcr.io/ai-dock/comfyui:latest
-    restart: unless-stopped
-    profiles:
-      - gpu-comfyui
-    ports:
-      - "8188:8188"
-    environment:
-      - COMFYUI_PORT=8188
-    volumes:
-      - comfyui-data:/workspace
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
-
-  gitea:
-    image: gitea/gitea:latest
-    restart: unless-stopped
-    ports:
-      - "3000:3000"
-      - "2223:22"
-    environment:
-      - GITEA__database__DB_TYPE=sqlite3
-      - GITEA__database__PATH=/data/gitea/gitea.db
-      - GITEA__server__ROOT_URL=http://localhost:3000
-      - GITEA__server__HTTP_PORT=3000
-      - GITEA__server__DOMAIN=localhost
-      - GITEA__security__INSTALL_LOCK=true
-      - GITEA__service__DISABLE_REGISTRATION=false
-      - GITEA__service__REQUIRE_SIGNIN_VIEW=false
-    volumes:
-      - gitea-data:/data
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3000/api/v1/version"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 30s
-
-  minio:
-    image: minio/minio:latest
-    restart: unless-stopped
-    ports:
-      - "9000:9000"
-      - "9002:9002"
-    command: server /data --console-address ":9002"
-    environment:
-      - MINIO_ROOT_USER=${MINIO_ROOT_USER:-vibe}
-      - MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD:-changeme123}
-    volumes:
-      - minio-data:/data
-    healthcheck:
-      test: ["CMD", "mc", "ready", "local"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-
-  # MinIO bucket initialization
-  minio-init:
-    image: minio/mc:latest
-    depends_on:
-      minio:
-        condition: service_healthy
-    restart: "no"
-    entrypoint: >
-      /bin/sh -c "
-      mc alias set vibe http://minio:9000 $${MINIO_ROOT_USER:-vibe} $${MINIO_ROOT_PASSWORD:-changeme123} &&
-      mc mb --ignore-existing vibe/vibe-artifacts &&
-      echo 'Bucket vibe-artifacts ready'
-      "
-
-  # ── Vibe agent service URL injection ─────────────────────────
-  vibe:
-    volumes:
-      - bulletin-data:/shared/bulletin
-    environment:
-      - SEARXNG_URL=http://searxng:8080
-      - PLAYWRIGHT_WS_URL=ws://playwright:3003
-      - PENPOT_API_URL=http://penpot-backend:6060
-      - COMFYUI_URL=http://comfyui:8188
-      - GITEA_URL=http://gitea:3000
-      - MINIO_URL=http://minio:9000
-
-volumes:
-  paperclip-data:
-  bulletin-data:
-  penpot-assets:
-  penpot-postgres:
-  comfyui-data:
-  gitea-data:
-  minio-data:
