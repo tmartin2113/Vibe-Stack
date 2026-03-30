@@ -652,10 +652,10 @@ class TestMemoryStoreWithPostgres:
             self._cleanup(backend)
             store = MemoryStore(storage_backend=backend)
 
-            store.store(content="python programming language", source="agent", tags="code,python")
-            store.store(content="python snake species", source="user", tags="animals")
+            store.store(content="python programming language guide", source="agent", tags="code,python")
+            store.store(content="anaconda snake species habitat", source="user", tags="animals")
 
-            results = store.recall("python", max_results=5, source_filter="agent")
+            results = store.recall("programming language", max_results=5, source_filter="agent")
             assert len(results) >= 1
             assert all(r.source == "agent" for r in results)
         finally:
