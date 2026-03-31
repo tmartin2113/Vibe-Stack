@@ -5,12 +5,16 @@
 
 set -euo pipefail
 
-RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; BLUE='\033[0;34m'; NC='\033[0m'
+RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; BLUE='\033[0;34m'; BOLD='\033[1m'; NC='\033[0m'
 info()    { printf "${BLUE}[INFO]${NC}   %s\n" "$*"; }
 success() { printf "${GREEN}[OK]${NC}     %s\n" "$*"; }
 warn()    { printf "${YELLOW}[WARN]${NC}   %s\n" "$*"; }
 error()   { printf "${RED}[ERROR]${NC}  %s\n" "$*" >&2; exit 1; }
 err()     { printf "${RED}[ERROR]${NC}  %s\n" "$*" >&2; }
+
+TOTAL_STEPS=23
+CURRENT_STEP=0
+step() { CURRENT_STEP=$((CURRENT_STEP + 1)); printf "\n${BOLD}[Step %d/%d]${NC} ${BLUE}%s${NC}\n" "$CURRENT_STEP" "$TOTAL_STEPS" "$*"; }
 
 # wait_healthy TIMEOUT_SECS service [service...]
 wait_healthy() {
@@ -32,9 +36,9 @@ wait_healthy() {
             case "$status" in
                 healthy)  ;;
                 unhealthy)
-                    err "$svc — unhealthy. Last 20 log lines:"
-                    docker logs --tail 20 "$cid" 2>&1 | sed 's/^/         /'
-                    exit 1 ;;
+                    # During startup, unhealthy may just mean "still loading"
+                    # (e.g. vLLM model load). Keep waiting until timeout.
+                    all_healthy=false ;;
                 *)  all_healthy=false ;;
             esac
         done
@@ -69,6 +73,7 @@ cd "$SCRIPT_DIR"
 # ══════════════════════════════════════════════════════════════
 # 0. Load .env
 # ══════════════════════════════════════════════════════════════
+step "Loading .env"
 if [[ ! -f ".env" ]]; then
     cp .env.example .env
     warn ".env not found — created from .env.example"
@@ -132,11 +137,11 @@ fi
 # ══════════════════════════════════════════════════════════════
 # 1. Port conflict check
 # ══════════════════════════════════════════════════════════════
-info "Checking for port conflicts..."
+step "Checking for port conflicts"
 REQUIRED_PORTS="2222 3100 5678 8000 8100 8101 8102 8103 8104 8105 8106 8107 8108 8109 8110 8111 8112 8113 8114 8115 8116 8117 8118 8119 9000"
 CONFLICTS=""
 for port in $REQUIRED_PORTS; do
-    pid=$(ss -tlnp "sport = :$port" 2>/dev/null | awk 'NR>1 {print $6}' | grep -oP 'pid=\K\d+' | head -1)
+    pid=$(ss -tlnp "sport = :$port" 2>/dev/null | awk 'NR>1 {print $6}' | grep -oP 'pid=\K\d+' | head -1 || true)
     if [[ -n "$pid" ]]; then
         pname=$(ps -p "$pid" -o comm= 2>/dev/null || echo "unknown")
         CONFLICTS="${CONFLICTS}\n  Port $port — PID $pid ($pname)"
@@ -144,7 +149,8 @@ for port in $REQUIRED_PORTS; do
 done
 
 if [[ -n "$CONFLICTS" ]]; then
-    warn "The following ports are already in use:${CONFLICTS}"
+    warn "The following ports are already in use:"
+    printf "${CONFLICTS}\n"
     printf "\n${YELLOW}Vibe Stack needs these ports. Stop the conflicting processes or press Enter to continue anyway.${NC}\n"
     printf "  Press Ctrl+C to abort, or Enter to continue: "
     read -r
@@ -154,7 +160,7 @@ success "Port check complete"
 # ══════════════════════════════════════════════════════════════
 # 2. Detect host versions
 # ══════════════════════════════════════════════════════════════
-info "Detecting host versions..."
+step "Detecting host versions"
 HOST_UBUNTU_VERSION=$(lsb_release -rs 2>/dev/null || echo "24.04")
 HOST_PYTHON_VERSION=$(python3 --version 2>&1 | grep -oP '\d+\.\d+' | head -1 || echo "3.12")
 info "Ubuntu $HOST_UBUNTU_VERSION / Python $HOST_PYTHON_VERSION"
@@ -163,7 +169,7 @@ success "Host versions detected"
 # ══════════════════════════════════════════════════════════════
 # 3. System prerequisites
 # ══════════════════════════════════════════════════════════════
-info "Installing system prerequisites..."
+step "Installing system prerequisites"
 apt-get update -qq
 apt-get install -y --no-install-recommends \
     apt-transport-https ca-certificates curl gnupg lsb-release \
@@ -171,12 +177,14 @@ apt-get install -y --no-install-recommends \
     iptables-persistent netfilter-persistent \
     fail2ban auditd audispd-plugins \
     unattended-upgrades jq wget logwatch \
-    dnsutils python3-pip python3-venv
+    dnsutils python3-pip python3-venv \
+    nodejs npm
 success "Prerequisites installed"
 
 # ══════════════════════════════════════════════════════════════
 # 4. Docker
 # ══════════════════════════════════════════════════════════════
+step "Docker"
 if ! command -v docker &>/dev/null; then
     info "Installing Docker CE..."
     curl -fsSL https://download.docker.com/linux/ubuntu/gpg \
@@ -221,6 +229,7 @@ success "Docker Compose $(docker compose version --short) available"
 # ══════════════════════════════════════════════════════════════
 # 5. NVIDIA Container Toolkit
 # ══════════════════════════════════════════════════════════════
+step "NVIDIA Container Toolkit"
 if ! dpkg -s nvidia-container-toolkit &>/dev/null; then
     info "Installing NVIDIA Container Toolkit..."
     curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey \
@@ -240,7 +249,7 @@ fi
 # ══════════════════════════════════════════════════════════════
 # 5b. vLLM — GPU-aware model selection + systemd service
 # ══════════════════════════════════════════════════════════════
-info "Detecting GPU for vLLM model selection..."
+step "vLLM model selection"
 
 VLLM_SKIP=false
 GPU_VRAM_MB=0
@@ -349,10 +358,14 @@ if [[ "$VLLM_SKIP" == "false" ]]; then
     systemctl enable vllm
     success "vLLM systemd service installed and enabled"
 
-    # Pre-pull the vLLM container image
-    info "Pulling vllm/vllm-openai:latest..."
-    docker pull vllm/vllm-openai:latest
-    success "vLLM Docker image pulled"
+    # Pre-pull the vLLM container image (skip if already present)
+    if docker image inspect vllm/vllm-openai:latest &>/dev/null; then
+        success "vLLM Docker image already present — skipping pull"
+    else
+        info "Pulling vllm/vllm-openai:latest (this is ~20GB, may take a while)..."
+        docker pull vllm/vllm-openai:latest
+        success "vLLM Docker image pulled"
+    fi
 
     # Persist model selection to .env
     _update_env_var "VLLM_MODEL" "${VLLM_MODEL}"
@@ -378,6 +391,7 @@ fi
 # ══════════════════════════════════════════════════════════════
 # 6. Caddy with rate-limit plugin
 # ══════════════════════════════════════════════════════════════
+step "Caddy with rate-limit plugin"
 if ! command -v caddy &>/dev/null || ! caddy list-modules 2>/dev/null | grep -q "rate_limit"; then
     info "Building Caddy with rate-limit plugin..."
 
@@ -431,7 +445,7 @@ usermod -aG tailscale caddy 2>/dev/null || true
 # ══════════════════════════════════════════════════════════════
 # 7. Secrets
 # ══════════════════════════════════════════════════════════════
-info "Generating secrets..."
+step "Generating secrets"
 mkdir -p secrets; chmod 700 secrets
 
 gen_secret() {
@@ -466,7 +480,7 @@ success "Secrets ready"
 # ══════════════════════════════════════════════════════════════
 # 7b. Skill Sources
 # ══════════════════════════════════════════════════════════════
-info "Setting up skill sources..."
+step "Setting up skill sources"
 mkdir -p skill-sources
 
 clone_if_missing() {
@@ -475,24 +489,32 @@ clone_if_missing() {
         info "  Exists: $dest"
     else
         info "  Cloning $url → $dest"
-        git clone --depth 1 "$url" "$dest"
+        if ! GIT_TERMINAL_PROMPT=0 git clone --depth 1 "$url" "$dest" 2>/dev/null; then
+            warn "  Failed to clone $url (private or not found) — skipping"
+        fi
     fi
 }
 
 clone_if_missing "https://github.com/anthropics/skills.git"            "skill-sources/anthropics-skills"
-clone_if_missing "https://github.com/nichochar/obra-superpowers.git"   "skill-sources/obra-superpowers"
-clone_if_missing "https://github.com/nichochar/vercel-agent-skills.git" "skill-sources/vercel-agent-skills"
-clone_if_missing "https://github.com/nichochar/voltagent-skills.git"   "skill-sources/voltagent-skills"
+clone_if_missing "https://github.com/obra/superpowers.git"             "skill-sources/obra-superpowers"
+clone_if_missing "https://github.com/vercel-labs/agent-skills.git"     "skill-sources/vercel-agent-skills"
+clone_if_missing "https://github.com/voltagent/awesome-openclaw-skills.git" "skill-sources/voltagent-skills"
+clone_if_missing "https://github.com/openclaw/skills.git"              "skill-sources/openclaw-skills-repo"
 
-info "Fetching OpenClaw skills..."
-node fetch-openclaw-skills.mjs || warn "OpenClaw skill fetch failed (non-fatal)"
+if [[ -f "skill-sources/openclaw-skills/index.json" ]]; then
+    success "OpenClaw skills already fetched — skipping"
+else
+    info "Fetching OpenClaw skills..."
+    node fetch-openclaw-skills.mjs || warn "OpenClaw skill fetch failed (non-fatal)"
+fi
 
 success "Skill sources ready"
 
 # ══════════════════════════════════════════════════════════════
 # 8. Workspace
 # ══════════════════════════════════════════════════════════════
-info "Configuring workspace: $WORKSPACE_PATH"
+step "Configuring workspace"
+info "Path: $WORKSPACE_PATH"
 SFTP_ROOT=$(dirname "$WORKSPACE_PATH")
 mkdir -p "$WORKSPACE_PATH"
 chown root:root "$SFTP_ROOT" 2>/dev/null || true
@@ -547,7 +569,7 @@ success "Workspace configured"
 # ══════════════════════════════════════════════════════════════
 # 9. SSH
 # ══════════════════════════════════════════════════════════════
-info "Configuring SSH..."
+step "Configuring SSH"
 sed -e "s|100\.x\.x\.x|${TAILSCALE_IP}|g" \
     -e "s|/srv/sftp/workspace|${SFTP_ROOT}|g" \
     sshd_config_additions > /tmp/sshd_resolved
@@ -580,14 +602,14 @@ success "SSH configured (port 22 + 2222)"
 # ══════════════════════════════════════════════════════════════
 # 10. Tailscale SSH
 # ══════════════════════════════════════════════════════════════
-info "Enabling Tailscale SSH..."
+step "Enabling Tailscale SSH"
 tailscale set --ssh=true
 success "Tailscale SSH enabled (port 22 — interactive sessions)"
 
 # ══════════════════════════════════════════════════════════════
 # 11. Caddy
 # ══════════════════════════════════════════════════════════════
-info "Configuring Caddy..."
+step "Configuring Caddy"
 useradd -r -s /usr/sbin/nologin -d /var/lib/caddy caddy 2>/dev/null || true
 mkdir -p /etc/caddy /var/log/caddy /var/lib/caddy
 chown caddy:caddy /var/log/caddy /var/lib/caddy
@@ -664,7 +686,7 @@ success "Caddy running (self-signed TLS)"
 # ══════════════════════════════════════════════════════════════
 # 12a. Docker credential helper + GHCR authentication
 # ══════════════════════════════════════════════════════════════
-info "Configuring Docker credential storage..."
+step "Docker credential storage + GHCR auth"
 
 # Install credential helper if not present
 if ! command -v docker-credential-secretservice &>/dev/null && \
@@ -673,11 +695,14 @@ if ! command -v docker-credential-secretservice &>/dev/null && \
 fi
 
 # Determine which credential helper to use
+# Both secretservice and pass require D-Bus — skip on headless/sudo.
 CRED_HELPER=""
-if command -v docker-credential-secretservice &>/dev/null; then
-    CRED_HELPER="secretservice"
-elif command -v docker-credential-pass &>/dev/null; then
-    CRED_HELPER="pass"
+if [[ -n "${DBUS_SESSION_BUS_ADDRESS:-}" ]]; then
+    if command -v docker-credential-secretservice &>/dev/null; then
+        CRED_HELPER="secretservice"
+    elif command -v docker-credential-pass &>/dev/null; then
+        CRED_HELPER="pass"
+    fi
 fi
 
 # Configure Docker for the deploying user (not root)
@@ -707,12 +732,24 @@ with open('$DOCKER_CONFIG', 'w') as f: json.dump(cfg, f, indent=2)
     chown -R "$DEPLOY_USER:$DEPLOY_USER" "$DOCKER_CONFIG_DIR"
     success "Docker credential helper: $CRED_HELPER"
 else
-    warn "No credential helper available — Docker credentials will be stored in plaintext"
-    warn "Install golang-docker-credential-helpers to fix this"
+    info "No D-Bus session — skipping credential helper (plaintext auth is fine for servers)"
 fi
 
+# Credential helpers (secretservice/pass) need D-Bus which isn't available
+# under sudo. Docker auto-discovers them on $PATH even without credsStore
+# in config, so we temporarily hide them during setup pulls.
+SETUP_DOCKER_CONFIG=$(mktemp -d)
+echo '{"auths":{}}' > "$SETUP_DOCKER_CONFIG/config.json"
+export DOCKER_CONFIG="$SETUP_DOCKER_CONFIG"
+for helper in docker-credential-secretservice docker-credential-pass docker-credential-desktop; do
+    if command -v "$helper" &>/dev/null; then
+        helper_path=$(command -v "$helper")
+        mv "$helper_path" "${helper_path}.setup-disabled" 2>/dev/null || true
+    fi
+done
+
 # Authenticate with GHCR if not already logged in
-if ! docker pull "ghcr.io/${GHCR_ORG}/paperclip-server:latest" >/dev/null 2>&1; then
+if ! timeout 15 docker pull "ghcr.io/${GHCR_ORG}/paperclip-server:latest" >/dev/null 2>&1; then
     info "GHCR authentication required for private images"
     if [[ -f "secrets/github_token.txt" ]] && [[ -s "secrets/github_token.txt" ]]; then
         cat secrets/github_token.txt | su "$DEPLOY_USER" -c "docker login ghcr.io -u ${GIT_USER} --password-stdin" 2>&1 \
@@ -730,10 +767,20 @@ fi
 # ══════════════════════════════════════════════════════════════
 # 12b. Pull and build Docker images
 # ══════════════════════════════════════════════════════════════
-info "Pulling public Docker images..."
-for svc in searxng n8n postgres-n8n watchtower; do
-    info "  Pulling $svc..."
-    docker compose pull --policy missing --quiet "$svc"
+step "Pulling and building Docker images"
+# Pull only services that exist in the compose config
+AVAILABLE_SERVICES=$(docker compose config --services 2>/dev/null)
+for svc in searxng gitea minio penpot-frontend penpot-backend penpot-postgres penpot-redis penpot-exporter playwright; do
+    if echo "$AVAILABLE_SERVICES" | grep -qx "$svc"; then
+        # Check if image already exists locally; skip pull if so
+        IMAGE_NAME=$(docker compose config --format json 2>/dev/null | python3 -c "import sys,json; cfg=json.load(sys.stdin); print(cfg.get('services',{}).get('$svc',{}).get('image',''))" 2>/dev/null || true)
+        if [[ -n "$IMAGE_NAME" ]] && docker image inspect "$IMAGE_NAME" &>/dev/null 2>&1; then
+            success "  $svc — image already present"
+        else
+            info "  Pulling $svc..."
+            docker compose pull "$svc" || warn "  $svc — pull failed (network issue?), will retry on next run"
+        fi
+    fi
 done
 success "Public images pulled"
 
@@ -743,7 +790,7 @@ BUILD_NEEDED=""
 info "Pulling pre-built images from GHCR..."
 for svc in $CUSTOM_SERVICES; do
     info "  Pulling $svc..."
-    if ! docker compose pull --quiet "$svc" 2>/dev/null; then
+    if ! docker compose pull "$svc" 2>/dev/null; then
         warn "  $svc — pre-built image not available, will build locally"
         BUILD_NEEDED="$BUILD_NEEDED $svc"
     fi
@@ -757,8 +804,9 @@ if [[ -n "$BUILD_NEEDED" ]]; then
             docker compose build "$svc"
         done
     else
-        err "The following images could not be pulled from GHCR:$BUILD_NEEDED"
-        error "Either push images to GHCR first, or copy docker-compose.override.yml.example to docker-compose.override.yml for local builds"
+        warn "The following images could not be pulled from GHCR:$BUILD_NEEDED"
+        warn "To build locally: cp docker-compose.override.yml.example docker-compose.override.yml"
+        warn "Then set PAPERCLIP_SOURCE_DIR in .env and run: docker compose build$BUILD_NEEDED"
     fi
 fi
 success "All images ready"
@@ -769,15 +817,37 @@ success "All images ready"
 # COMPOSE_FILE was set in Phase 5b and exported; docker compose
 # reads it automatically so no -f flags are needed.
 
-info "Starting stack — Paperclip server..."
+step "Starting stack"
+# Bootstrap embedded PostgreSQL — the server image uses @embedded-postgres which
+# needs initdb + role/database creation before the app can start. On a fresh
+# volume this must be done manually; subsequent runs skip if PG_VERSION exists.
+PG_DATA="/paperclip/instances/default/db"
+if ! docker compose run --rm --no-deps --entrypoint "test -f ${PG_DATA}/PG_VERSION" server 2>/dev/null; then
+    info "Initializing embedded PostgreSQL..."
+    docker compose run --rm --no-deps --entrypoint "sh -c '\
+      PG_BIN=\$(find /app/node_modules -path \"*/@embedded-postgres/linux-x64/native/bin\" -type d | head -1) && \
+      \$PG_BIN/initdb -D ${PG_DATA} && \
+      echo \"CREATE ROLE paperclip WITH LOGIN SUPERUSER;\" | \$PG_BIN/postgres --single -D ${PG_DATA} postgres && \
+      echo \"CREATE DATABASE paperclip OWNER paperclip;\" | \$PG_BIN/postgres --single -D ${PG_DATA} postgres'" server
+    success "Embedded PostgreSQL initialized (role=paperclip, db=paperclip)"
+else
+    info "Embedded PostgreSQL already initialized — skipping"
+fi
+
+info "Starting Paperclip server..."
 docker compose up -d server
 info "Waiting for Paperclip to become healthy..."
 wait_healthy 120 server
 
-info "Starting stack — DeerFlow services..."
-docker compose up -d deerflow-langgraph deerflow-gateway
-info "Waiting for DeerFlow to become healthy..."
-wait_healthy 120 deerflow-langgraph deerflow-gateway
+# Only start DeerFlow if images are available
+if docker image inspect "$(docker compose config --images 2>/dev/null | grep deerflow-langgraph | head -1)" &>/dev/null 2>&1; then
+    info "Starting stack — DeerFlow services..."
+    docker compose up -d deerflow-langgraph deerflow-gateway
+    info "Waiting for DeerFlow to become healthy..."
+    wait_healthy 120 deerflow-langgraph deerflow-gateway
+else
+    warn "DeerFlow images not available — skipping. Build them with docker compose build deerflow-langgraph deerflow-gateway"
+fi
 
 if [[ "$COMPOSE_FILE" == *"infra"* ]]; then
     info "Starting stack — infrastructure services..."
@@ -805,7 +875,7 @@ success "Stack started"
 # ══════════════════════════════════════════════════════════════
 # 14. iptables
 # ══════════════════════════════════════════════════════════════
-info "Applying iptables rules..."
+step "iptables rules"
 chmod +x iptables-setup.sh
 ./iptables-setup.sh
 success "iptables rules applied"
@@ -832,7 +902,7 @@ success "iptables auto-refresh service installed"
 # ══════════════════════════════════════════════════════════════
 # 15. Watchdog service
 # ══════════════════════════════════════════════════════════════
-info "Installing workspace watchdog..."
+step "Workspace watchdog service"
 cp workspace-watchdog.sh /usr/local/bin/workspace-watchdog.sh
 chmod +x /usr/local/bin/workspace-watchdog.sh
 cat > /etc/systemd/system/workspace-watchdog.service << EOF
@@ -862,7 +932,7 @@ success "Watchdog installed"
 # ══════════════════════════════════════════════════════════════
 # 16. auditd
 # ══════════════════════════════════════════════════════════════
-info "Installing auditd rules..."
+step "auditd rules"
 sed "s|/srv/sftp/workspace/files|${WORKSPACE_PATH}|g" \
     auditd-vibe-stack.rules > /etc/audit/rules.d/vibe-stack.rules
 augenrules --load >/dev/null 2>&1 || true
@@ -871,7 +941,7 @@ success "auditd configured"
 # ══════════════════════════════════════════════════════════════
 # 17. fail2ban
 # ══════════════════════════════════════════════════════════════
-info "Installing fail2ban..."
+step "fail2ban"
 cp fail2ban/vibe-stack.conf    /etc/fail2ban/jail.d/vibe-stack.conf
 cp fail2ban/caddy-paperclip.conf /etc/fail2ban/filter.d/caddy-paperclip.conf
 systemctl enable --now fail2ban && systemctl restart fail2ban
@@ -880,7 +950,7 @@ success "fail2ban configured"
 # ══════════════════════════════════════════════════════════════
 # 18. Unattended upgrades
 # ══════════════════════════════════════════════════════════════
-info "Enabling unattended security upgrades..."
+step "Unattended security upgrades"
 cat > /etc/apt/apt.conf.d/20auto-upgrades-vibe << 'EOF'
 APT::Periodic::Update-Package-Lists "1";
 APT::Periodic::Unattended-Upgrade "1";
@@ -890,7 +960,7 @@ success "Unattended upgrades enabled"
 # ══════════════════════════════════════════════════════════════
 # 19. Claude Code login check
 # ══════════════════════════════════════════════════════════════
-info "Checking Claude Code credentials..."
+step "Claude Code login check"
 CREDS_PATH="/paperclip/.claude/.credentials.json"
 if docker compose exec -T server test -f "$CREDS_PATH" 2>/dev/null; then
     success "Claude Code credentials found in container"
@@ -898,6 +968,14 @@ else
     warn "Claude Code not authenticated inside the Paperclip container"
     warn "Run: docker compose exec -it server claude login"
 fi
+
+# Restore credential helpers and clean up temporary Docker config
+for helper in docker-credential-secretservice docker-credential-pass docker-credential-desktop; do
+    disabled=$(command -v "${helper}.setup-disabled" 2>/dev/null || which "${helper}.setup-disabled" 2>/dev/null || true)
+    [[ -n "$disabled" ]] && mv "$disabled" "${disabled%.setup-disabled}" 2>/dev/null || true
+done
+[[ -n "${SETUP_DOCKER_CONFIG:-}" ]] && rm -rf "$SETUP_DOCKER_CONFIG"
+unset DOCKER_CONFIG
 
 # ══════════════════════════════════════════════════════════════
 # DONE
