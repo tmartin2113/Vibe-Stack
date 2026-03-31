@@ -766,52 +766,40 @@ success "All images ready"
 # ══════════════════════════════════════════════════════════════
 # 13. Start stack (staged for reliable startup)
 # ══════════════════════════════════════════════════════════════
-info "Starting stack — databases..."
-docker compose up -d db postgres-n8n
-info "Waiting for databases to become healthy..."
-wait_healthy 60 db postgres-n8n
-
-info "Starting stack — infrastructure services..."
-docker compose up -d searxng ssh-relay lightpanda dev-runner
-info "Waiting for infrastructure..."
-wait_healthy 60 searxng ssh-relay lightpanda dev-runner
-
-info "Starting stack — n8n..."
-docker compose up -d n8n
-wait_healthy 120 n8n
-
-if [[ "${VLLM_SKIP:-true}" == "false" ]]; then
-    info "Starting stack — vLLM (model download may take several minutes on first run)..."
-    systemctl start vllm
-    VLLM_DEADLINE=$(( SECONDS + 300 ))
-    VLLM_READY=false
-    while (( SECONDS < VLLM_DEADLINE )); do
-        if curl -sf http://127.0.0.1:8000/v1/models >/dev/null 2>&1; then
-            VLLM_READY=true
-            break
-        fi
-        sleep 5
-    done
-    if $VLLM_READY; then
-        success "vLLM is serving ${VLLM_MODEL}"
-    else
-        warn "vLLM not ready after 300s — DeerFlow will start anyway"
-        warn "Check: journalctl -u vllm -f"
-    fi
-fi
-
-info "Starting stack — DeerFlow services..."
-docker compose up -d deerflow-langgraph deerflow-gateway
-info "Waiting for DeerFlow to become healthy..."
-wait_healthy 120 deerflow-langgraph deerflow-gateway
+# COMPOSE_FILE was set in Phase 5b and exported; docker compose
+# reads it automatically so no -f flags are needed.
 
 info "Starting stack — Paperclip server..."
 docker compose up -d server
 info "Waiting for Paperclip to become healthy..."
 wait_healthy 120 server
 
-info "Starting stack — watchtower..."
-docker compose up -d watchtower
+info "Starting stack — DeerFlow services..."
+docker compose up -d deerflow-langgraph deerflow-gateway
+info "Waiting for DeerFlow to become healthy..."
+wait_healthy 120 deerflow-langgraph deerflow-gateway
+
+if [[ "$COMPOSE_FILE" == *"infra"* ]]; then
+    info "Starting stack — infrastructure services..."
+    docker compose up -d searxng playwright gitea minio minio-init \
+        penpot-frontend penpot-backend penpot-exporter penpot-postgres penpot-redis \
+        ssh-relay dev-runner
+    info "Waiting for infrastructure services with healthchecks..."
+    wait_healthy 60 searxng playwright gitea minio
+fi
+
+if [[ "$COMPOSE_FILE" == *"gpu"* ]]; then
+    info "Starting stack — GPU services (model download may take several minutes on first run)..."
+    docker compose up -d vllm opensandbox
+    info "Waiting for GPU services to become healthy..."
+    wait_healthy 300 vllm opensandbox
+fi
+
+info "Starting stack — Tailscale..."
+docker compose up -d tailscale
+
+info "Starting stack — Vibe agent..."
+docker compose up -d vibe
 success "Stack started"
 
 # ══════════════════════════════════════════════════════════════
