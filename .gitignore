@@ -10,6 +10,7 @@ __pycache__/
 *.egg-info/
 .DS_Store
 docker-compose.override.yml
+docker-compose.yml.bak
 skill-sources/anthropics-skills/
 skill-sources/obra-superpowers/
 skill-sources/vercel-agent-skills/
