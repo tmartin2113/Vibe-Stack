@@ -965,8 +965,16 @@ CREDS_PATH="/paperclip/.claude/.credentials.json"
 if docker compose exec -T server test -f "$CREDS_PATH" 2>/dev/null; then
     success "Claude Code credentials found in container"
 else
-    warn "Claude Code not authenticated inside the Paperclip container"
-    warn "Run: docker compose exec -it server claude login"
+    printf "\n${YELLOW}Claude Code is not authenticated inside the Paperclip container.${NC}\n"
+    printf "  Agents need this to run tasks. Log in now?\n"
+    printf "  Press Enter to log in, or Ctrl+C to skip (you can do it later): "
+    read -r
+    docker compose exec -it server claude login
+    if docker compose exec -T server test -f "$CREDS_PATH" 2>/dev/null; then
+        success "Claude Code authenticated"
+    else
+        warn "Claude Code login skipped — run later: docker compose exec -it server claude login"
+    fi
 fi
 
 # Restore credential helpers and clean up temporary Docker config
@@ -984,23 +992,20 @@ printf "\n${GREEN}════════════════════�
 printf "${GREEN}  Vibe Stack 2.0 deployment complete!${NC}\n"
 printf "${GREEN}══════════════════════════════════════════════════════${NC}\n\n"
 printf "  Paperclip:   ${BLUE}https://${TAILSCALE_HOSTNAME}${NC}\n"
-printf "  n8n:         ${BLUE}https://${TAILSCALE_HOSTNAME}:5678${NC}\n"
 if [[ "${VLLM_SKIP:-true}" == "false" ]]; then
     printf "  vLLM model:  ${BLUE}${VLLM_MODEL}${NC}\n"
 fi
 printf "\n"
 
-printf "${YELLOW}Required manual steps:${NC}\n"
-printf "  1. Navigate to https://${TAILSCALE_HOSTNAME} and create your admin account\n\n"
-printf "  2. Authenticate Claude Code inside the Paperclip container:\n"
-printf "     docker compose exec -it server claude login\n\n"
-printf "  3. Add phone SSH public key (SFTP on port 2222):\n"
+printf "${YELLOW}Next steps:${NC}\n"
+printf "  1. Open ${BLUE}https://${TAILSCALE_HOSTNAME}${NC} and run the onboard wizard:\n"
+printf "     docker compose exec -it server pnpm paperclipai onboard\n\n"
+printf "  2. Add phone SSH public key (SFTP on port 2222):\n"
 printf "     echo 'ssh-ed25519 AAAA...' >> /home/sftp-vibe/.ssh/authorized_keys\n"
 printf "     Connect with Termius: host=${TAILSCALE_IP} port=2222 user=sftp-vibe\n\n"
-printf "  4. Add SSH deploy keys (per-repo):\n"
+printf "  3. Add SSH deploy keys (per-repo):\n"
 printf "     ssh-keygen -t ed25519 -f %s/secrets/ssh/your-repo -N ''\n" "$SCRIPT_DIR"
 printf "     Add the .pub key as a deploy key on the GitHub repo\n"
 printf "     (Settings -> Deploy Keys -> Add, check 'Allow write access')\n\n"
-printf "  5. Enable Tailscale 2FA on your account\n\n"
-printf "  6. Bootstrap Paperclip (create company, hire agents):\n"
-printf "     docker compose exec server node server/dist/cli.js bootstrap-ceo\n\n"
+printf "  4. Add GitHub token for agent git operations:\n"
+printf "     echo 'ghp_...' > secrets/github_token.txt && chmod 444 secrets/github_token.txt\n\n"
