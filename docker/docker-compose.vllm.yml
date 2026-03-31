@@ -1,3 +1,11 @@
+# DEPRECATED: This file predates the compose restructure (2026-03-30).
+# Use the root-level compose files instead:
+#   docker-compose.yml        — core services
+#   docker-compose.infra.yml  — infrastructure
+#   docker-compose.gpu.yml    — GPU services
+#
+# This file is preserved for reference and will be removed in a future release.
+
 # Paperclip + Vibe Agent Stack (vLLM backend)
 #
 # Replaces Ollama with vLLM for high-throughput concurrent inference.
