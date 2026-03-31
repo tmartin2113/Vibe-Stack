@@ -362,6 +362,19 @@ else
     warn "vLLM will not be configured — no suitable GPU detected"
 fi
 
+# ── Set COMPOSE_FILE based on GPU availability ─────────────────
+if [ -n "${VLLM_MODEL:-}" ]; then
+    COMPOSE_FILE="docker-compose.yml:docker-compose.infra.yml:docker-compose.gpu.yml"
+    _update_env_var "COMPOSE_FILE" "$COMPOSE_FILE"
+    export COMPOSE_FILE
+    info "Compose profile: full stack (core + infra + gpu)"
+else
+    COMPOSE_FILE="docker-compose.yml:docker-compose.infra.yml"
+    _update_env_var "COMPOSE_FILE" "$COMPOSE_FILE"
+    export COMPOSE_FILE
+    info "Compose profile: cloud only (core + infra, no GPU)"
+fi
+
 # ══════════════════════════════════════════════════════════════
 # 6. Caddy with rate-limit plugin
 # ══════════════════════════════════════════════════════════════
