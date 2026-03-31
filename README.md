@@ -63,74 +63,53 @@ The orchestrator coordinates multi-agent work via Paperclip's issue hierarchy:
 
 All orchestration state is derived from Paperclip issue state — no external storage needed.
 
-## Deployment
+## Quick Start
 
-Vibe agents run as Paperclip process adapters. Paperclip handles scheduling, task assignment, and multi-agent coordination. Each agent specializes in a task type and runs in heartbeat mode.
+### Prerequisites
 
-### Quick Start (Bootstrap)
+- Linux host (Ubuntu 22.04+ recommended)
+- Docker Engine 24+ with Compose v2
+- [Tailscale](https://tailscale.com/download) installed and running (`tailscale up`)
+- NVIDIA GPU with [nvidia-container-toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html) (optional — enables local inference)
+
+### Install
 
 ```bash
-# 1. Copy env and set your admin password
-cp .env.example .env
-# Edit .env → set PAPERCLIP_ADMIN_PASSWORD
+git clone https://github.com/tmartin2113/Vibe-Stack.git
+cd Vibe-Stack
+./setup.sh
+docker compose up -d
+```
 
-# 2. For browser sign-in on localhost, also set in .env:
-#    BETTER_AUTH_TRUSTED_ORIGINS=http://localhost:3100
+`setup.sh` detects your hardware, generates secrets, and configures the right services:
 
-# 3. Start the stack
+| Hardware | What You Get |
+|----------|-------------|
+| NVIDIA GPU (8GB+ VRAM) | Cloud adapters + local inference via vLLM + DeerFlow assistant |
+| No GPU | Cloud adapters only (Claude, GPT, Codex) |
+
+After startup, open the Paperclip UI at the URL printed by setup to create your org and agents.
+
+### Compose Profiles
+
+```bash
+# Full stack (default with GPU)
 docker compose up -d
 
-# 4. Bootstrap everything (user + company + agents)
-node bootstrap-all.js
+# Add specific layers manually
+docker compose -f docker-compose.yml -f docker-compose.infra.yml up -d
+docker compose -f docker-compose.yml -f docker-compose.infra.yml -f docker-compose.gpu.yml up -d
 ```
 
-This creates an admin user (`prime@vibe.local`), grants `instance_admin`, creates the "Vibe Stack" company, and populates the full org hierarchy (CEO, CTO, DevOps, SWE, QA, UX Designer). Sign in at `http://localhost:3100`.
+### Local Development
 
-> **Note:** `BETTER_AUTH_TRUSTED_ORIGINS` must include your browser's origin (e.g. `http://localhost:3100`) or auth requests will be rejected. For Tailscale access, add your tailnet hostname too: `http://localhost:3100,https://vibe.your-tailnet.ts.net`.
-
-### Docker Compose (Recommended)
+To build the server and DeerFlow from local source instead of GHCR images:
 
 ```bash
-docker compose -f docker/docker-compose.paperclip.yml up
+cp docker-compose.override.yml.example docker-compose.override.yml
+# Set PAPERCLIP_SOURCE_DIR in .env
+docker compose up -d --build
 ```
-
-Starts: Paperclip server + Ollama (shared LLM) + Vibe agents. GPU passthrough via NVIDIA Container Toolkit.
-
-### Single Agent (Manual)
-
-```bash
-export PAPERCLIP_API_URL="http://localhost:3100"
-export PAPERCLIP_API_KEY="your-key"
-export VIBE_TASK_TYPE="code"
-
-python -m agents.main --heartbeat
-```
-
-### Remote Access (Tailscale)
-
-Access Paperclip from your phone or any device on your tailnet with automatic HTTPS — no port forwarding or reverse proxy needed.
-
-```bash
-docker compose up tailscale
-```
-
-On first run, check logs for the auth URL:
-
-```bash
-docker compose logs tailscale
-```
-
-Visit the printed URL to add the node to your tailnet. Once connected, access Paperclip at `https://vibe.<your-tailnet>.ts.net` from any device.
-
-To skip interactive auth, set `TS_AUTHKEY` in `.env` (get one from [Tailscale admin](https://login.tailscale.com/admin/settings/keys)). Auth state persists across restarts — you only authenticate once.
-
-### Health Check
-
-```bash
-python -m agents.doctor
-```
-
-Checks hardware, LLM backends, sandbox, GPU, memory store, and message store health.
 
 ## Architecture
 
