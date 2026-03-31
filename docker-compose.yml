@@ -43,7 +43,10 @@ services:
 
   # ── DeerFlow LangGraph Backend ─────────────────────────────────────────────
   deerflow-langgraph:
-    image: ghcr.io/tmartin2113/deerflow-langgraph:${PAPERCLIP_VERSION:-latest}
+    image: ghcr.io/tmartin2113/deerflow:${PAPERCLIP_VERSION:-latest}
+    command: >
+      sh -c "cd backend && uv run langgraph dev
+      --no-browser --allow-blocking --no-reload --host 0.0.0.0 --port 2024"
     env_file: .env
     extra_hosts:
       - "host.docker.internal:host-gateway"
@@ -58,7 +61,10 @@ services:
 
   # ── DeerFlow Gateway ───────────────────────────────────────────────────────
   deerflow-gateway:
-    image: ghcr.io/tmartin2113/deerflow-gateway:${PAPERCLIP_VERSION:-latest}
+    image: ghcr.io/tmartin2113/deerflow:${PAPERCLIP_VERSION:-latest}
+    command: >
+      sh -c "cd backend && uv run uvicorn
+      src.gateway.app:app --host 0.0.0.0 --port 8001"
     env_file: .env
     extra_hosts:
       - "host.docker.internal:host-gateway"
