@@ -25,7 +25,7 @@ services:
       # Force embedded postgres (no external DATABASE_URL)
       - DATABASE_URL=
       - BETTER_AUTH_TRUSTED_ORIGINS=${BETTER_AUTH_TRUSTED_ORIGINS:-http://localhost:3100,https://${TAILSCALE_HOSTNAME:-localhost}}
-      - PAPERCLIP_ALLOWED_HOSTNAMES=${TAILSCALE_HOSTNAME:-localhost}
+      - PAPERCLIP_ALLOWED_HOSTNAMES=${TAILSCALE_HOSTNAME:-localhost},localhost,server
       - SEARXNG_URL=${SEARXNG_URL:-http://host.docker.internal:8888}
       - GITEA_URL=${GITEA_URL:-http://host.docker.internal:3000}
       - GITEA_TOKEN=${GITEA_TOKEN:-}

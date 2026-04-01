@@ -13,8 +13,11 @@ Used by heartbeat.py to:
 - Report cost events
 """
 
+import hashlib
+import hmac
 import json
 import logging
+import math
 import os
 import time
 import random
@@ -32,6 +35,37 @@ RETRYABLE_STATUS_CODES: Set[int] = {429, 500, 502, 503, 504}
 DEFAULT_MAX_RETRIES = 3
 DEFAULT_BASE_DELAY = 1.0
 DEFAULT_MAX_DELAY = 15.0
+
+
+def _generate_agent_jwt(
+    secret: str,
+    agent_id: str,
+    company_id: str,
+    run_id: str,
+    adapter_type: str = "deerflow",
+    ttl_seconds: int = 48 * 3600,
+) -> str:
+    """Generate a JWT for agent authentication using the shared secret."""
+    import base64
+
+    def b64url(data: bytes) -> str:
+        return base64.urlsafe_b64encode(data).rstrip(b"=").decode()
+
+    header = b64url(json.dumps({"alg": "HS256", "typ": "JWT"}).encode())
+    now = math.floor(time.time())
+    payload = b64url(json.dumps({
+        "sub": agent_id,
+        "company_id": company_id,
+        "adapter_type": adapter_type,
+        "run_id": run_id,
+        "iat": now,
+        "exp": now + ttl_seconds,
+        "iss": "paperclip",
+        "aud": "paperclip-api",
+    }).encode())
+    signing_input = f"{header}.{payload}"
+    sig = b64url(hmac.new(secret.encode(), signing_input.encode(), hashlib.sha256).digest())
+    return f"{signing_input}.{sig}"
 
 
 # ── Exceptions ──
@@ -166,8 +200,22 @@ class PaperclipClient:
 
         if not self.api_url:
             raise ValueError("PAPERCLIP_API_URL not set")
+
+        # Auto-generate JWT if shared secret is available and no API key set
         if not self.api_key:
-            raise ValueError("PAPERCLIP_API_KEY not set")
+            jwt_secret = os.environ.get("PAPERCLIP_AGENT_JWT_SECRET", "")
+            if jwt_secret and self.agent_id and self.company_id:
+                self.api_key = _generate_agent_jwt(
+                    secret=jwt_secret,
+                    agent_id=self.agent_id,
+                    company_id=self.company_id,
+                    run_id=self.run_id or "auto",
+                )
+                logger.info("Generated agent JWT from PAPERCLIP_AGENT_JWT_SECRET")
+            else:
+                raise ValueError(
+                    "PAPERCLIP_API_KEY not set and PAPERCLIP_AGENT_JWT_SECRET not available for auto-generation"
+                )
 
     def _headers(self) -> Dict[str, str]:
         """Build request headers with auth and run tracing."""
