@@ -283,12 +283,14 @@ services:
     build:
       context: ./ssh-relay
       dockerfile: Dockerfile
+    restart: unless-stopped
 
   # ── Dev Runner (local build) ────────────────────────────────────────────────
   dev-runner:
     build:
       context: ./dev-runner
       dockerfile: Dockerfile
+    restart: unless-stopped
 
 volumes:
   gitea-data:
