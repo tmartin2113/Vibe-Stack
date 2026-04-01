@@ -245,57 +245,12 @@ class SkillGeneratorNode:
         specification: str,
         skill_path: "Path",
     ) -> None:
-        """Run offline simulation vetting and refine if score is low.
+        """Skill vetting placeholder.
 
-        No-op when adapter_registry is not available or vetting is disabled.
+        Inline simulation vetting has been removed. Vetting is now handled
+        externally via the MiroFish service when needed.
         """
-        if self.adapter_registry is None:
-            return
-
-        try:
-            from .simulation import vet_skill_with_simulation, _VET_SKILLS_ENABLED
-        except ImportError:
-            return
-
-        if not _VET_SKILLS_ENABLED:
-            return
-
-        try:
-            result = vet_skill_with_simulation(
-                skill_content=skill_content,
-                task_type=task_type,
-                adapter_registry=self.adapter_registry,
-            )
-        except Exception as e:
-            logger.warning(f"Skill vetting failed for {skill_name}: {e}")
-            return
-
-        if result.skipped:
-            logger.debug(
-                f"Skill vetting skipped for {skill_name}: {result.skip_reason}"
-            )
-            return
-
-        logger.info(
-            f"Skill vetting for {skill_name}: avg_score={result.avg_score:.1f}, "
-            f"tasks={result.tasks_evaluated}, elapsed={result.elapsed_seconds:.1f}s"
-        )
-
-        if result.avg_score < REFINEMENT_THRESHOLD and result.feedback_summary:
-            logger.info(
-                f"Vetting score {result.avg_score:.1f} < {REFINEMENT_THRESHOLD} "
-                f"for {skill_name}, triggering immediate refinement"
-            )
-            refined = self.refine_skill(
-                skill_name=skill_name,
-                task_type=task_type,
-                original_content=skill_content,
-                score=int(result.avg_score),
-                feedback=result.feedback_summary,
-                specification=specification,
-            )
-            if refined:
-                logger.info(f"Refined {skill_name} after vetting")
+        return
 
     # ------------------------------------------------------------------
     # Skill content generation (LLM-driven with template fallback)

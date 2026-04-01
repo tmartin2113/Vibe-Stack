@@ -9,10 +9,6 @@ from typing import Dict, Any, List, Optional, Tuple
 import logging
 import re
 
-from .simulation import (
-    simulate_clarification,
-    format_clarification_for_spec,
-)
 from .state import AgentState, get_context_for_node, add_to_history
 from .tools import ToolResult
 from .skill_security import SkillSecurity
@@ -318,57 +314,20 @@ You can make multiple tool calls. After seeing tool results, you can refine your
 
         output = specialist.generate(prompt, **gen_kwargs)
 
-        # Early exit: if the specialist is asking for clarification, try
-        # a MiroFish-style stakeholder simulation to resolve the questions
-        # without a human round-trip.  Falls back to the original
-        # clarification_needed path if simulation can't resolve them.
+        # If the specialist is asking for clarification, escalate to human.
+        # (MiroFish handles simulation externally via the MiroFishSimulation tool.)
         needs_clarification, questions = parse_clarification(output)
         if needs_clarification:
-            # Attempt simulated clarification (hardware-gated, no-ops if
-            # VRAM is tight or simulation is disabled).
-            adapter_registry = getattr(self, "adapters", None)
-            clar_result = simulate_clarification(
-                questions=questions,
-                specification=state.get("specification", ""),
-                user_request=user_request,
-                adapter_registry=adapter_registry,
+            state["clarification_needed"] = True
+            state["clarification_questions"] = questions
+            state["specialist_output"] = output
+            state["adapters_used"] = state.get("adapters_used", []) + [specialist_name]
+            state["tool_calls_made"] = state.get("tool_calls_made", []) + tool_results_history
+            logger.info(
+                f"Specialist requested clarification ({len(questions)} questions) "
+                f"— escalating to human"
             )
-
-            if clar_result.resolved and clar_result.answers:
-                # Simulation resolved the questions — inject answers into
-                # the specification and re-run the specialist instead of
-                # blocking on a human round-trip.
-                clarification_context = format_clarification_for_spec(clar_result)
-                logger.info(
-                    f"Clarification simulation resolved {len(clar_result.answers)} "
-                    f"questions (confidence={clar_result.confidence:.0%}) — "
-                    f"re-running specialist"
-                )
-
-                # Re-generate with clarification answers injected
-                augmented_prompt = f"""{base_prompt}
-
-{clarification_context}
-
-Use the above clarification answers to inform your solution. Provide a complete solution — do NOT ask further clarification questions."""
-
-                output = specialist.generate(augmented_prompt, **gen_kwargs)
-                # Fall through to tool loop below with the new output
-            else:
-                # Simulation couldn't resolve — fall back to human
-                state["clarification_needed"] = True
-                state["clarification_questions"] = (
-                    clar_result.unresolved if clar_result.unresolved else questions
-                )
-                state["specialist_output"] = output
-                state["adapters_used"] = state.get("adapters_used", []) + [specialist_name]
-                state["tool_calls_made"] = state.get("tool_calls_made", []) + tool_results_history
-                logger.info(
-                    f"Specialist requested clarification ({len(questions)} questions), "
-                    f"simulation {'skipped' if clar_result.skipped else 'could not resolve'} "
-                    f"— escalating to human"
-                )
-                return state
+            return state
 
         while tool_iteration < max_tool_iterations:
             try:
@@ -656,48 +615,20 @@ Otherwise, focus on the specific issues identified. Provide an improved solution
         # Generate initial output
         output = specialist.generate(prompt, **config)
 
-        # Early exit: if the sub-task specialist asks for clarification,
-        # try simulated resolution before escalating to human.
+        # If the sub-task specialist asks for clarification, escalate to human.
         needs_clarification, questions = parse_clarification(output)
         if needs_clarification:
-            adapter_registry = getattr(self, "adapters", None)
-            clar_result = simulate_clarification(
-                questions=questions,
-                specification=sub_spec,
-                user_request=user_request,
-                adapter_registry=adapter_registry,
+            state["clarification_needed"] = True
+            state["clarification_questions"] = state.get("clarification_questions", []) + questions
+            current_subtask["output"] = output
+            current_subtask["status"] = "clarification_needed"
+            sub_tasks[current_index] = current_subtask
+            state["sub_tasks"] = sub_tasks
+            logger.info(
+                f"Sub-task {current_index} specialist requested clarification "
+                f"({len(questions)} questions) — escalating to human"
             )
-
-            if clar_result.resolved and clar_result.answers:
-                clarification_context = format_clarification_for_spec(clar_result)
-                logger.info(
-                    f"Sub-task {current_index} clarification simulation resolved "
-                    f"{len(clar_result.answers)} questions — re-running specialist"
-                )
-                augmented_prompt = f"""{prompt}
-
-{clarification_context}
-
-Use the above clarification answers to inform your solution. Provide a complete solution — do NOT ask further clarification questions."""
-
-                output = specialist.generate(augmented_prompt, **config)
-                # Fall through to tool loop below
-            else:
-                state["clarification_needed"] = True
-                state["clarification_questions"] = state.get("clarification_questions", []) + (
-                    clar_result.unresolved if clar_result.unresolved else questions
-                )
-                current_subtask["output"] = output
-                current_subtask["status"] = "clarification_needed"
-                sub_tasks[current_index] = current_subtask
-                state["sub_tasks"] = sub_tasks
-                logger.info(
-                    f"Sub-task {current_index} specialist requested clarification "
-                    f"({len(questions)} questions), simulation "
-                    f"{'skipped' if clar_result.skipped else 'could not resolve'} "
-                    f"— escalating to human"
-                )
-                return state
+            return state
 
         # Tool calling loop if specialist supports it
         if has_tool_access:

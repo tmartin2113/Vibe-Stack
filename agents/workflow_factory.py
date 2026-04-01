@@ -34,7 +34,6 @@ from .cancellation import CancellationToken
 from .config import SystemConfig
 from .graph import create_agent_graph
 from .llm_backend import create_backend_from_config
-from .simulation import register_simulation_adapters
 from .state import create_initial_state
 
 logger = logging.getLogger(__name__)
@@ -94,10 +93,6 @@ class WorkflowFactory:
             )
             registry.register(adapter)
         self._adapter_registry = registry
-
-        # Register simulation adapters (MiroFish-style integration prediction).
-        # These are lightweight PromptAdapter wrappers on the same base_model.
-        register_simulation_adapters(registry, self._base_model)
 
         self._initialised = True
         logger.info(
