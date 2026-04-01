@@ -93,6 +93,8 @@ ROLE_TOOL_SETS: Dict[str, Optional[frozenset]] = {
         "database",
         # Security
         "dependency_scanner",
+        # Simulation
+        "MiroFishSimulation",
         # Infrastructure
         "container_inspect", "git_forge", "artifact_storage", "bulletin_board",
         # File ops & memory
@@ -107,6 +109,8 @@ ROLE_TOOL_SETS: Dict[str, Optional[frozenset]] = {
         "web_fetch", "web_search", "web_scrape", "browser_automation",
         # Security
         "bandit_scanner", "dependency_scanner",
+        # Simulation
+        "MiroFishSimulation",
         # SEO (for quality checks)
         "lighthouse_seo", "page_analyzer", "seo_checklist",
         # Infrastructure
@@ -434,6 +438,10 @@ def create_default_tool_registry(
         from .database import DatabaseTool
         registry.register(DatabaseTool())
         logger.info("Tool registry: database enabled")
+    if os.environ.get("MIROFISH_URL"):
+        from .mirofish_tool import MiroFishSimulationTool
+        registry.register(MiroFishSimulationTool())
+        logger.info("Tool registry: MiroFishSimulation enabled")
 
     # --- Persistent memory tools (always-on) ---
     registry.register(MemoryStoreTool())
@@ -546,6 +554,9 @@ def create_subprocess_tool_registry(
     if os.environ.get("DATABASE_URL"):
         from .database import DatabaseTool
         registry.register(DatabaseTool())
+    if os.environ.get("MIROFISH_URL"):
+        from .mirofish_tool import MiroFishSimulationTool
+        registry.register(MiroFishSimulationTool())
 
     # --- Persistent memory tools ---
     registry.register(MemoryStoreTool())
