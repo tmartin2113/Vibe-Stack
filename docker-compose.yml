@@ -84,6 +84,8 @@ services:
     build: .
     restart: on-failure
     env_file: .env
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     group_add:
       - "125"   # host docker group GID — lets 'vibe' user run 'docker info'
     depends_on:
@@ -92,17 +94,17 @@ services:
     environment:
       - VIBE_BACKEND_HOST=${VIBE_BACKEND_HOST:-host.docker.internal}
       - VIBE_BACKEND_PORT=${VIBE_BACKEND_PORT:-8000}
-      - VIBE_SANDBOX_URL=${VIBE_SANDBOX_URL:-http://host.docker.internal:9090}
+      - VIBE_SANDBOX_URL=${VIBE_SANDBOX_URL:-http://opensandbox:8080}
       - VIBE_HEALTH_PORT=8080
       - BULLETIN_PATH=/shared/bulletin/BULLETIN.md
       - MESSAGE_STORE_PATH=/shared/bulletin/messages.db
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
-      - SEARXNG_URL=${SEARXNG_URL:-http://host.docker.internal:8888}
-      - PLAYWRIGHT_WS_URL=${PLAYWRIGHT_WS_URL:-ws://host.docker.internal:3003}
-      - PENPOT_API_URL=${PENPOT_API_URL:-http://host.docker.internal:9001}
+      - SEARXNG_URL=${SEARXNG_URL:-http://searxng:8080}
+      - PLAYWRIGHT_WS_URL=${PLAYWRIGHT_WS_URL:-ws://playwright:3003}
+      - PENPOT_API_URL=${PENPOT_API_URL:-http://penpot-backend:6060}
       - COMFYUI_URL=${COMFYUI_URL:-http://host.docker.internal:8188}
-      - GITEA_URL=${GITEA_URL:-http://host.docker.internal:3000}
-      - MINIO_URL=${MINIO_URL:-http://host.docker.internal:9000}
+      - GITEA_URL=${GITEA_URL:-http://gitea:3000}
+      - MINIO_URL=${MINIO_URL:-http://minio:9000}
     volumes:
       - vibe-data:/home/vibe/.vibe
       - bulletin-data:/shared/bulletin
