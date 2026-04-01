@@ -457,8 +457,6 @@ gen_secret() {
 gen_secret "better_auth_secret.txt"         "$(openssl rand -hex 32)"
 gen_secret "agent_jwt_secret.txt"           "$(openssl rand -hex 32)"
 gen_secret "paperclip_postgres_password.txt" "$(openssl rand -hex 32)"
-gen_secret "n8n_postgres_user.txt"          "n8n_user"
-gen_secret "n8n_postgres_password.txt"      "$(openssl rand -hex 32)"
 gen_secret "searxng_secret.txt"             "$(openssl rand -hex 32)"
 
 # SSH deploy keys for git access (per-repo)
