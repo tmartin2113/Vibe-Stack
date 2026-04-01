@@ -122,6 +122,17 @@ _update_env_var "TAILSCALE_HOSTNAME" "${TAILSCALE_HOSTNAME}"
 _update_env_var "TAILSCALE_IP" "${TAILSCALE_IP}"
 _update_env_var "WORKSPACE_PATH" "${WORKSPACE_PATH}"
 _update_env_var "GIT_USER" "${GIT_USER}"
+
+# Infrastructure service URLs — these enable agent tools at runtime.
+# Uses Docker DNS names (services on the compose default network).
+_update_env_var "SEARXNG_URL" "http://searxng:8080"
+_update_env_var "PLAYWRIGHT_WS_URL" "ws://playwright:3003"
+_update_env_var "PENPOT_API_URL" "http://penpot-backend:3000"
+_update_env_var "GITEA_URL" "http://gitea:3000"
+_update_env_var "MINIO_URL" "http://minio:9000"
+_update_env_var "MIROFISH_URL" "http://mirofish:5001"
+_update_env_var "PADDLEOCR_URL" "http://paddleocr:8868"
+
 success ".env loaded (Tailscale: $TAILSCALE_HOSTNAME / $TAILSCALE_IP)"
 
 # PAPERCLIP_SOURCE_DIR only needed for local dev builds (docker-compose.override.yml)
@@ -848,12 +859,20 @@ else
 fi
 
 if [[ "$COMPOSE_FILE" == *"infra"* ]]; then
+    info "Building PaddleOCR image (first run downloads ~2GB of models)..."
+    docker compose build paddleocr
+
     info "Starting stack — infrastructure services..."
     docker compose up -d searxng playwright gitea minio minio-init \
         penpot-frontend penpot-backend penpot-exporter penpot-postgres penpot-redis \
+        zep-db neo4j graphiti zep mirofish paddleocr \
         ssh-relay dev-runner
     info "Waiting for infrastructure services with healthchecks..."
     wait_healthy 60 searxng playwright gitea minio
+    info "Waiting for MiroFish + Zep stack (may take longer on first run)..."
+    wait_healthy 120 zep-db neo4j graphiti zep mirofish
+    info "Waiting for PaddleOCR..."
+    wait_healthy 60 paddleocr
 fi
 
 if [[ "$COMPOSE_FILE" == *"gpu"* ]]; then
