@@ -172,7 +172,7 @@ The JWT is auto-generated per heartbeat by `PaperclipClient` — no static API k
 
 ## Infrastructure Context
 
-- **Hardware:** Z690 motherboard, 16 cores, 64GB RAM, RTX 3090 (22GB VRAM)
+- **Hardware:** Z690 motherboard, 16 cores, 32GB RAM, RTX 3090 (22GB VRAM)
 - **Local LLM:** Qwen3.5-9B-AWQ via vLLM (context=32768, mem=0.92)
 - **Cloud LLM:** Claude Opus via Anthropic API
 - **Orchestration:** Paperclip control plane at `https://vibe.tail2fb792.ts.net`
