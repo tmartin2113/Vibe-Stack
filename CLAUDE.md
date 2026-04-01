@@ -29,6 +29,7 @@ Deterministic state machine: **Router → Skill Loader → Spec Builder → Spec
 | **Skill Security** | `agents/skill_security.py` | Name/path/content validation, AST+regex scanning, runtime tool permission enforcement, SHA-256 integrity |
 | **Skill Reinforcement** | `agents/skill_generator.py`, `agents/skill_outcome_store.py`, `agents/skill_cleanup.py` | Closed-loop: outcomes recorded → RAG retrieval → generation → self-refinement for low scores |
 | **Simulation** | `agents/tools/mirofish_tool.py` | MiroFish multi-agent simulation via external service. Complexity-based LLM routing (local vLLM or cloud). Invoked selectively by agents via MiroFishSimulation tool |
+| **OCR** | `agents/tools/ocr_tool.py` | PaddleOCR text extraction, layout analysis, table parsing from images and PDFs. CPU-only Docker service on port 8868 |
 | **Session Store** | `agents/session_store.py` | SQLite + WAL. Daemon-mode only. TTL-based cleanup. |
 | **Messenger Client** | `agents/messenger_client.py` | MattermostClient + SlackClient. Used by daemon and API key prompting. |
 | **Resource Discovery** | `agents/resource_discovery.py`, `agents/resource_allocator.py` | CPU/RAM/GPU introspection (startup + real-time). `query_gpu_realtime()` for live VRAM probing. Resource plans for sandbox pool sizing |

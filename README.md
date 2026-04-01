@@ -162,6 +162,7 @@ Each agent runs the same Python workflow engine with 13 built-in task types:
 | OpenSandbox | Code execution sandbox | 9090 |
 | MiroFish | Multi-agent simulation engine | 5001 |
 | Zep | Agent memory (for MiroFish) | 8000 (internal) |
+| PaddleOCR | OCR text extraction | 8868 |
 | Caddy | TLS reverse proxy | 443 |
 
 ## Configuration
