@@ -263,6 +263,21 @@ services:
       retries: 5
       start_period: 60s
 
+  # ── PaddleOCR (text extraction from images and PDFs) ──────────────────────
+  paddleocr:
+    build:
+      context: ./deploy/paddleocr
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "8868:8868"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8868/health"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
   # ── SSH Relay (local build) ─────────────────────────────────────────────────
   ssh-relay:
     build:
