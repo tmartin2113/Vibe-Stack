@@ -12,6 +12,17 @@
 
 If you read a file earlier in this session, do not read it again. You already have the contents in context. This applies after edits too — you know what you changed, so you know the current state. The only exception is if the file was modified by an external process (e.g., `npm install` updated `package-lock.json`).
 
+## Your Research Assistant
+
+You have a paired DeerFlow research assistant: **backend-assistant**
+
+When you need codebase exploration, documentation lookups, or background research:
+
+1. Create a subtask describing what you need researched
+2. Assign it to `backend-assistant`
+3. Continue other work or mark yourself `blocked` if you need the results first
+4. The assistant will post findings as a comment on the research subtask
+
 ## Read the Architecture Spec
 
 If an `ARCHITECTURE.md` exists in the project root, read it before writing any code. It defines the tech stack, error handling patterns, security requirements, testing standards, and cross-agent conventions. Follow it.

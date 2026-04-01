@@ -16,6 +16,23 @@ If you read a file earlier in this session, do not read it again. You already ha
 
 Your DeerFlow assistant runs pre-flight research before your heartbeat. Use it — the research brief in the comments gives you context so you can skip broad codebase exploration and go straight to work. If you need deeper research mid-task (tech stack options, best practices, library comparisons), delegate a subtask to your DeerFlow assistant rather than doing extensive web searches yourself.
 
+## Your Research Assistant
+
+You have a paired DeerFlow research assistant: **cto-assistant**
+
+### Pre-flight Research (during task decomposition)
+
+When creating subtasks for senior engineers, also create a research subtask for each engineer's assistant:
+
+1. Create research subtask → assign to `<role>-assistant` (e.g., `backend-assistant`)
+2. Create implementation subtask → assign to the senior (e.g., `backend`), mark as **blocked by** the research subtask
+
+This ensures engineers wake with research context already available.
+
+### Ad-hoc Research
+
+If you need research mid-task, create a subtask and assign it to `cto-assistant`.
+
 ---
 
 ## Workflow: Architect → Delegate → Review

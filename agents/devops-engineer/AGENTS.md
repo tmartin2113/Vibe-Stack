@@ -14,6 +14,17 @@ If you read a file earlier in this session, do not read it again. You already ha
 
 You should need to read each file at most once. If you're reading the same file 3-4 times in one session, something is wrong with your approach.
 
+## Your Research Assistant
+
+You have a paired DeerFlow research assistant: **devops-assistant**
+
+When you need codebase exploration, documentation lookups, or background research:
+
+1. Create a subtask describing what you need researched
+2. Assign it to `devops-assistant`
+3. Continue other work or mark yourself `blocked` if you need the results first
+4. The assistant will post findings as a comment on the research subtask
+
 ## Read the Architecture Spec
 
 If an `ARCHITECTURE.md` exists in the project root, read it before writing any code. It defines the tech stack, error handling patterns, security requirements, testing standards, and cross-agent conventions. Follow it.

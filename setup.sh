@@ -12,7 +12,7 @@ warn()    { printf "${YELLOW}[WARN]${NC}   %s\n" "$*"; }
 error()   { printf "${RED}[ERROR]${NC}  %s\n" "$*" >&2; exit 1; }
 err()     { printf "${RED}[ERROR]${NC}  %s\n" "$*" >&2; }
 
-TOTAL_STEPS=23
+TOTAL_STEPS=24
 CURRENT_STEP=0
 step() { CURRENT_STEP=$((CURRENT_STEP + 1)); printf "\n${BOLD}[Step %d/%d]${NC} ${BLUE}%s${NC}\n" "$CURRENT_STEP" "$TOTAL_STEPS" "$*"; }
 
@@ -975,6 +975,34 @@ else
     else
         warn "Claude Code login skipped — run later: docker compose exec -it server claude login"
     fi
+fi
+
+# ══════════════════════════════════════════════════════════════
+# 24. Bootstrap org (create agents)
+# ══════════════════════════════════════════════════════════════
+step "Bootstrapping agent org"
+AGENT_COUNT=$(docker compose exec -T server sh -c '
+  node --input-type=module -e "
+    import pg from \"/app/node_modules/.pnpm/postgres@3.4.8/node_modules/postgres/src/index.js\";
+    const sql = pg({host:\"/tmp\",port:54329,database:\"paperclip\",username:\"paperclip\"});
+    const r = await sql\`SELECT count(*) as c FROM agents\`;
+    console.log(r[0].c);
+    await sql.end();
+  "' 2>/dev/null || echo "0")
+
+if [[ "$AGENT_COUNT" -ge 10 ]]; then
+    success "Org already bootstrapped ($AGENT_COUNT agents) — skipping"
+else
+    info "Creating 10-agent engineering org..."
+    docker compose cp bootstrap-org.cjs server:/app/bootstrap-org.cjs
+    docker compose exec -T server node /app/bootstrap-org.cjs
+    # Copy agent IDs from container .env back to host .env
+    docker compose exec -T server grep "^PAPERCLIP_AGENT_ID" /app/.env 2>/dev/null | while read -r line; do
+        key="${line%%=*}"
+        val="${line#*=}"
+        _update_env_var "$key" "$val"
+    done
+    success "Org bootstrap complete — agent IDs written to .env"
 fi
 
 # Restore credential helpers and clean up temporary Docker config
