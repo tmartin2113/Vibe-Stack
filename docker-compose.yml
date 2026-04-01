@@ -45,37 +45,41 @@ services:
 
   # ── DeerFlow LangGraph Backend ─────────────────────────────────────────────
   deerflow-langgraph:
-    image: ghcr.io/tmartin2113/deerflow:${PAPERCLIP_VERSION:-latest}
+    image: ghcr.io/tmartin2113/paperclip-deerflow:${PAPERCLIP_VERSION:-latest}
     command: >
       sh -c "cd backend && uv run langgraph dev
       --no-browser --allow-blocking --no-reload --host 0.0.0.0 --port 2024"
     env_file: .env
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    volumes:
+      - ./deerflow/config.yaml:/app/backend/config.yaml:ro
     environment:
-      - SEARXNG_URL=${SEARXNG_URL:-http://host.docker.internal:8888}
-      - GITEA_URL=${GITEA_URL:-http://host.docker.internal:3000}
+      - SEARXNG_URL=${SEARXNG_URL:-http://searxng:8080}
+      - GITEA_URL=${GITEA_URL:-http://gitea:3000}
       - GITEA_TOKEN=${GITEA_TOKEN:-}
-      - PLAYWRIGHT_WS_URL=${PLAYWRIGHT_WS_URL:-ws://host.docker.internal:3003}
-      - MINIO_URL=${MINIO_URL:-http://host.docker.internal:9000}
+      - PLAYWRIGHT_WS_URL=${PLAYWRIGHT_WS_URL:-ws://playwright:3003}
+      - MINIO_URL=${MINIO_URL:-http://minio:9000}
       - MINIO_ACCESS_KEY=${MINIO_ROOT_USER:-vibe}
       - MINIO_SECRET_KEY=${MINIO_ROOT_PASSWORD:?Set MINIO_ROOT_PASSWORD in .env}
 
   # ── DeerFlow Gateway ───────────────────────────────────────────────────────
   deerflow-gateway:
-    image: ghcr.io/tmartin2113/deerflow:${PAPERCLIP_VERSION:-latest}
+    image: ghcr.io/tmartin2113/paperclip-deerflow:${PAPERCLIP_VERSION:-latest}
     command: >
       sh -c "cd backend && uv run uvicorn
-      src.gateway.app:app --host 0.0.0.0 --port 8001"
+      app.gateway.app:app --host 0.0.0.0 --port 8001"
     env_file: .env
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    volumes:
+      - ./deerflow/config.yaml:/app/backend/config.yaml:ro
     environment:
-      - SEARXNG_URL=${SEARXNG_URL:-http://host.docker.internal:8888}
-      - GITEA_URL=${GITEA_URL:-http://host.docker.internal:3000}
+      - SEARXNG_URL=${SEARXNG_URL:-http://searxng:8080}
+      - GITEA_URL=${GITEA_URL:-http://gitea:3000}
       - GITEA_TOKEN=${GITEA_TOKEN:-}
-      - PLAYWRIGHT_WS_URL=${PLAYWRIGHT_WS_URL:-ws://host.docker.internal:3003}
-      - MINIO_URL=${MINIO_URL:-http://host.docker.internal:9000}
+      - PLAYWRIGHT_WS_URL=${PLAYWRIGHT_WS_URL:-ws://playwright:3003}
+      - MINIO_URL=${MINIO_URL:-http://minio:9000}
       - MINIO_ACCESS_KEY=${MINIO_ROOT_USER:-vibe}
       - MINIO_SECRET_KEY=${MINIO_ROOT_PASSWORD:?Set MINIO_ROOT_PASSWORD in .env}
 

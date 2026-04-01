@@ -1,0 +1,50 @@
+# DeerFlow Configuration — Vibe Stack
+#
+# Mounted into the DeerFlow container at /app/backend/config.yaml.
+# Uses $VAR syntax for env var resolution (DeerFlow's config parser
+# does NOT support ${VAR:-default} bash syntax).
+#
+# Required env vars (set in .env by setup.sh):
+#   VLLM_MODEL     — model name served by vLLM
+#   VLLM_API_URL   — vLLM OpenAI-compatible API URL
+
+# ── Models ──────────────────────────────────────────────────────
+models:
+  - name: "local-vllm"
+    display_name: "Local vLLM"
+    description: "Local model via vLLM"
+    use: "langchain_openai.ChatOpenAI"
+    model: "$VLLM_MODEL"
+    base_url: "$VLLM_API_URL"
+    api_key: "no-key-needed"
+    temperature: 0.3
+
+# ── Sandbox ─────────────────────────────────────────────────────
+sandbox:
+  use: "deerflow.sandbox.aio:AioSandboxProvider"
+  image: "enterprise-public-cn-beijing.cr.volces.com/vefaas-public/all-in-one-sandbox:latest"
+
+# ── Tools ───────────────────────────────────────────────────────
+tool_groups:
+  - name: "web_search"
+  - name: "crawl"
+  - name: "code_interpreter"
+
+tools:
+  - name: "web_search"
+    group: "web_search"
+    use: "deerflow.tools.search:web_search_tool"
+  - name: "crawl"
+    group: "crawl"
+    use: "deerflow.tools.crawl:crawl_tool"
+  - name: "python_repl"
+    group: "code_interpreter"
+    use: "deerflow.sandbox.tools:python_repl_tool"
+  - name: "bash"
+    group: "code_interpreter"
+    use: "deerflow.sandbox.tools:bash_tool"
+
+# ── Checkpointer ────────────────────────────────────────────────
+checkpointer:
+  type: "sqlite"
+  connection_string: "/tmp/deerflow-checkpoints.db"
