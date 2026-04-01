@@ -75,6 +75,8 @@ ROLE_TOOL_SETS: Dict[str, Optional[frozenset]] = {
         "web_fetch", "web_search", "web_scrape", "browser_automation",
         # Design & visual
         "design", "image_generation",
+        # OCR
+        "OCRTool",
         # SEO
         "lighthouse_seo", "page_analyzer", "seo_checklist",
         # Infrastructure
@@ -95,6 +97,8 @@ ROLE_TOOL_SETS: Dict[str, Optional[frozenset]] = {
         "dependency_scanner",
         # Simulation
         "MiroFishSimulation",
+        # OCR
+        "OCRTool",
         # Infrastructure
         "container_inspect", "git_forge", "artifact_storage", "bulletin_board",
         # File ops & memory
@@ -111,6 +115,8 @@ ROLE_TOOL_SETS: Dict[str, Optional[frozenset]] = {
         "bandit_scanner", "dependency_scanner",
         # Simulation
         "MiroFishSimulation",
+        # OCR
+        "OCRTool",
         # SEO (for quality checks)
         "lighthouse_seo", "page_analyzer", "seo_checklist",
         # Infrastructure
@@ -123,6 +129,8 @@ ROLE_TOOL_SETS: Dict[str, Optional[frozenset]] = {
         # Browser & design
         "web_fetch", "web_search", "web_scrape", "browser_automation",
         "design", "image_generation",
+        # OCR
+        "OCRTool",
         # SEO (UX-relevant)
         "lighthouse_seo", "page_analyzer", "seo_checklist",
         # Light code support
@@ -139,6 +147,8 @@ ROLE_TOOL_SETS: Dict[str, Optional[frozenset]] = {
         "static_code_analyzer", "codebase_search_tool", "git_operations_tool", "data_parser_tool",
         # Security-specific
         "dependency_scanner",
+        # OCR
+        "OCRTool",
         # Web (for security testing)
         "web_fetch", "web_search", "web_scrape", "browser_automation",
         # Infrastructure
@@ -442,6 +452,10 @@ def create_default_tool_registry(
         from .mirofish_tool import MiroFishSimulationTool
         registry.register(MiroFishSimulationTool())
         logger.info("Tool registry: MiroFishSimulation enabled")
+    if os.environ.get("PADDLEOCR_URL"):
+        from .ocr_tool import OCRTool
+        registry.register(OCRTool())
+        logger.info("Tool registry: OCRTool enabled")
 
     # --- Persistent memory tools (always-on) ---
     registry.register(MemoryStoreTool())
@@ -557,6 +571,9 @@ def create_subprocess_tool_registry(
     if os.environ.get("MIROFISH_URL"):
         from .mirofish_tool import MiroFishSimulationTool
         registry.register(MiroFishSimulationTool())
+    if os.environ.get("PADDLEOCR_URL"):
+        from .ocr_tool import OCRTool
+        registry.register(OCRTool())
 
     # --- Persistent memory tools ---
     registry.register(MemoryStoreTool())
