@@ -43,8 +43,9 @@ services:
       - --enable-auto-tool-choice
       - --tool-call-parser
       - "${VLLM_TOOL_CALL_PARSER:-hermes}"
-      - --reasoning-parser
-      - "${VLLM_REASONING_PARSER:-qwen3}"
+      # NOTE: --reasoning-parser removed — causes content:null responses.
+      # vLLM splits output into content (null) + reasoning (actual text),
+      # but DeerFlow/LangChain only reads content. See deerflow-config memory.
     volumes:
       - vllm-models:/root/.cache/huggingface
     healthcheck:
