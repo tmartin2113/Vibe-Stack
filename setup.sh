@@ -133,6 +133,10 @@ _update_env_var "MINIO_URL" "http://minio:9000"
 _update_env_var "MIROFISH_URL" "http://mirofish:5001"
 _update_env_var "PADDLEOCR_URL" "http://paddleocr:8868"
 
+# Skill source repos — agents scan these for domain-specific skills.
+# Colon-separated paths. The workspace scanner finds skills/ and .claude/skills/ in each.
+_update_env_var "VIBE_SKILL_REPOS" "${SCRIPT_DIR}/skill-sources/anthropics-skills:${SCRIPT_DIR}/skill-sources/impeccable:${SCRIPT_DIR}/skill-sources/obra-superpowers:${SCRIPT_DIR}/skill-sources/vercel-agent-skills"
+
 success ".env loaded (Tailscale: $TAILSCALE_HOSTNAME / $TAILSCALE_IP)"
 
 # PAPERCLIP_SOURCE_DIR only needed for local dev builds (docker-compose.override.yml)
@@ -509,6 +513,7 @@ clone_if_missing "https://github.com/obra/superpowers.git"             "skill-so
 clone_if_missing "https://github.com/vercel-labs/agent-skills.git"     "skill-sources/vercel-agent-skills"
 clone_if_missing "https://github.com/voltagent/awesome-openclaw-skills.git" "skill-sources/voltagent-skills"
 clone_if_missing "https://github.com/openclaw/skills.git"              "skill-sources/openclaw-skills-repo"
+clone_if_missing "https://github.com/pbakaus/impeccable.git"           "skill-sources/impeccable"
 
 if [[ -f "skill-sources/openclaw-skills/index.json" ]]; then
     success "OpenClaw skills already fetched — skipping"
