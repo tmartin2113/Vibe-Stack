@@ -25,7 +25,7 @@ You create an issue in the Paperclip UI. The CTO decomposes it into subtasks, as
 - **Paperclip assigns work** — agents never poll. Each heartbeat runs one task and exits.
 - **Stateless by design** — all state lives in the Paperclip issue tree. Killed containers retry with zero data loss.
 - **Cost-optimized** — senior engineers use Opus for deep reasoning; research assistants run free on local vLLM.
-- **Convention-based pairing** — assistants are named `<role>-assistant`. No configuration needed.
+- **Self-improving** — agents detect recurring quality issues and propose code changes to themselves. Proposals pass a 5-gate safety pipeline (path validation, diff size, pytest, Bandit, critic scoring) and appear in the Paperclip Improvements section for human review.
 
 ## Quick Start
 
@@ -44,7 +44,7 @@ cd Vibe-Stack
 sudo ./setup.sh
 ```
 
-Setup runs 24 steps: system prerequisites, Docker, NVIDIA toolkit, vLLM model selection, Caddy, secrets, skill sources, SSH, Paperclip server, infrastructure services, GPU services, org bootstrap, and security hardening. Progress is displayed as `[Step N/24]`.
+Setup auto-detects your hardware, generates secrets, clones skill sources, builds service images, bootstraps the 10-agent org, and applies security hardening. Progress is displayed as `[Step N/24]`.
 
 | Hardware | What You Get |
 |----------|-------------|
@@ -63,7 +63,7 @@ docker compose up -d
 docker compose -f docker-compose.yml -f docker-compose.infra.yml up -d
 
 # Core only (minimal)
-docker compose up -d
+docker compose -f docker-compose.yml up -d
 ```
 
 ### Local Development
@@ -105,10 +105,10 @@ Each senior has a paired research assistant that handles pre-flight research and
 ### Task Flow
 
 1. **You** create an issue in the Paperclip UI
-2. **CTO** wakes → creates feature branch → writes `ARCHITECTURE.md` → creates research + implementation subtask pairs
-3. **Assistants** wake first → run pre-flight research → post findings
-4. **Engineers** wake with context → implement → post handoff comments
-5. **CTO** wakes → reviews all work → creates fix subtasks if needed → pushes feature branch
+2. **CTO** wakes &rarr; creates feature branch &rarr; writes `ARCHITECTURE.md` &rarr; creates research + implementation subtask pairs
+3. **Assistants** wake first &rarr; run pre-flight research &rarr; post findings
+4. **Engineers** wake with context &rarr; implement &rarr; post handoff comments
+5. **CTO** wakes &rarr; reviews all work &rarr; creates fix subtasks if needed &rarr; pushes feature branch
 
 ## Architecture
 
@@ -118,9 +118,34 @@ Each agent runs the same Python workflow engine with 13 built-in task types:
 
 - **Hybrid routing** — regex + semantic matching to select the right specialist adapter
 - **Critic-driven refinement** — iterative quality improvement (threshold: 85/100)
-- **Task decomposition** — breaks complex requests into specialist subtasks
+- **Task decomposition** — breaks complex requests into parallel specialist subtasks
 - **Skill system** — 3-tier architecture with multi-source ingestion, reinforcement learning, and security hardening
 - **Docker sandboxing** — OpenSandbox integration with GPU passthrough
+
+### Agent Tools
+
+Agents have access to infrastructure tools that are automatically discovered via environment variables. All tools are role-filtered — each agent only sees tools relevant to their role.
+
+| Tool | Available To | Service | Purpose |
+|------|-------------|---------|---------|
+| WebSearch | all w/ web | SearXNG | Privacy-respecting web search |
+| WebScrape | all w/ web | Playwright | Headless browser scraping |
+| BrowserAutomation | frontend, QA, UX, security | Playwright | Browser interaction and E2E testing |
+| Design | frontend, UX | Penpot | Design tool integration |
+| GitForge | all | Gitea | Git hosting operations |
+| ArtifactStorage | all | MinIO | S3-compatible object storage |
+| MiroFishSimulation | CTO, backend, QA | MiroFish | Multi-agent simulation for risk assessment |
+| OCRTool | all | PaddleOCR | Text extraction from images and PDFs |
+| MemoryStore / MemoryRecall | all | built-in | Persistent long-term memory with citations |
+
+### Self-Upgrade System
+
+Agents detect recurring quality issues across heartbeat runs and propose improvements to their own source code:
+
+1. **Signal accumulation** — low scores, tool failures, iteration exhaustion, and critic feedback patterns are recorded
+2. **Threshold trigger** — after 3+ signals for a task type, a proposal is generated
+3. **Safety pipeline** — 5 gates: path validation (agents/ only), diff size (<500 lines), full pytest, Bandit security scan, critic scoring (>=90)
+4. **Human review** — proposals appear in the Paperclip **Improvements** section with branch name and review instructions
 
 ### Production Hardening
 
@@ -136,9 +161,12 @@ Each agent runs the same Python workflow engine with 13 built-in task types:
 | Source | Repository | Content |
 |--------|-----------|---------|
 | Anthropic | `anthropics/skills` | Official skill collection |
+| Impeccable | `pbakaus/impeccable` | 21 design quality skills (audit, polish, typeset, etc.) |
 | Superpowers | `obra/superpowers` | TDD, debugging, planning methodologies |
 | Vercel | `vercel-labs/agent-skills` | React, web design best practices |
 | VoltAgent | `voltagent/awesome-openclaw-skills` | OpenClaw community catalog (~5000 skills) |
+
+Skills load and unload automatically per-task via the `SkillLoaderNode` and `SkillCleanupNode`. The skill system matches skills to task types, so frontend tasks get design skills and backend tasks don't.
 
 ### LLM Backends
 
@@ -153,6 +181,8 @@ Each agent runs the same Python workflow engine with 13 built-in task types:
 | Service | Purpose | Port |
 |---------|---------|------|
 | Paperclip | Control plane + UI | 3100 |
+| DeerFlow LangGraph | Research assistant backend | 2024 (internal) |
+| DeerFlow Gateway | Research assistant API | 8001 (internal) |
 | vLLM | Local model inference | 8000 |
 | SearXNG | Self-hosted web search | 8888 |
 | Gitea | Git hosting | 3000 |
@@ -162,7 +192,8 @@ Each agent runs the same Python workflow engine with 13 built-in task types:
 | OpenSandbox | Code execution sandbox | 9090 |
 | MiroFish | Multi-agent simulation engine | 5001 |
 | Zep | Agent memory (for MiroFish) | 8000 (internal) |
-| PaddleOCR | OCR text extraction | 8868 |
+| Neo4j | Graph database (for Zep) | 7687 (internal) |
+| PaddleOCR | OCR text/layout/table extraction | 8868 |
 | Caddy | TLS reverse proxy | 443 |
 
 ## Configuration
@@ -171,23 +202,28 @@ See `.env.example` for all configurable values. Key variables:
 
 | Variable | Purpose | Default |
 |----------|---------|---------|
-| `PAPERCLIP_AGENT_JWT_SECRET` | Shared secret for agent JWT auth | Auto-generated |
 | `VLLM_MODEL` | Local inference model | Auto-detected by GPU VRAM |
+| `GH_TOKEN` | GitHub PAT for agent git push | — |
 | `VIBE_SANDBOX_BACKEND` | `opensandbox` or `subprocess` | `subprocess` |
 | `VIBE_STORAGE_BACKEND` | `sqlite` or `postgres` | `sqlite` |
 | `VIBE_CACHE_BACKEND` | `memory` or `redis` | `memory` |
+| `VIBE_SKILL_REPOS` | Colon-separated skill repo paths | Auto-configured by setup.sh |
 | `LOG_LEVEL` | Logging verbosity | `WARNING` |
+
+Infrastructure service URLs (`SEARXNG_URL`, `MIROFISH_URL`, `PADDLEOCR_URL`, etc.) are auto-configured by `setup.sh` using Docker DNS names. See `.env.example` for the full list.
 
 ## Testing
 
 ```bash
-# All tests (~2970 across 48 files)
+# All tests (~3000 across 48+ files)
 python -m pytest tests/ -x -m "not e2e" --no-header -q
 
 # Specific subsystems
 python -m pytest tests/test_heartbeat.py -v          # Heartbeat lifecycle (142 tests)
 python -m pytest tests/test_skill_security.py -v     # Security hardening (142 tests)
 python -m pytest tests/test_tool_system.py -v        # Tool system (157 tests)
+python -m pytest tests/test_mirofish_tool.py -v      # MiroFish simulation (11 tests)
+python -m pytest tests/test_ocr_tool.py -v           # OCR tool (21 tests)
 python -m pytest tests/test_memory_store.py -v       # Long-term memory (139 tests)
 python -m pytest tests/test_message_store.py -v      # Message bus (107 tests)
 ```
@@ -199,7 +235,7 @@ python -m pytest tests/test_message_store.py -v      # Message bus (107 tests)
 | RAM | 16GB | 32GB+ |
 | GPU VRAM | 8GB (4B model) | 22GB+ (9B model) |
 | CPU | 4 cores | 16 cores |
-| Disk | 50GB | 100GB+ |
+| Disk | 50GB | 100GB+ (models + Docker images) |
 | OS | Ubuntu 22.04 | Ubuntu 24.04 |
 
 No GPU required for cloud-only mode (Claude/OpenAI backends).
@@ -210,11 +246,14 @@ No GPU required for cloud-only mode (Claude/OpenAI backends).
 # Health check
 python -m agents.doctor
 
-# Check agent status
+# Check all service status
 docker compose ps
 
 # View agent logs
 docker compose logs --tail 30 vibe
+
+# Check DeerFlow assistants
+docker compose logs --tail 30 deerflow-langgraph deerflow-gateway
 
 # Re-run setup (idempotent)
 sudo ./setup.sh
@@ -227,7 +266,11 @@ MIT License. See [LICENSE](LICENSE) for details.
 ## Acknowledgments
 
 - [Paperclip](https://paperclip.dev) — agent orchestration platform
-- [Qwen](https://github.com/QwenLM/Qwen) — open-source models
+- [DeerFlow](https://github.com/bytedance/deer-flow) — research assistant framework
+- [Qwen](https://github.com/QwenLM/Qwen) — open-source models for local inference
+- [MiroFish](https://github.com/666ghj/MiroFish) — multi-agent simulation engine
+- [PaddleOCR](https://github.com/PaddlePaddle/PaddleOCR) — OCR text extraction
+- [Impeccable](https://github.com/pbakaus/impeccable) — design quality skills
 - [OpenSandbox](https://github.com/nichochar/open-sandbox) — Docker sandboxing
 - [Anthropic Skills](https://github.com/anthropics/skills) — official skill collection
 - [Obra Superpowers](https://github.com/obra/superpowers) — methodology skills
