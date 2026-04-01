@@ -152,9 +152,9 @@ Supporting modules:
 - `agents/heartbeat_signals.py` — SIGTERM handler, partial result posting
 - `agents/workflow_factory.py` — cached LLM backend + 28 adapter instances across heartbeat runs
 
-### Docker Compose (`docker/docker-compose.paperclip.yml`)
+### Docker Compose
 
-Infrastructure only: Paperclip + vLLM + OpenSandbox. The agent is NOT a long-running service — Paperclip spawns agent containers on-demand via the process adapter when tasks arrive. Each invocation runs one heartbeat and exits. Task type is passed per-invocation via `VIBE_TASK_TYPE`.
+Root-level compose files: `docker-compose.yml` (core), `docker-compose.infra.yml` (infrastructure), `docker-compose.gpu.yml` (GPU services). The agent (`vibe` service) is heartbeat-driven — Paperclip spawns it on-demand, it runs one task, and exits.
 
 ## Development
 

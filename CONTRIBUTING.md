@@ -14,15 +14,14 @@ pip install -r requirements.txt
 cp .env.example .env   # then edit as needed
 ```
 
-### Start vLLM locally
-
-The project uses vLLM as its LLM backend. Bring it up with Docker Compose:
+### Start the stack
 
 ```bash
-docker compose -f docker/docker-compose.vllm.yml up -d
+sudo ./setup.sh        # First-time: installs deps, configures services, bootstraps org
+docker compose up -d    # Start all services
 ```
 
-This starts a vLLM server on port 8000. The default model is `Qwen/Qwen3.5-9B` (configurable via `MODEL_NAME` env var).
+vLLM starts automatically on port 8000. The model is auto-selected by `setup.sh` based on GPU VRAM.
 
 ### Run the test suite
 
