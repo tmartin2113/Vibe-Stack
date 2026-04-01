@@ -31,7 +31,7 @@ You create an issue in the Paperclip UI. The CTO decomposes it into subtasks, as
 
 ### Prerequisites
 
-- Linux host (Ubuntu 22.04+)
+- Linux host (Ubuntu/Debian, Fedora/RHEL/CentOS, Arch/Manjaro, or openSUSE)
 - Docker Engine 24+ with Compose v2
 - [Tailscale](https://tailscale.com/download) installed and running (`tailscale up`)
 - NVIDIA GPU with [nvidia-container-toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html) (optional, enables local inference)
@@ -236,9 +236,9 @@ python -m pytest tests/test_message_store.py -v      # Message bus (107 tests)
 | GPU VRAM | 8GB (4B model) | 22GB+ (9B model) |
 | CPU | 4 cores | 16 cores |
 | Disk | 50GB | 100GB+ (models + Docker images) |
-| OS | Ubuntu 22.04 | Ubuntu 24.04 |
+| OS | Any systemd-based Linux | Ubuntu 24.04, Fedora 41+ |
 
-No GPU required for cloud-only mode (Claude/OpenAI backends).
+Supported distros: Ubuntu/Debian, Fedora/RHEL/CentOS/Rocky, Arch/Manjaro, openSUSE. No GPU required for cloud-only mode (Claude/OpenAI backends).
 
 ## Troubleshooting
 
