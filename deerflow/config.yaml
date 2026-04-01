@@ -13,7 +13,7 @@ models:
   - name: "local-vllm"
     display_name: "Local vLLM"
     description: "Local model via vLLM"
-    use: "langchain_openai.ChatOpenAI"
+    use: "langchain_openai:ChatOpenAI"
     model: "$VLLM_MODEL"
     base_url: "$VLLM_API_URL"
     api_key: "no-key-needed"
