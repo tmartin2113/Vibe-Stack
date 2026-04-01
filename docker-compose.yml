@@ -32,7 +32,7 @@ services:
       - PLAYWRIGHT_WS_URL=${PLAYWRIGHT_WS_URL:-ws://host.docker.internal:3003}
       - MINIO_URL=${MINIO_URL:-http://host.docker.internal:9000}
       - MINIO_ACCESS_KEY=${MINIO_ROOT_USER:-vibe}
-      - MINIO_SECRET_KEY=${MINIO_ROOT_PASSWORD:-changeme123}
+      - MINIO_SECRET_KEY=${MINIO_ROOT_PASSWORD:?Set MINIO_ROOT_PASSWORD in .env}
     volumes:
       - paperclip-data:/paperclip
       - ${PAPERCLIP_PROJECTS_DIR:-${HOME}/Projects}:${PAPERCLIP_PROJECTS_DIR:-${HOME}/Projects}
@@ -59,7 +59,7 @@ services:
       - PLAYWRIGHT_WS_URL=${PLAYWRIGHT_WS_URL:-ws://host.docker.internal:3003}
       - MINIO_URL=${MINIO_URL:-http://host.docker.internal:9000}
       - MINIO_ACCESS_KEY=${MINIO_ROOT_USER:-vibe}
-      - MINIO_SECRET_KEY=${MINIO_ROOT_PASSWORD:-changeme123}
+      - MINIO_SECRET_KEY=${MINIO_ROOT_PASSWORD:?Set MINIO_ROOT_PASSWORD in .env}
 
   # ── DeerFlow Gateway ───────────────────────────────────────────────────────
   deerflow-gateway:
@@ -77,7 +77,7 @@ services:
       - PLAYWRIGHT_WS_URL=${PLAYWRIGHT_WS_URL:-ws://host.docker.internal:3003}
       - MINIO_URL=${MINIO_URL:-http://host.docker.internal:9000}
       - MINIO_ACCESS_KEY=${MINIO_ROOT_USER:-vibe}
-      - MINIO_SECRET_KEY=${MINIO_ROOT_PASSWORD:-changeme123}
+      - MINIO_SECRET_KEY=${MINIO_ROOT_PASSWORD:?Set MINIO_ROOT_PASSWORD in .env}
 
   # ── Vibe Agent (local build) ───────────────────────────────────────────────
   vibe:

@@ -29,7 +29,7 @@ services:
     volumes:
       - ./searxng/settings.yml:/etc/searxng/settings.yml:ro
     environment:
-      - SEARXNG_SECRET=${SEARXNG_SECRET:-changeme}
+      - SEARXNG_SECRET=${SEARXNG_SECRET:?Set SEARXNG_SECRET in .env}
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://localhost:8080/healthz"]
       interval: 10s
@@ -84,7 +84,7 @@ services:
     command: server /data --console-address ":9002"
     environment:
       - MINIO_ROOT_USER=${MINIO_ROOT_USER:-vibe}
-      - MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD:-changeme123}
+      - MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD:?Set MINIO_ROOT_PASSWORD in .env}
     volumes:
       - minio-data:/data
     healthcheck:
@@ -102,7 +102,7 @@ services:
     restart: "no"
     entrypoint: >
       /bin/sh -c "
-      mc alias set vibe http://minio:9000 $${MINIO_ROOT_USER:-vibe} $${MINIO_ROOT_PASSWORD:-changeme123} &&
+      mc alias set vibe http://minio:9000 $${MINIO_ROOT_USER:-vibe} $${MINIO_ROOT_PASSWORD:?Set MINIO_ROOT_PASSWORD in .env} &&
       mc mb --ignore-existing vibe/vibe-artifacts &&
       echo 'Bucket vibe-artifacts ready'
       "
@@ -130,7 +130,7 @@ services:
       - penpot-redis
     environment:
       - PENPOT_FLAGS=enable-registration enable-login-with-password disable-email-verification disable-secure-session-cookies
-      - PENPOT_SECRET_KEY=${PENPOT_SECRET_KEY:-changeme}
+      - PENPOT_SECRET_KEY=${PENPOT_SECRET_KEY:?Set PENPOT_SECRET_KEY in .env}
       - PENPOT_DATABASE_URI=postgresql://penpot-postgres/penpot
       - PENPOT_DATABASE_USERNAME=penpot
       - PENPOT_DATABASE_PASSWORD=penpot
@@ -151,7 +151,7 @@ services:
     environment:
       - PENPOT_PUBLIC_URI=http://penpot-frontend
       - PENPOT_REDIS_URI=redis://penpot-redis/0
-      - PENPOT_SECRET_KEY=${PENPOT_SECRET_KEY:-changeme}
+      - PENPOT_SECRET_KEY=${PENPOT_SECRET_KEY:?Set PENPOT_SECRET_KEY in .env}
 
   # ── Penpot Postgres ─────────────────────────────────────────────────────────
   penpot-postgres:
@@ -189,7 +189,7 @@ services:
     image: neo4j:5.22.0
     restart: unless-stopped
     environment:
-      - NEO4J_AUTH=neo4j/zep-neo4j-pass
+      - NEO4J_AUTH=neo4j/${ZEP_NEO4J_PASSWORD:-zep-neo4j-pass}
     volumes:
       - neo4j-data:/data
     healthcheck:
@@ -210,7 +210,7 @@ services:
       - MODEL_NAME=${MIROFISH_LLM_CLOUD_MODEL:-gpt-4o-mini}
       - NEO4J_URI=bolt://neo4j:7687
       - NEO4J_USER=neo4j
-      - NEO4J_PASSWORD=zep-neo4j-pass
+      - NEO4J_PASSWORD=${ZEP_NEO4J_PASSWORD:-zep-neo4j-pass}
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8003/healthz')"]
       interval: 10s
