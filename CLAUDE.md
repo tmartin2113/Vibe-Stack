@@ -15,7 +15,7 @@ Deterministic state machine: **Router → Skill Loader → Spec Builder → Spec
 - **Router** (`agents/router.py`) — classifies task type via regex/LLM/hybrid from `TaskTypeRegistry`. 12 built-in types + skill-defined custom types.
 - **Skill Loader** (`agents/skill_loader.py`) — loads task-type-specific skills from 3-tier registry (community → approved → builtin). Security-gated.
 - **Spec Builder** (`agents/nodes.py`) — LLM generates detailed specification. Can emit `clarification_needed` with questions for human.
-- **Specialist** (`agents/nodes.py`) — executes code generation with tool access (Python executor, pytest, bandit, file I/O). Single-specialist or multi-specialist (sub-task decomposition). Clarification requests are first routed through simulation before escalating to human.
+- **Specialist** (`agents/nodes.py`) — executes code generation with tool access (Python executor, pytest, bandit, file I/O). Single-specialist or multi-specialist (sub-task decomposition). Clarification requests escalate to human.
 - **Critic** (`agents/nodes.py`) — scores output 0-100. Below threshold → refinement loop. Above → done.
 
 ### Key Subsystems
@@ -27,15 +27,15 @@ Deterministic state machine: **Router → Skill Loader → Spec Builder → Spec
 | **Storage Layer** | `agents/storage/` | Pluggable storage abstraction: SQLite (local dev) or PostgreSQL (multi-node). Redis for caching + distributed locks |
 | **Tool System** | `agents/tools/` | 5 default tools + extended dev/SEO tools. OpenSandbox or subprocess execution. |
 | **Skill Security** | `agents/skill_security.py` | Name/path/content validation, AST+regex scanning, runtime tool permission enforcement, SHA-256 integrity |
-| **Skill Reinforcement** | `agents/skill_generator.py`, `agents/skill_outcome_store.py`, `agents/skill_cleanup.py` | Closed-loop: outcomes recorded → RAG retrieval → generation → simulation vetting → self-refinement for low scores |
-| **Simulation** | `agents/simulation.py` | MiroFish-inspired swarm intelligence: integration prediction (parallel sidecar), clarification short-circuit (stakeholder simulation), offline skill vetting. Hardware-aware VRAM gating |
+| **Skill Reinforcement** | `agents/skill_generator.py`, `agents/skill_outcome_store.py`, `agents/skill_cleanup.py` | Closed-loop: outcomes recorded → RAG retrieval → generation → self-refinement for low scores |
+| **Simulation** | `agents/tools/mirofish_tool.py` | MiroFish multi-agent simulation via external service. Complexity-based LLM routing (local vLLM or cloud). Invoked selectively by agents via MiroFishSimulation tool |
 | **Session Store** | `agents/session_store.py` | SQLite + WAL. Daemon-mode only. TTL-based cleanup. |
 | **Messenger Client** | `agents/messenger_client.py` | MattermostClient + SlackClient. Used by daemon and API key prompting. |
 | **Resource Discovery** | `agents/resource_discovery.py`, `agents/resource_allocator.py` | CPU/RAM/GPU introspection (startup + real-time). `query_gpu_realtime()` for live VRAM probing. Resource plans for sandbox pool sizing |
 | **Sandbox** | `agents/sandbox/` | OpenSandbox Docker containers with GPU passthrough. Toggle: `VIBE_SANDBOX_BACKEND=opensandbox\|subprocess` |
 | **LLM Retry** | `agents/llm_retry.py` | Exponential backoff with jitter, Retry-After header support, per-node and workflow timeouts |
 | **Task Type Registry** | `agents/task_type_registry.py` | Unified registry of builtin + skill-defined types. Router, orchestrator, and LLM classifier all read from it |
-| **Workflow Factory** | `agents/workflow_factory.py` | Cached LLM backend + 28 adapters (17 specialist + 11 simulation) across heartbeat runs. Lazy init on first `run_workflow()` |
+| **Workflow Factory** | `agents/workflow_factory.py` | Cached LLM backend + 17 specialist adapters across heartbeat runs. Lazy init on first `run_workflow()` |
 | **Heartbeat Hardening** | `agents/heartbeat_progress.py`, `agents/heartbeat_signals.py` | Progress comments at key nodes, graceful SIGTERM with partial result posting |
 | **WebSocket Client** | `agents/ws_client.py` | Push-based Paperclip events via WS. Auto-reconnect with backoff. Used by orchestrator POLL and cancellation watcher |
 | **MessageStore** | `agents/message_store.py`, `agents/message_types.py` | Message bus with FTS5 + vector semantic search. Typed messages (INFO, DECISION, BLOCKER, HANDOFF, STATUS, QUESTION, COMPLETION) with TTL-based expiry. Pluggable storage backend |
@@ -43,25 +43,17 @@ Deterministic state machine: **Router → Skill Loader → Spec Builder → Spec
 | **Shared Embedder** | `agents/embedder.py` | Singleton VLLMEmbedder shared across MessageStore + MemoryStore. Graceful degradation when vLLM unavailable |
 | **Spending Tracker** | `agents/spending_tracker.py` | Per-agent LLM cost tracking with configurable budget caps and circuit breaker. Pluggable storage backend |
 
-## Simulation (`agents/simulation.py`)
+## Simulation (MiroFish)
 
-MiroFish-inspired swarm intelligence prediction engine. Uses lightweight persona-based simulations to predict integration conflicts, resolve clarification ambiguity, and vet skills. All simulation calls reuse the already-loaded LLM via PromptAdapter instances — zero additional model loading.
+Multi-agent prediction is handled by an external MiroFish service, invoked via the `MiroFishSimulation` tool. Agents use it selectively for architecture decisions, deployment risk assessment, and integration conflict detection.
 
-### Integration Points
+**Complexity-based LLM routing:**
+- Simple simulations (<40 agents, <20 iterations) → local vLLM (free)
+- Complex simulations → cloud API (if configured, else local with warning)
 
-1. **Parallel sidecar** — runs alongside multi-specialist sub-tasks, feeding conflict predictions to the aggregator. Auto-disabled on <=24GB VRAM (would compete with specialists for KV cache).
-2. **Clarification short-circuit** — when a specialist emits `clarification_needed`, simulates stakeholder personas (product owner, end user, domain expert) to resolve ambiguity without human round-trip. Always enabled regardless of VRAM (GPU is idle during clarification).
-3. **Skill vetting** — offline simulation against synthetic task populations before first use. Triggers immediate refinement if score is below threshold.
+**Infrastructure:** MiroFish service (port 5001) + self-hosted Zep CE (pgvector + Neo4j + Graphiti) for agent memory.
 
-### Hardware-Aware VRAM Gating
-
-```
-assess_simulation_budget(mode="sidecar"|"clarification")
-  sidecar:        real-time nvidia-smi probe → disabled below 6GB free
-  clarification:  always enabled (GPU idle, no KV contention)
-```
-
-Configurable via `VIBE_SIM_ENABLED`, `VIBE_SIM_MIN_FREE_VRAM_MB`, `VIBE_SIM_MAX_PERSONA_ROUNDS`, `VIBE_SIM_MAX_TOKENS`.
+Configurable via `MIROFISH_*` and `ZEP_*` environment variables. See `.env.example`.
 
 ## Storage Abstraction (`agents/storage/`)
 
@@ -150,7 +142,7 @@ On SIGTERM: posts partial output/score/last-step to Paperclip, sets issue to blo
 Supporting modules:
 - `agents/heartbeat_progress.py` — progress callback that posts Paperclip comments at key nodes
 - `agents/heartbeat_signals.py` — SIGTERM handler, partial result posting
-- `agents/workflow_factory.py` — cached LLM backend + 28 adapter instances across heartbeat runs
+- `agents/workflow_factory.py` — cached LLM backend + 17 adapter instances across heartbeat runs
 
 ### Docker Compose
 
@@ -178,7 +170,7 @@ python -m pytest tests/ -x -m "not e2e" --no-header -q
 - Graph coverage (82), workflow nodes (90), daemon/router (175), misc (103+145)
 - Dynamic adapters (40), complexity triage (34), heuristic critic (25)
 - Integration (36), observability (43), scalability (23), parallel subtasks (54)
-- Simulation (41)
+- MiroFish tool (11)
 
 ### Environment Variables
 
@@ -200,9 +192,7 @@ See `.env.example` for all configurable values. Key ones:
 | `VIBE_REDIS_URL` | Redis connection string (when cache=redis) | — |
 | `VIBE_FALLBACK_URLS` | Comma-separated fallback backend host:port pairs | — |
 | `VIBE_BACKEND_POOL_STRATEGY` | `failover`, `round_robin`, or `least_loaded` | `failover` |
-| `VIBE_SIM_ENABLED` | Enable/disable simulation module | `true` |
-| `VIBE_SIM_MIN_FREE_VRAM_MB` | Min free VRAM for sidecar simulation | `6144` |
-| `VIBE_SIM_VET_SKILLS` | Enable offline skill vetting via simulation | `true` |
+| `MIROFISH_URL` | MiroFish simulation service URL | `http://mirofish:5001` |
 | `OPENAI_API_KEY` | OpenAI API key (for OpenAI backend) | — |
 | `ANTHROPIC_API_KEY` | Anthropic API key (for Anthropic backend) | — |
 
@@ -224,7 +214,7 @@ agents/                    # Main agent pipeline
   llm_retry.py             # Retry with exponential backoff
   backend_pool.py          # Multi-backend failover + circuit breaker
   adapters.py              # PromptAdapter, AdapterRegistry, all system prompts
-  simulation.py            # MiroFish-inspired simulation (integration, clarification, vetting)
+  tools/mirofish_tool.py   # MiroFish simulation tool (external service invocation)
   task_type_registry.py    # Unified builtin + skill task type registry
   router.py                # Task-type classification (reads from registry)
   tools/                   # Tool registry + implementations
@@ -258,6 +248,6 @@ tests/                     # ~2970 tests across 48 files
 - **Local-first LLM** — vLLM is the default and production-tested backend. OpenAI and Anthropic cloud backends are implemented for hybrid/fallback deployment.
 - **Paperclip owns orchestration** — No standalone K8s manifests. Paperclip handles scheduling, pod lifecycle, environment injection.
 - **Per-agent skill isolation** — Each agent has its own skill volume. No cross-agent skill sharing by design.
-- **Simulation is hardware-gated** — MiroFish-style simulation adapts to available VRAM. Sidecar disabled on constrained GPUs (<=24GB); clarification simulation always runs (GPU idle). No wasted inference budget.
+- **Simulation is external** — MiroFish runs as a Docker service, invoked selectively via the MiroFishSimulation tool. Complexity routing sends simple sims to local vLLM and complex sims to cloud APIs.
 - **Storage is pluggable** — SQLite for local dev, PostgreSQL + Redis for production multi-node. All stores accept optional `storage_backend` param. Switch via env var, zero code changes.
 - **Backend pool for resilience** — Multi-backend failover with per-backend circuit breakers. Transparent to the adapter layer — specialists don't know which backend served their request.

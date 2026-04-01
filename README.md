@@ -160,6 +160,8 @@ Each agent runs the same Python workflow engine with 13 built-in task types:
 | Penpot | Design tool | 9001 |
 | Playwright | Browser automation | 3003 |
 | OpenSandbox | Code execution sandbox | 9090 |
+| MiroFish | Multi-agent simulation engine | 5001 |
+| Zep | Agent memory (for MiroFish) | 8000 (internal) |
 | Caddy | TLS reverse proxy | 443 |
 
 ## Configuration
