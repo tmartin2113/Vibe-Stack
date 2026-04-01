@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # setup.sh — Vibe Stack 2.0 (Paperclip + DeerFlow Agent Network)
-# One-shot first-time deployment. Run as root on a fresh Ubuntu system.
+# One-shot first-time deployment. Run as root on a fresh Linux system.
+# Supports: Ubuntu/Debian, Fedora/RHEL/CentOS/Rocky, Arch/Manjaro, openSUSE
 # Idempotent — safe to re-run.
 
 set -euo pipefail
@@ -15,6 +16,63 @@ err()     { printf "${RED}[ERROR]${NC}  %s\n" "$*" >&2; }
 TOTAL_STEPS=24
 CURRENT_STEP=0
 step() { CURRENT_STEP=$((CURRENT_STEP + 1)); printf "\n${BOLD}[Step %d/%d]${NC} ${BLUE}%s${NC}\n" "$CURRENT_STEP" "$TOTAL_STEPS" "$*"; }
+
+# ── Distro detection ──────────────────────────────────────────
+if [[ -f /etc/os-release ]]; then
+    . /etc/os-release
+    DISTRO_ID="${ID:-unknown}"
+    DISTRO_FAMILY="${ID_LIKE:-$DISTRO_ID}"
+else
+    error "Cannot detect distribution — /etc/os-release not found"
+fi
+
+# Normalize to family
+case "$DISTRO_ID" in
+    ubuntu|debian|pop|linuxmint|elementary|zorin)   DISTRO_FAMILY="debian" ;;
+    fedora|rhel|centos|rocky|alma|nobara)           DISTRO_FAMILY="fedora" ;;
+    arch|manjaro|endeavouros|garuda)                 DISTRO_FAMILY="arch" ;;
+    opensuse*|sles)                                  DISTRO_FAMILY="suse" ;;
+    *)
+        # Check ID_LIKE for derivatives
+        case "$DISTRO_FAMILY" in
+            *debian*|*ubuntu*)  DISTRO_FAMILY="debian" ;;
+            *fedora*|*rhel*)    DISTRO_FAMILY="fedora" ;;
+            *arch*)             DISTRO_FAMILY="arch" ;;
+            *suse*)             DISTRO_FAMILY="suse" ;;
+            *)                  warn "Unknown distro '$DISTRO_ID' — will attempt Debian-style commands" ; DISTRO_FAMILY="debian" ;;
+        esac
+        ;;
+esac
+
+info "Detected distro: $DISTRO_ID (family: $DISTRO_FAMILY)"
+
+# ── Package manager abstraction ────────────────────────────────
+pkg_update() {
+    case "$DISTRO_FAMILY" in
+        debian) apt-get update -qq ;;
+        fedora) dnf check-update -q || true ;;  # dnf returns 100 when updates available
+        arch)   pacman -Sy --noconfirm ;;
+        suse)   zypper --non-interactive refresh ;;
+    esac
+}
+
+pkg_install() {
+    case "$DISTRO_FAMILY" in
+        debian) apt-get install -y --no-install-recommends "$@" ;;
+        fedora) dnf install -y "$@" ;;
+        arch)   pacman -S --needed --noconfirm "$@" ;;
+        suse)   zypper --non-interactive install "$@" ;;
+    esac
+}
+
+pkg_installed() {
+    case "$DISTRO_FAMILY" in
+        debian) dpkg -s "$1" &>/dev/null ;;
+        fedora) rpm -q "$1" &>/dev/null ;;
+        arch)   pacman -Qi "$1" &>/dev/null ;;
+        suse)   rpm -q "$1" &>/dev/null ;;
+    esac
+}
 
 # wait_healthy TIMEOUT_SECS service [service...]
 wait_healthy() {
@@ -176,24 +234,59 @@ success "Port check complete"
 # 2. Detect host versions
 # ══════════════════════════════════════════════════════════════
 step "Detecting host versions"
-HOST_UBUNTU_VERSION=$(lsb_release -rs 2>/dev/null || echo "24.04")
 HOST_PYTHON_VERSION=$(python3 --version 2>&1 | grep -oP '\d+\.\d+' | head -1 || echo "3.12")
-info "Ubuntu $HOST_UBUNTU_VERSION / Python $HOST_PYTHON_VERSION"
+info "$DISTRO_ID ${VERSION_ID:-unknown} / Python $HOST_PYTHON_VERSION"
 success "Host versions detected"
 
 # ══════════════════════════════════════════════════════════════
 # 3. System prerequisites
 # ══════════════════════════════════════════════════════════════
 step "Installing system prerequisites"
-apt-get update -qq
-apt-get install -y --no-install-recommends \
-    apt-transport-https ca-certificates curl gnupg lsb-release \
-    inotify-tools git git-lfs acl \
-    iptables-persistent netfilter-persistent \
-    fail2ban auditd audispd-plugins \
-    unattended-upgrades jq wget logwatch \
-    dnsutils python3-pip python3-venv \
-    nodejs npm
+pkg_update
+
+# Common packages (names vary slightly by distro)
+case "$DISTRO_FAMILY" in
+    debian)
+        pkg_install \
+            apt-transport-https ca-certificates curl gnupg lsb-release \
+            inotify-tools git git-lfs acl \
+            iptables-persistent netfilter-persistent \
+            fail2ban auditd audispd-plugins \
+            unattended-upgrades jq wget logwatch \
+            dnsutils python3-pip python3-venv \
+            nodejs npm
+        ;;
+    fedora)
+        pkg_install \
+            ca-certificates curl gnupg2 \
+            inotify-tools git git-lfs acl \
+            iptables-services \
+            fail2ban audit \
+            dnf-automatic jq wget logwatch \
+            bind-utils python3-pip python3 \
+            nodejs npm
+        ;;
+    arch)
+        pkg_install \
+            ca-certificates curl gnupg \
+            inotify-tools git git-lfs acl \
+            iptables \
+            fail2ban audit \
+            jq wget \
+            bind python-pip python \
+            nodejs npm
+        ;;
+    suse)
+        pkg_install \
+            ca-certificates curl gpg2 \
+            inotify-tools git git-lfs acl \
+            iptables \
+            fail2ban audit \
+            jq wget \
+            bind-utils python3-pip python3 \
+            nodejs npm
+        ;;
+esac
 success "Prerequisites installed"
 
 # ══════════════════════════════════════════════════════════════
@@ -202,38 +295,50 @@ success "Prerequisites installed"
 step "Docker"
 if ! command -v docker &>/dev/null; then
     info "Installing Docker CE..."
-    curl -fsSL https://download.docker.com/linux/ubuntu/gpg \
-        | gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
-    echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] \
-        https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" \
-        > /etc/apt/sources.list.d/docker.list
-    apt-get update -qq
-    apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
+    case "$DISTRO_FAMILY" in
+        debian)
+            curl -fsSL "https://download.docker.com/linux/${DISTRO_ID}/gpg" \
+                | gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
+            echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] \
+                https://download.docker.com/linux/${DISTRO_ID} $(lsb_release -cs) stable" \
+                > /etc/apt/sources.list.d/docker.list
+            pkg_update
+            pkg_install docker-ce docker-ce-cli containerd.io docker-compose-plugin
+            ;;
+        fedora)
+            dnf config-manager addrepo --from-repofile="https://download.docker.com/linux/fedora/docker-ce.repo" 2>/dev/null \
+                || dnf config-manager --add-repo "https://download.docker.com/linux/fedora/docker-ce.repo" 2>/dev/null || true
+            pkg_install docker-ce docker-ce-cli containerd.io docker-compose-plugin
+            ;;
+        arch)
+            pkg_install docker docker-compose docker-buildx
+            ;;
+        suse)
+            zypper --non-interactive addrepo "https://download.docker.com/linux/sles/docker-ce.repo" 2>/dev/null || true
+            pkg_install docker-ce docker-ce-cli containerd.io docker-compose-plugin
+            ;;
+    esac
     systemctl enable --now docker
     success "Docker CE installed"
-elif dpkg -l docker-ce 2>/dev/null | grep -q "^ii"; then
-    success "Docker CE already present"
+elif pkg_installed docker-ce 2>/dev/null || command -v docker &>/dev/null; then
+    success "Docker already present"
     if ! docker compose version &>/dev/null; then
-        info "Installing docker-compose-plugin..."
-        apt-get update -qq
-        apt-get install -y docker-compose-plugin
-        success "docker-compose-plugin installed"
-    fi
-else
-    success "Docker (docker.io) already present"
-    if ! docker compose version &>/dev/null; then
-        info "Installing docker-compose-v2 plugin..."
-        apt-get update -qq
-        apt-get install -y docker-compose-v2
-        success "docker-compose-v2 installed"
+        info "Installing docker compose plugin..."
+        case "$DISTRO_FAMILY" in
+            debian) pkg_update; pkg_install docker-compose-plugin 2>/dev/null || pkg_install docker-compose-v2 ;;
+            arch)   pkg_install docker-compose ;;
+            *)      pkg_install docker-compose-plugin ;;
+        esac
+        success "Docker compose plugin installed"
     fi
 fi
 
 if ! docker buildx version &>/dev/null; then
     info "Installing docker-buildx..."
-    apt-get update -qq
-    apt-get install -y docker-buildx
-    success "docker-buildx installed"
+    case "$DISTRO_FAMILY" in
+        arch) pkg_install docker-buildx ;;
+        *)    pkg_install docker-buildx-plugin 2>/dev/null || pkg_install docker-buildx 2>/dev/null || warn "docker-buildx not available in repos — install manually" ;;
+    esac
 fi
 
 if ! docker compose version &>/dev/null; then
@@ -245,15 +350,30 @@ success "Docker Compose $(docker compose version --short) available"
 # 5. NVIDIA Container Toolkit
 # ══════════════════════════════════════════════════════════════
 step "NVIDIA Container Toolkit"
-if ! dpkg -s nvidia-container-toolkit &>/dev/null; then
+if ! pkg_installed nvidia-container-toolkit; then
     info "Installing NVIDIA Container Toolkit..."
-    curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey \
-        | gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
-    curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list \
-        | sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' \
-        > /etc/apt/sources.list.d/nvidia-container-toolkit.list
-    apt-get update -qq
-    apt-get install -y nvidia-container-toolkit
+    case "$DISTRO_FAMILY" in
+        debian)
+            curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey \
+                | gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
+            curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list \
+                | sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' \
+                > /etc/apt/sources.list.d/nvidia-container-toolkit.list
+            ;;
+        fedora)
+            curl -s -L https://nvidia.github.io/libnvidia-container/stable/rpm/nvidia-container-toolkit.repo \
+                | tee /etc/yum.repos.d/nvidia-container-toolkit.repo > /dev/null
+            ;;
+        arch)
+            # nvidia-container-toolkit is in the AUR or extra repo
+            info "On Arch, install nvidia-container-toolkit from AUR if not in repos"
+            ;;
+        suse)
+            zypper --non-interactive addrepo https://nvidia.github.io/libnvidia-container/stable/rpm/nvidia-container-toolkit.repo 2>/dev/null || true
+            ;;
+    esac
+    pkg_update
+    pkg_install nvidia-container-toolkit
     nvidia-ctk runtime configure --runtime=docker
     systemctl restart docker
     success "NVIDIA Container Toolkit installed"
@@ -705,7 +825,11 @@ step "Docker credential storage + GHCR auth"
 # Install credential helper if not present
 if ! command -v docker-credential-secretservice &>/dev/null && \
    ! command -v docker-credential-pass &>/dev/null; then
-    apt-get install -y --no-install-recommends golang-docker-credential-helpers >/dev/null 2>&1 || true
+    case "$DISTRO_FAMILY" in
+        debian) apt-get install -y --no-install-recommends golang-docker-credential-helpers >/dev/null 2>&1 || true ;;
+        fedora) dnf install -y docker-credential-helpers >/dev/null 2>&1 || true ;;
+        *)      info "Docker credential helpers not available in repos — skipping" ;;
+    esac
 fi
 
 # Determine which credential helper to use
@@ -973,11 +1097,27 @@ success "fail2ban configured"
 # 18. Unattended upgrades
 # ══════════════════════════════════════════════════════════════
 step "Unattended security upgrades"
-cat > /etc/apt/apt.conf.d/20auto-upgrades-vibe << 'EOF'
+case "$DISTRO_FAMILY" in
+    debian)
+        cat > /etc/apt/apt.conf.d/20auto-upgrades-vibe << 'EOF'
 APT::Periodic::Update-Package-Lists "1";
 APT::Periodic::Unattended-Upgrade "1";
 EOF
-success "Unattended upgrades enabled"
+        ;;
+    fedora)
+        systemctl enable --now dnf-automatic-install.timer 2>/dev/null || \
+        systemctl enable --now dnf-automatic.timer 2>/dev/null || \
+        warn "dnf-automatic not available — configure automatic updates manually"
+        ;;
+    arch)
+        info "Arch does not support unattended upgrades — skip (rolling release)"
+        ;;
+    suse)
+        systemctl enable --now packagekit-background.service 2>/dev/null || \
+        warn "Auto-updates not configured — enable manually"
+        ;;
+esac
+success "Unattended upgrades configured"
 
 # ══════════════════════════════════════════════════════════════
 # 19. Claude Code login check
