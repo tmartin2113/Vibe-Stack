@@ -24,6 +24,8 @@ services:
     environment:
       # Force embedded postgres (no external DATABASE_URL)
       - DATABASE_URL=
+      # Container-side path for agent instruction files (bootstrap uses this)
+      - PAPERCLIP_PROJECTS_DIR=/paperclip/Projects
       - BETTER_AUTH_TRUSTED_ORIGINS=${BETTER_AUTH_TRUSTED_ORIGINS:-http://localhost:3100,https://${TAILSCALE_HOSTNAME:-localhost}}
       - PAPERCLIP_ALLOWED_HOSTNAMES=${TAILSCALE_HOSTNAME:-localhost},localhost,server
       - SEARXNG_URL=${SEARXNG_URL:-http://host.docker.internal:8888}
@@ -35,7 +37,7 @@ services:
       - MINIO_SECRET_KEY=${MINIO_ROOT_PASSWORD:?Set MINIO_ROOT_PASSWORD in .env}
     volumes:
       - paperclip-data:/paperclip
-      - ${PAPERCLIP_PROJECTS_DIR:-${HOME}/Projects}:${PAPERCLIP_PROJECTS_DIR:-${HOME}/Projects}
+      - ${PAPERCLIP_PROJECTS_DIR:-${HOME}/Projects}:/paperclip/Projects
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://localhost:3100/api/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
       interval: 10s

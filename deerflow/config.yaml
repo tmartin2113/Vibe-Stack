@@ -18,11 +18,16 @@ models:
     base_url: "$VLLM_API_URL"
     api_key: "no-key-needed"
     temperature: 0.3
+    model_kwargs:
+      extra_body:
+        chat_template_kwargs:
+          enable_thinking: false
 
 # ── Sandbox ─────────────────────────────────────────────────────
+# Local sandbox — DeerFlow assistants explore the workspace directly.
+# No Docker-in-Docker needed; the container already has filesystem access.
 sandbox:
-  use: "deerflow.sandbox.aio:AioSandboxProvider"
-  image: "enterprise-public-cn-beijing.cr.volces.com/vefaas-public/all-in-one-sandbox:latest"
+  use: "src.sandbox.local.local_sandbox_provider:LocalSandboxProvider"
 
 # ── Tools ───────────────────────────────────────────────────────
 tool_groups:
@@ -31,18 +36,30 @@ tool_groups:
   - name: "code_interpreter"
 
 tools:
+  # DuckDuckGo web search — no API key required
   - name: "web_search"
     group: "web_search"
-    use: "deerflow.tools.search:web_search_tool"
+    use: "src.community.ddg.tools:web_search_tool"
+  # Jina AI web fetch — reads and extracts web page content
   - name: "crawl"
     group: "crawl"
-    use: "deerflow.tools.crawl:crawl_tool"
-  - name: "python_repl"
-    group: "code_interpreter"
-    use: "deerflow.sandbox.tools:python_repl_tool"
+    use: "src.community.jina_ai.tools:web_fetch_tool"
+  # Sandbox tools — bash, file I/O for codebase exploration
   - name: "bash"
     group: "code_interpreter"
-    use: "deerflow.sandbox.tools:bash_tool"
+    use: "src.sandbox.tools:bash_tool"
+  - name: "read_file"
+    group: "code_interpreter"
+    use: "src.sandbox.tools:read_file_tool"
+  - name: "write_file"
+    group: "code_interpreter"
+    use: "src.sandbox.tools:write_file_tool"
+  - name: "ls"
+    group: "code_interpreter"
+    use: "src.sandbox.tools:ls_tool"
+  - name: "str_replace"
+    group: "code_interpreter"
+    use: "src.sandbox.tools:str_replace_tool"
 
 # ── Checkpointer ────────────────────────────────────────────────
 checkpointer:
