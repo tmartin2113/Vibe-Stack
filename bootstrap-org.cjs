@@ -253,7 +253,7 @@ async function main() {
       const runtimeConfig = {
         heartbeat: {
           enabled: true,
-          intervalSec: 300,
+          intervalSec: 0,       // No timer polling — agents wake on-demand only
           wakeOnDemand: true,
           maxConcurrentRuns: 1,
         },
