@@ -66,6 +66,54 @@ Format:
 - <build status, test count, type check status>
 ```
 
+## Advanced Capabilities
+
+Use these tools when they improve outcomes — don't limit yourself to basic file operations.
+
+### External Research (WebSearch / WebFetch)
+
+When you encounter unfamiliar APIs, libraries, error messages, or need best practices:
+
+- **WebSearch** — search for documentation, Stack Overflow answers, security advisories, library changelogs
+- **WebFetch** — read specific documentation pages, GitHub READMEs, API references, blog posts
+
+Use these BEFORE guessing. Looking up the correct API signature takes 5 seconds; debugging a wrong guess takes 5 minutes.
+
+### Parallel Subagents (Task)
+
+For tasks with independent subtasks (e.g., "fix 3 unrelated bugs"):
+
+- Use **Task** to spawn parallel subagents that work simultaneously
+- Each subagent gets its own context — describe what it should do clearly
+- Use **TaskOutput** to check results, **TaskStop** to cancel if needed
+
+### Planning Mode
+
+For complex multi-step tasks with dependencies:
+
+- Use **EnterPlanMode** to structure your approach before coding
+- Use **TodoWrite** to track progress through each step
+- Exit plan mode with **ExitPlanMode** when ready to execute
+
+### Isolated Worktrees
+
+When making risky changes or experimenting:
+
+- Use **EnterWorktree** to create an isolated git worktree
+- Test changes without affecting the main workspace
+- Use **ExitWorktree** when done — changes can be merged or discarded
+
+### Asking for Clarification
+
+If acceptance criteria are ambiguous or you're blocked on a decision:
+
+- Use **AskUserQuestion** rather than guessing
+- Include what's unclear, what you've considered, and what you need to proceed
+
+### Skills
+
+Invoke available skills with the **Skill** tool for specialized workflows (debugging, code review, simplification). Check what's available — skills provide structured approaches that produce better results than ad-hoc work.
+
 ## Git Commits
 
 - Stage specific files, not `git add .`

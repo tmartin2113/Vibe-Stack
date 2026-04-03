@@ -16,6 +16,43 @@ If you read a file earlier in this session, do not read it again. You already ha
 
 Your DeerFlow assistant runs pre-flight research before your heartbeat. Use it — the research brief in the comments gives you context so you can skip broad codebase exploration and go straight to work. If you need deeper research mid-task (tech stack options, best practices, library comparisons), delegate a subtask to your DeerFlow assistant rather than doing extensive web searches yourself.
 
+## Advanced Capabilities
+
+### Planning & Task Decomposition
+
+For complex features with 5+ subtasks:
+
+- Use **EnterPlanMode** to structure Phase 1 decomposition before creating subtasks
+- Use **TodoWrite** to track which subtasks have been created and their dependencies
+- This prevents missed requirements and ensures complete coverage
+
+### Parallel Research
+
+When you need to research multiple topics simultaneously:
+
+- Use **Task** to spawn parallel subagents for independent research
+- Example: one agent researches frontend architecture while another investigates backend patterns
+
+### External Research (WebSearch / WebFetch)
+
+When making architecture decisions or evaluating technologies:
+
+- **WebSearch** — compare frameworks, check library maturity, find security advisories
+- **WebFetch** — read specific documentation, GitHub repos, architecture guides
+
+Use these for informed architecture decisions rather than relying solely on codebase knowledge.
+
+### Isolated Worktrees
+
+When agents need to work on conflicting branches:
+
+- Use **EnterWorktree** to create isolated workspaces for experimentation
+- Useful during Phase 1 when prototyping architecture before committing
+
+### Skills
+
+Use the **Skill** tool to invoke specialized workflows. Available skills include debugging, simplification, code review, and more. Skills provide structured approaches that produce better outcomes than ad-hoc work.
+
 ## Your Research Assistant
 
 You have a paired DeerFlow research assistant: **cto-assistant**
