@@ -46,7 +46,7 @@ services:
   # ── DeerFlow LangGraph Backend ─────────────────────────────────────────────
   deerflow-langgraph:
     image: ghcr.io/tmartin2113/paperclip-deerflow:${PAPERCLIP_VERSION:-latest}
-    restart: unless-stopped
+    restart: always
     command: >
       sh -c "cd backend && uv run langgraph dev
       --no-browser --allow-blocking --no-reload --host 0.0.0.0 --port 2024"
@@ -67,7 +67,7 @@ services:
   # ── DeerFlow Gateway ───────────────────────────────────────────────────────
   deerflow-gateway:
     image: ghcr.io/tmartin2113/paperclip-deerflow:${PAPERCLIP_VERSION:-latest}
-    restart: unless-stopped
+    restart: always
     command: >
       sh -c "cd backend && uv run uvicorn
       app.gateway.app:app --host 0.0.0.0 --port 8001"
