@@ -4,6 +4,10 @@
 # Uses $VAR syntax for env var resolution (DeerFlow's config parser
 # does NOT support ${VAR:-default} bash syntax).
 #
+# Module paths use the "deerflow.*" namespace — this matches the
+# installed harness package inside the Docker image. Do NOT use
+# "src.*" paths (those only exist in the source repo, not the image).
+#
 # Required env vars (set in .env by setup.sh):
 #   VLLM_MODEL     — model name served by vLLM
 #   VLLM_API_URL   — vLLM OpenAI-compatible API URL
@@ -27,7 +31,7 @@ models:
 # Local sandbox — DeerFlow assistants explore the workspace directly.
 # No Docker-in-Docker needed; the container already has filesystem access.
 sandbox:
-  use: "src.sandbox.local.local_sandbox_provider:LocalSandboxProvider"
+  use: "deerflow.sandbox.local.local_sandbox_provider:LocalSandboxProvider"
 
 # ── Tools ───────────────────────────────────────────────────────
 tool_groups:
@@ -36,30 +40,30 @@ tool_groups:
   - name: "code_interpreter"
 
 tools:
-  # DuckDuckGo web search — no API key required
+  # Tavily web search (set TAVILY_API_KEY in .env, or swap for infoquest)
   - name: "web_search"
     group: "web_search"
-    use: "src.community.ddg.tools:web_search_tool"
+    use: "deerflow.community.tavily.tools:web_search_tool"
   # Jina AI web fetch — reads and extracts web page content
   - name: "crawl"
     group: "crawl"
-    use: "src.community.jina_ai.tools:web_fetch_tool"
+    use: "deerflow.community.jina_ai.tools:web_fetch_tool"
   # Sandbox tools — bash, file I/O for codebase exploration
   - name: "bash"
     group: "code_interpreter"
-    use: "src.sandbox.tools:bash_tool"
+    use: "deerflow.sandbox.tools:bash_tool"
   - name: "read_file"
     group: "code_interpreter"
-    use: "src.sandbox.tools:read_file_tool"
+    use: "deerflow.sandbox.tools:read_file_tool"
   - name: "write_file"
     group: "code_interpreter"
-    use: "src.sandbox.tools:write_file_tool"
+    use: "deerflow.sandbox.tools:write_file_tool"
   - name: "ls"
     group: "code_interpreter"
-    use: "src.sandbox.tools:ls_tool"
+    use: "deerflow.sandbox.tools:ls_tool"
   - name: "str_replace"
     group: "code_interpreter"
-    use: "src.sandbox.tools:str_replace_tool"
+    use: "deerflow.sandbox.tools:str_replace_tool"
 
 # ── Checkpointer ────────────────────────────────────────────────
 checkpointer:
