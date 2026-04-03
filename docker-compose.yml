@@ -37,7 +37,10 @@ services:
       - MINIO_SECRET_KEY=${MINIO_ROOT_PASSWORD:?Set MINIO_ROOT_PASSWORD in .env}
     volumes:
       - paperclip-data:/paperclip
+      # Mount host Projects at both /paperclip/Projects (new canonical) and
+      # the host HOME path (legacy — bootstrap may have stored either in DB)
       - ${PAPERCLIP_PROJECTS_DIR:-${HOME}/Projects}:/paperclip/Projects
+      - ${PAPERCLIP_PROJECTS_DIR:-${HOME}/Projects}:${HOME}/Projects
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://localhost:3100/api/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
       interval: 10s
