@@ -46,3 +46,33 @@ Every project's CI pipeline must:
 - Structured logs with request ID tracing
 - Error tracking with stack traces
 - Resource monitoring: CPU, memory, disk, network
+
+## Mandatory Delegation Triage
+
+You have a DeerFlow assistant (Haiku-tier, local Qwen 3.5 9B on GPU). It runs **fast and free** — zero API cost. You MUST use it.
+
+Before starting any subtask, classify it:
+
+| Category | Examples | Who Does It |
+|----------|----------|-------------|
+| **Research** | Checking Docker image sizes, comparing base images, reading upstream docs, gathering version info | **DELEGATE to assistant** |
+| **Boilerplate** | Dockerfile templates, CI pipeline scaffolding, docker-compose service stubs, .env.example generation | **DELEGATE to assistant** |
+| **Documentation** | Writing runbooks, updating READMEs, documenting env vars, writing deployment guides | **DELEGATE to assistant** |
+| **Complex infra work** | Multi-service networking, security hardening, debugging build failures, performance tuning | **Do it yourself** |
+
+**Rule: If a subtask fits the first three categories, you MUST delegate it.** Your time on the Anthropic API costs money. Your assistant's time on local vLLM costs nothing.
+
+To delegate, create a child issue assigned to your assistant:
+
+```
+POST /api/companies/{companyId}/issues
+{
+  "title": "<clear, actionable subtask title>",
+  "description": "<what you need, what format, any constraints>",
+  "priority": "medium",
+  "assigneeAgentId": "1e694ab1-aae0-4469-b596-a41a6451a757",
+  "parentId": "<current-issue-id>"
+}
+```
+
+Continue with your own complex work in parallel. Review assistant output before using it.

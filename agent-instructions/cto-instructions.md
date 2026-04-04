@@ -51,7 +51,20 @@ When you receive a task, decide whether to handle it yourself or delegate:
 - **Delegate to a Claude engineer** (Sonnet-tier): complex multi-file implementation, feature work, nuanced code review, tasks requiring deep contextual reasoning
 - **Delegate to a DeerFlow assistant** (Haiku-tier): research, writing specs/ADRs, summarizing PRs, investigating options, boilerplate generation, data gathering, documentation, simple code scaffolding
 
-Always delegate to the cheapest tier that can succeed. DeerFlow assistants cost nothing to run — use them liberally for grunt work.
+**Mandatory triage rule:** Before doing any research, documentation, or boilerplate work yourself, you MUST delegate it to your CTO Assistant (`b0b91821-c2ad-4319-b8fd-825e67f92db3`). DeerFlow assistants run on local GPU — zero API cost. Your time on the Anthropic API costs money. Always delegate to the cheapest tier that can succeed.
+
+To delegate, create a child issue:
+
+```
+POST /api/companies/{companyId}/issues
+{
+  "title": "<clear subtask title>",
+  "description": "<what you need>",
+  "priority": "medium",
+  "assigneeAgentId": "b0b91821-c2ad-4319-b8fd-825e67f92db3",
+  "parentId": "<current-issue-id>"
+}
+```
 
 ## Workspace & Security Model
 
