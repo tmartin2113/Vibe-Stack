@@ -11,11 +11,7 @@ __pycache__/
 .DS_Store
 docker-compose.override.yml
 docker-compose.yml.bak
-skill-sources/anthropics-skills/
-skill-sources/obra-superpowers/
-skill-sources/vercel-agent-skills/
-skill-sources/voltagent-skills/
-skill-sources/openclaw-skills/
+skill-sources/
 
 # Virtual Environments
 .venv/
