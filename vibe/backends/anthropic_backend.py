@@ -12,7 +12,7 @@ import json
 import logging
 import requests
 from typing import Dict, Any, List, Optional
-from vibe.backends.base import BackendBase, GenerateResult
+from vibe.backends.base import BackendBase, BillingExhaustedError, GenerateResult
 
 
 def estimate_tokens(text: str) -> int:
@@ -336,7 +336,26 @@ class AnthropicBackend(BackendBase):
                     timeout=self.timeout,
                 )
 
+                if response.status_code == 402:
+                    detail = response.text[:500]
+                    raise BillingExhaustedError("anthropic", 402, detail)
+
                 if response.status_code == 429:
+                    # Distinguish credit exhaustion from temporary rate limit.
+                    # Anthropic signals credit exhaustion via error type in the
+                    # JSON body even on 429 responses.
+                    try:
+                        body = response.json()
+                        err_type = body.get("error", {}).get("type", "")
+                        err_msg = body.get("error", {}).get("message", "")
+                    except (json.JSONDecodeError, ValueError):
+                        err_type, err_msg = "", ""
+
+                    if err_type in ("billing_error", "insufficient_credits") or \
+                       "credit" in err_msg.lower() or "billing" in err_msg.lower() or \
+                       "quota" in err_msg.lower():
+                        raise BillingExhaustedError("anthropic", 429, err_msg or err_type)
+
                     self._handle_rate_limit(response, attempt)
                     continue
 

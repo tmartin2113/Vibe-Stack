@@ -77,6 +77,7 @@ from .paperclip_client import (
     PaperclipClient,
     PaperclipConflictError,
 )
+from vibe.backends.base import BillingExhaustedError
 from .workflow_factory import WorkflowFactory
 
 logger = logging.getLogger(__name__)
@@ -100,7 +101,7 @@ class ClarificationRequest:
 @dataclass
 class HeartbeatResult:
     """Result of a single heartbeat execution, serialised to stdout."""
-    status: str  # "success", "idle", "blocked", "clarification_needed", "cancelled", "failed", "circuit_breaker"
+    status: str  # "success", "idle", "blocked", "clarification_needed", "cancelled", "failed", "circuit_breaker", "billing_exhausted"
     issue_id: str = ""
     summary: str = ""
     usage: Dict[str, int] = field(default_factory=lambda: {"input_tokens": 0, "output_tokens": 0})
@@ -488,6 +489,28 @@ def _execute_checked_out_task(
             summary="Interrupted by SIGTERM — partial results posted",
             exit_code=0,
         )
+    except BillingExhaustedError as e:
+        logger.critical(
+            "Billing exhausted for %s: %s", issue.id, e,
+            extra={"event": "billing_exhausted", "issue_id": issue.id,
+                   "provider": e.provider, "status_code": e.status_code},
+        )
+        metrics.increment("vibe_heartbeat_total", labels={"status": "billing_exhausted"})
+        _post_failure(
+            client, issue.id,
+            f"**Subscription exhausted** — {e.provider} returned HTTP {e.status_code}. "
+            f"All agents are halted until the subscription is renewed.\n\n{e.detail}",
+        )
+        if tracker is not None:
+            tracker.lock_permanently(
+                f"Billing exhausted: {e.provider} HTTP {e.status_code}"
+            )
+        return _finish(HeartbeatResult(
+            status="billing_exhausted",
+            issue_id=issue.id,
+            summary=f"Billing exhausted: {e}",
+            exit_code=2,
+        ))
     except Exception as e:
         logger.error("Workflow failed: %s", e, exc_info=True,
                       extra={"event": "workflow_error", "issue_id": issue.id, "error_type": type(e).__name__})

@@ -18,6 +18,22 @@ class GenerateResult(TypedDict):
     finish_reason: str
 
 
+class BillingExhaustedError(RuntimeError):
+    """Raised when the API provider reports billing/credit exhaustion.
+
+    This is a fatal, non-retryable error that should permanently halt
+    agent execution until the subscription is renewed.
+    """
+
+    def __init__(self, provider: str, status_code: int, detail: str = ""):
+        self.provider = provider
+        self.status_code = status_code
+        self.detail = detail
+        super().__init__(
+            f"{provider} billing exhausted (HTTP {status_code}): {detail}"
+        )
+
+
 class BackendBase(ABC):
     """
     Abstract base class for LLM backend implementations.

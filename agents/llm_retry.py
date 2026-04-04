@@ -16,6 +16,7 @@ from typing import Callable, Optional, TypeVar, Set
 
 import requests
 
+from vibe.backends.base import BillingExhaustedError
 from .metrics import metrics as app_metrics
 
 logger = logging.getLogger(__name__)
@@ -82,6 +83,10 @@ def _is_retryable(error: Exception) -> bool:
         - 404 Not Found (wrong model/endpoint)
         - ValueError / KeyError / JSONDecodeError (response parse failures)
     """
+    # Billing exhaustion — never retry
+    if isinstance(error, BillingExhaustedError):
+        return False
+
     # Direct timeout — always retry
     if isinstance(error, TimeoutError):
         return True

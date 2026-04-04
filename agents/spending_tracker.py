@@ -345,6 +345,55 @@ class SpendingTracker:
             except Exception as e:
                 logger.warning("Failed to close breaker after probe: %s", e)
 
+    def lock_permanently(self, reason: str) -> None:
+        """Lock the circuit breaker permanently (no auto-recovery).
+
+        Used for fatal conditions like billing exhaustion where retrying
+        would be pointless. The breaker stays OPEN with a cooldown_until
+        far in the future. Only a manual reset can clear it.
+        """
+        ph = self._ph
+        now = _utcnow().replace(tzinfo=None)
+        # 100 years — effectively permanent
+        permanent_until = (now + timedelta(days=36500)).isoformat()
+
+        with self._lock:
+            upsert_sql = f"""
+                INSERT INTO circuit_breaker (scope, state, opened_at, reason, cooldown_until, trip_count)
+                VALUES ({ph}, {ph}, {ph}, {ph}, {ph}, {ph})
+                ON CONFLICT(scope) DO UPDATE SET
+                    state = excluded.state,
+                    opened_at = excluded.opened_at,
+                    reason = excluded.reason,
+                    cooldown_until = excluded.cooldown_until,
+                    trip_count = excluded.trip_count
+            """
+            self._exec(upsert_sql, (
+                self.scope, BreakerState.OPEN.value, now.isoformat(),
+                reason, permanent_until, 9999,
+            ))
+
+        logger.critical(
+            "Circuit breaker PERMANENTLY LOCKED: %s. "
+            "Manual reset required to resume agent execution.",
+            reason,
+        )
+
+    def reset_breaker(self) -> None:
+        """Manually reset the circuit breaker to CLOSED state.
+
+        Use after renewing subscription or resolving billing issues.
+        """
+        ph = self._ph
+        with self._lock:
+            self._exec(
+                f"UPDATE circuit_breaker SET state = {ph}, reason = '', "
+                f"opened_at = '', cooldown_until = '', trip_count = 0 "
+                f"WHERE scope = {ph}",
+                (BreakerState.CLOSED.value, self.scope),
+            )
+        logger.info("Circuit breaker manually reset to CLOSED.")
+
     # ------------------------------------------------------------------
     # Threshold Evaluation
     # ------------------------------------------------------------------
