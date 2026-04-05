@@ -398,8 +398,14 @@ Based on this tool result, continue with your solution. You can:
 
 If you're satisfied with the results, provide your final output without more tool calls."""
 
-                # Generate next iteration
-                output = specialist.generate(continuation_prompt, **config)
+                # Generate next iteration with reduced max_tokens to
+                # discourage verbose narration between tool calls.
+                # The model should either make the next tool call or
+                # provide final output — not narrate what it's doing.
+                continuation_config = {**config}
+                continuation_max = min(config.get("max_tokens", 1500), 500)
+                continuation_config["max_tokens"] = continuation_max
+                output = specialist.generate(continuation_prompt, **continuation_config)
                 tool_iteration += 1
 
             except Exception as e:
@@ -712,8 +718,11 @@ Based on this tool result, continue with your solution. You can:
 
 If satisfied, provide final output without more tool calls."""
 
-                    # Generate next iteration
-                    output = specialist.generate(continuation_prompt, **config)
+                    # Generate next iteration with reduced max_tokens
+                    continuation_config = {**config}
+                    continuation_max = min(config.get("max_tokens", 1500), 500)
+                    continuation_config["max_tokens"] = continuation_max
+                    output = specialist.generate(continuation_prompt, **continuation_config)
                     tool_iteration += 1
 
                 except Exception as e:

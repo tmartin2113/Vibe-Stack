@@ -39,6 +39,11 @@ _SELF_UPGRADE_DIR = Path(__file__).resolve().parent.parent  # agents/ parent = V
 MAX_FILE_READ_SIZE = 10 * 1024 * 1024  # 10 MB - maximum file size to read
 MAX_FILE_WRITE_SIZE = 10 * 1024 * 1024  # 10 MB - maximum content size to write
 
+# Default line cap: if no start_line/end_line is specified and the file
+# exceeds this many lines, return only the first DEFAULT_LINE_CAP lines
+# with a warning.  Agents should use start_line/end_line for targeted reads.
+DEFAULT_LINE_CAP = int(os.environ.get("VIBE_FILE_READ_LINE_CAP", "200"))
+
 
 def _build_allowed_file_dirs(configured_dirs: Optional[List[str]] = None) -> List[Path]:
     """Build the resolved list of allowed directories.
@@ -120,15 +125,31 @@ def _validate_file_path(
 
 
 class FileReader(Tool):
-    """Read file contents"""
+    """Read file contents with optional line ranges and re-read detection.
+
+    Token-saving features:
+    - ``start_line``/``end_line`` parameters for targeted reads
+    - Auto-caps large files at DEFAULT_LINE_CAP lines with a warning
+    - Tracks previously-read (file, range) tuples per session and warns
+      on redundant re-reads (does NOT block — just warns)
+    """
 
     def __init__(self, allowed_dirs: Optional[List[Path]] = None):
         super().__init__(
             name="file_reader",
-            description="Read contents of a file",
+            description=(
+                "Read contents of a file. Use start_line/end_line for targeted "
+                "reads — large files are auto-capped at {cap} lines without them."
+            ).format(cap=DEFAULT_LINE_CAP),
             category=ToolCategory.FILE_OPS
         )
         self._allowed_dirs = allowed_dirs
+        # Track reads per session: set of (resolved_path, start, end) tuples
+        self._read_history: set = set()
+
+    def reset(self) -> None:
+        """Reset read history (called at heartbeat start)."""
+        self._read_history.clear()
 
     def _get_parameters_schema(self) -> Dict[str, Any]:
         return {
@@ -137,6 +158,14 @@ class FileReader(Tool):
                 "file_path": {
                     "type": "string",
                     "description": f"Path to file to read (max size: {MAX_FILE_READ_SIZE // (1024*1024)}MB)"
+                },
+                "start_line": {
+                    "type": "integer",
+                    "description": "First line to read (1-indexed, inclusive). Omit to start from beginning.",
+                },
+                "end_line": {
+                    "type": "integer",
+                    "description": "Last line to read (1-indexed, inclusive). Omit to read to end (capped).",
                 },
                 "encoding": {
                     "type": "string",
@@ -147,8 +176,15 @@ class FileReader(Tool):
             "required": ["file_path"]
         }
 
-    def execute(self, file_path: str, encoding: str = "utf-8", **kwargs) -> ToolResult:
-        """Read file contents"""
+    def execute(
+        self,
+        file_path: str,
+        start_line: int = 0,
+        end_line: int = 0,
+        encoding: str = "utf-8",
+        **kwargs,
+    ) -> ToolResult:
+        """Read file contents with optional line range."""
         try:
             # SECURITY: Validate path is within allowed directories
             # Look up via registry module for backward-compat with test patches
@@ -195,13 +231,54 @@ class FileReader(Tool):
                     error=f"Encoding error: Cannot decode file as {encoding}. File may be binary. Error: {str(e)}"
                 )
 
+            all_lines = content.splitlines(keepends=True)
+            total_lines = len(all_lines)
+            has_range = start_line > 0 or end_line > 0
+            was_capped = False
+
+            if has_range:
+                # Apply line range (1-indexed, inclusive)
+                sl = max(start_line, 1)
+                el = end_line if end_line > 0 else total_lines
+                selected = all_lines[sl - 1 : el]
+                content = "".join(selected)
+            elif total_lines > DEFAULT_LINE_CAP:
+                # No range specified on a large file — cap and warn
+                selected = all_lines[:DEFAULT_LINE_CAP]
+                content = "".join(selected)
+                was_capped = True
+
+            # Re-read detection
+            read_key = (str(path), start_line, end_line)
+            is_reread = read_key in self._read_history
+            self._read_history.add(read_key)
+
+            warnings = []
+            if was_capped:
+                warnings.append(
+                    f"File has {total_lines} lines but was capped at {DEFAULT_LINE_CAP}. "
+                    f"Use start_line/end_line for targeted reads."
+                )
+            if is_reread:
+                warnings.append(
+                    "You already read this file (same range) in this session. "
+                    "Use the content already in context instead of re-reading."
+                )
+
+            output = content
+            if warnings:
+                output = "⚠ " + " | ".join(warnings) + "\n\n" + content
+
             return ToolResult(
                 success=True,
-                output=content,
+                output=output,
                 metadata={
                     "size": len(content),
                     "lines": len(content.splitlines()),
-                    "file_size_bytes": file_size
+                    "total_lines": total_lines,
+                    "file_size_bytes": file_size,
+                    "was_capped": was_capped,
+                    "is_reread": is_reread,
                 }
             )
 
