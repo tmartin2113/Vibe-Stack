@@ -78,7 +78,9 @@ docker compose up -d --build
 
 ## Org Structure
 
-The bootstrap creates 10 agents automatically — no manual configuration required.
+The bootstrap creates 10 agents automatically — no manual configuration required. Agent roles use specialized identifiers (`cto`, `backend_engineer`, `frontend_engineer`, `qa_engineer`, `devops_engineer`, `research_assistant`) that map to role-specific tool sets.
+
+> **Migrating existing deployments:** If your agents have generic roles (e.g., `engineer`), update them via the Paperclip DB. See migration instructions in `bootstrap-org.cjs` (lines 14-28).
 
 ### Senior Engineers (Claude Opus)
 
@@ -102,12 +104,21 @@ Each senior has a paired research assistant that handles pre-flight research and
 | `qa-assistant` | Sr. QA | Testing strategies, security checklists, coverage tools |
 | `devops-assistant` | Sr. DevOps | Docker best practices, CI/CD patterns, infra docs |
 
+### Agent Instructions
+
+Agent behavior is governed by a two-tier instruction system stored in the repo:
+
+- **`agent-instructions/`** — shared base instructions (`base-instructions.md`) plus role-specific guides (`cto-instructions.md`, `engineer-instructions.md`, `qa-instructions.md`, `devops-instructions.md`, `ux-instructions.md`, `security-instructions.md`, `pm-instructions.md`)
+- **`agents/<role>/AGENTS.md`** — per-agent operational directives including output guidelines (terse 3-6 word sentences, no filler), mandatory DeerFlow delegation rules, and tool usage policies
+
+All agents enforce strict output brevity: tool calls are capped at 500 tokens per continuation, file reads auto-cap at 200 lines, and redundant re-reads within a session are flagged.
+
 ### Task Flow
 
 1. **You** create an issue in the Paperclip UI
 2. **CTO** wakes &rarr; creates feature branch &rarr; writes `ARCHITECTURE.md` &rarr; creates research + implementation subtask pairs
-3. **Assistants** wake first &rarr; run pre-flight research &rarr; post findings
-4. **Engineers** wake with context &rarr; implement &rarr; post handoff comments
+3. **Assistants** wake first &rarr; run pre-flight research (unrestricted web search) &rarr; post findings
+4. **Engineers** wake with research context already gathered &rarr; implement (rate-limited to 1-2 web lookups) &rarr; post handoff comments
 5. **CTO** wakes &rarr; reviews all work &rarr; creates fix subtasks if needed &rarr; pushes feature branch
 
 ## Architecture
@@ -121,21 +132,25 @@ Each agent runs the same Python workflow engine with 13 built-in task types:
 - **Task decomposition** — breaks complex requests into parallel specialist subtasks
 - **Skill system** — 3-tier architecture with multi-source ingestion, reinforcement learning, and security hardening
 - **Docker sandboxing** — OpenSandbox integration with GPU passthrough
+- **Role-based tool filtering** — each agent only sees tools relevant to their role via `ROLE_TOOL_SETS`
+- **Research delegation** — senior engineers get rate-limited `quick_lookup` (1-2 calls/session) and must delegate broad research to DeerFlow assistants
 
 ### Agent Tools
 
-Agents have access to infrastructure tools that are automatically discovered via environment variables. All tools are role-filtered — each agent only sees tools relevant to their role.
+Agents have access to infrastructure tools that are automatically discovered via environment variables. All tools are role-filtered — each agent only sees tools relevant to their role via `ROLE_TOOL_SETS` in `agents/tools/registry.py`.
 
 | Tool | Available To | Service | Purpose |
 |------|-------------|---------|---------|
-| WebSearch | all w/ web | SearXNG | Privacy-respecting web search |
-| WebScrape | all w/ web | Playwright | Headless browser scraping |
+| QuickLookup | senior engineers | SearXNG | Rate-limited web search (1-2 calls/session, forces DeerFlow delegation) |
+| WebSearch | assistants | SearXNG | Unrestricted privacy-respecting web search |
+| WebScrape | assistants | Playwright | Headless browser scraping |
 | BrowserAutomation | frontend, QA, UX, security | Playwright | Browser interaction and E2E testing |
 | Design | frontend, UX | Penpot | Design tool integration |
 | GitForge | all | Gitea | Git hosting operations |
 | ArtifactStorage | all | MinIO | S3-compatible object storage |
 | MiroFishSimulation | CTO, backend, QA | MiroFish | Multi-agent simulation for risk assessment |
 | OCRTool | all | PaddleOCR | Text extraction from images and PDFs |
+| FileReader | all | built-in | Targeted file reads with `start_line`/`end_line`, auto-capped at 200 lines |
 | MemoryStore / MemoryRecall | all | built-in | Persistent long-term memory with citations |
 
 ### Self-Upgrade System
@@ -155,6 +170,7 @@ Agents detect recurring quality issues across heartbeat runs and propose improve
 - **Lazy sandbox init** — defers container pre-warming to first tool execution
 - **Cached factory** — reuses LLM backend and adapter instances across heartbeat runs
 - **Spending tracker** — per-agent cost tracking with configurable budget caps
+- **Billing exhaustion halt** — agents halt permanently when Anthropic billing is exhausted
 
 ### Skill Sources
 
@@ -208,6 +224,8 @@ See `.env.example` for all configurable values. Key variables:
 | `VIBE_STORAGE_BACKEND` | `sqlite` or `postgres` | `sqlite` |
 | `VIBE_CACHE_BACKEND` | `memory` or `redis` | `memory` |
 | `VIBE_SKILL_REPOS` | Colon-separated skill repo paths | Auto-configured by setup.sh |
+| `VIBE_FILE_READ_LINE_CAP` | Max lines returned by FileReader when no range specified | `200` |
+| `VIBE_CTO_LOOKUP_LIMIT` | QuickLookup calls per session for CTO | `2` |
 | `LOG_LEVEL` | Logging verbosity | `WARNING` |
 
 Infrastructure service URLs (`SEARXNG_URL`, `MIROFISH_URL`, `PADDLEOCR_URL`, etc.) are auto-configured by `setup.sh` using Docker DNS names. See `.env.example` for the full list.
@@ -215,7 +233,7 @@ Infrastructure service URLs (`SEARXNG_URL`, `MIROFISH_URL`, `PADDLEOCR_URL`, etc
 ## Testing
 
 ```bash
-# All tests (~3000 across 48+ files)
+# All tests (~3000 across 52 files)
 python -m pytest tests/ -x -m "not e2e" --no-header -q
 
 # Specific subsystems
