@@ -467,6 +467,7 @@ def _execute_checked_out_task(
             partial_state=sigterm_state,
             clarification_reply=clarification_reply,
             agent_role=getattr(identity, "role", None) if identity else None,
+            agent_title=getattr(identity, "title", None) if identity else None,
         )
     except WorkflowCancelledError as e:
         logger.info("Workflow cancelled for %s: %s", issue.id, e.reason,
@@ -737,6 +738,7 @@ def _run_workflow(
     clarification_reply: Optional[str] = None,
     factory: Optional[WorkflowFactory] = None,
     agent_role: Optional[str] = None,
+    agent_title: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Run the Vibe workflow graph on the given request.
@@ -754,6 +756,7 @@ def _run_workflow(
         partial_state=partial_state,
         clarification_reply=clarification_reply,
         agent_role=agent_role,
+        agent_title=agent_title,
     )
 
 

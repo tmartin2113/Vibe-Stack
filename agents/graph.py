@@ -126,7 +126,7 @@ def sub_output_and_more_check(state: AgentState) -> str:
         return "aggregate"
 
 
-def create_agent_graph(adapter_registry: AdapterRegistry, tool_registry: Optional[ToolRegistry] = None, config: Optional[SystemConfig] = None, base_model: Any = None, cancellation_token: Optional[CancellationToken] = None, sandbox_pool: Any = None, agent_role: Optional[str] = None):
+def create_agent_graph(adapter_registry: AdapterRegistry, tool_registry: Optional[ToolRegistry] = None, config: Optional[SystemConfig] = None, base_model: Any = None, cancellation_token: Optional[CancellationToken] = None, sandbox_pool: Any = None, agent_role: Optional[str] = None, agent_title: Optional[str] = None):
     """
     Create the workflow with multi-specialist architecture.
 
@@ -186,7 +186,7 @@ def create_agent_graph(adapter_registry: AdapterRegistry, tool_registry: Optiona
     # Apply role-based tool filtering (restricts research tools for engineers,
     # ensures DeerFlow assistants get full research access, etc.)
     if agent_role:
-        tool_registry = tool_registry.filter_for_role(agent_role)
+        tool_registry = tool_registry.filter_for_role(agent_role, title=agent_title or "")
         logger.info("Tool registry filtered for role '%s': %d tools",
                      agent_role, len(tool_registry.list_tools()))
 

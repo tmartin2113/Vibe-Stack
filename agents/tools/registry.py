@@ -193,6 +193,21 @@ ROLE_TOOL_SETS: Dict[str, Optional[frozenset]] = {
     }),
 }
 
+# Fallback: map legacy/generic roles to ROLE_TOOL_SETS keys using title keywords.
+# Used when the role field itself doesn't match (e.g., old deployments where
+# all agents had role="engineer" and specialization was only in the title).
+_TITLE_TO_ROLE: Dict[str, str] = {
+    "backend": "backend_engineer",
+    "frontend": "frontend_engineer",
+    "qa": "qa_engineer",
+    "devops": "devops_engineer",
+    "ux": "ux_engineer",
+    "security": "security_engineer",
+    "cto": "cto",
+    "chief technology": "cto",
+    "research assistant": "research_assistant",
+}
+
 
 class ToolRegistry:
     """
@@ -221,18 +236,43 @@ class ToolRegistry:
         """Get all tools in a category"""
         return [t for t in self.tools.values() if t.category == category]
 
-    def filter_for_role(self, role: str) -> "ToolRegistry":
+    def filter_for_role(self, role: str, title: str = "") -> "ToolRegistry":
         """Return a new ToolRegistry containing only tools allowed for *role*.
 
         Role names are normalized: lowercased, spaces replaced with underscores.
-        Unknown roles or roles mapped to ``None`` get an unfiltered copy.
+        If the normalized role doesn't match any key in ROLE_TOOL_SETS, falls
+        back to keyword matching against *title* (handles legacy deployments
+        where all agents had generic roles like "engineer").
+
+        Unknown roles with no title match get an unfiltered copy (safe default
+        for roles we haven't categorized yet).
 
         Special handling: CTO gets a higher QuickLookup limit than engineers.
         """
         normalized = role.strip().lower().replace(" ", "_")
         allowed = ROLE_TOOL_SETS.get(normalized)
+
+        # Fallback: try to infer role from title keywords
+        if allowed is None and title:
+            title_lower = title.strip().lower()
+            for keyword, mapped_role in _TITLE_TO_ROLE.items():
+                if keyword in title_lower:
+                    allowed = ROLE_TOOL_SETS.get(mapped_role)
+                    if allowed is not None:
+                        normalized = mapped_role
+                        logger.info(
+                            "Role '%s' not in ROLE_TOOL_SETS, matched title '%s' → '%s'",
+                            role, title, mapped_role,
+                        )
+                        break
+
         if allowed is None:
             # Unknown role — clone with all tools
+            logger.warning(
+                "Role '%s' (title='%s') not matched in ROLE_TOOL_SETS — "
+                "returning unfiltered registry",
+                role, title,
+            )
             filtered = ToolRegistry()
             filtered.tools = dict(self.tools)
             return filtered

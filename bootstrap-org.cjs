@@ -50,7 +50,7 @@ const ORG = [
   // 1. CTO
   {
     name: "CTO",
-    role: "ceo",
+    role: "cto",
     title: "Chief Technology Officer",
     adapterType: "claude_local",
     model: "claude-opus-4-6",
@@ -65,7 +65,7 @@ const ORG = [
   // 2. CTO Assistant
   {
     name: "CTO Assistant",
-    role: "engineer",
+    role: "research_assistant",
     title: "CTO Research Assistant",
     adapterType: "deerflow",
     model: "qwen3.5-9b",
@@ -80,7 +80,7 @@ const ORG = [
   // 3. Sr. Backend Engineer
   {
     name: "Sr. Backend Engineer",
-    role: "engineer",
+    role: "backend_engineer",
     title: "Senior Backend Engineer",
     adapterType: "claude_local",
     model: "claude-opus-4-6",
@@ -95,7 +95,7 @@ const ORG = [
   // 4. Backend Assistant
   {
     name: "Backend Assistant",
-    role: "engineer",
+    role: "research_assistant",
     title: "Backend Research Assistant",
     adapterType: "deerflow",
     model: "qwen3.5-9b",
@@ -110,7 +110,7 @@ const ORG = [
   // 5. Sr. Frontend Engineer
   {
     name: "Sr. Frontend Engineer",
-    role: "engineer",
+    role: "frontend_engineer",
     title: "Senior Frontend Engineer",
     adapterType: "claude_local",
     model: "claude-opus-4-6",
@@ -125,7 +125,7 @@ const ORG = [
   // 6. Frontend Assistant
   {
     name: "Frontend Assistant",
-    role: "engineer",
+    role: "research_assistant",
     title: "Frontend Research Assistant",
     adapterType: "deerflow",
     model: "qwen3.5-9b",
@@ -140,7 +140,7 @@ const ORG = [
   // 7. Sr. QA Engineer
   {
     name: "Sr. QA Engineer",
-    role: "engineer",
+    role: "qa_engineer",
     title: "Senior QA Engineer",
     adapterType: "claude_local",
     model: "claude-opus-4-6",
@@ -155,7 +155,7 @@ const ORG = [
   // 8. QA Assistant
   {
     name: "QA Assistant",
-    role: "engineer",
+    role: "research_assistant",
     title: "QA Research Assistant",
     adapterType: "deerflow",
     model: "qwen3.5-9b",
@@ -170,7 +170,7 @@ const ORG = [
   // 9. Sr. DevOps Engineer
   {
     name: "Sr. DevOps Engineer",
-    role: "engineer",
+    role: "devops_engineer",
     title: "Senior DevOps Engineer",
     adapterType: "claude_local",
     model: "claude-opus-4-6",
@@ -185,7 +185,7 @@ const ORG = [
   // 10. DevOps Assistant
   {
     name: "DevOps Assistant",
-    role: "engineer",
+    role: "research_assistant",
     title: "DevOps Research Assistant",
     adapterType: "deerflow",
     model: "qwen3.5-9b",
