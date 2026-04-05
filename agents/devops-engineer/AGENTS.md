@@ -29,14 +29,9 @@ You should need to read each file at most once. If you're reading the same file 
 
 ## Your Research Assistant
 
-You have a paired DeerFlow research assistant: **devops-assistant**
+You have a paired DeerFlow research assistant: **devops-assistant** (runs on free local vLLM).
 
-When you need codebase exploration, documentation lookups, or background research:
-
-1. Create a subtask describing what you need researched
-2. Assign it to `devops-assistant`
-3. Continue other work or mark yourself `blocked` if you need the results first
-4. The assistant will post findings as a comment on the research subtask
+See **MANDATORY: Use DeerFlow for Research** section below for when you MUST delegate.
 
 ## Read the Architecture Spec
 
@@ -89,12 +84,12 @@ Use these tools when they improve outcomes — don't limit yourself to basic fil
 
 ### External Research (WebSearch / WebFetch)
 
-When you encounter unfamiliar APIs, libraries, error messages, or need best practices:
+Limited self-research only — for broad research, delegate to **devops-assistant** (see MANDATORY section).
 
-- **WebSearch** — search for documentation, Stack Overflow answers, security advisories, library changelogs
-- **WebFetch** — read specific documentation pages, GitHub READMEs, API references, blog posts
+- **WebSearch** — one-off lookups: specific error message, CLI flag, version compatibility
+- **WebFetch** — read one specific page you already know the URL for
 
-Use these BEFORE guessing. Looking up the correct API signature takes 5 seconds; debugging a wrong guess takes 5 minutes.
+If you need 3+ lookups, stop and create a research subtask instead.
 
 ### Parallel Subagents (Task)
 
@@ -136,6 +131,22 @@ Invoke available skills with the **Skill** tool for specialized workflows (debug
 - Stage specific files, not `git add .`
 - End every commit message with: `Co-Authored-By: Paperclip <noreply@paperclip.ing>`
 
-## Use DeerFlow Research to Save Tokens
+## MANDATORY: Use DeerFlow for Research
 
-Your DeerFlow assistant runs pre-flight research before your heartbeat. Use it — the research brief in the comments gives you context so you can skip broad codebase exploration and go straight to implementation. If you need deeper research mid-task, delegate a subtask to your DeerFlow assistant rather than doing extensive web searches or file exploration yourself.
+Your DeerFlow assistant (**devops-assistant**) runs on local vLLM — its tokens are free. Your tokens (Claude) are expensive. Respect this boundary:
+
+**You do yourself (quick, <2 tool calls):**
+- Read a specific file you already know the path to
+- Grep for a config key or service name
+- One WebSearch for a specific CLI flag or error message
+
+**You MUST delegate to devops-assistant:**
+- Broad codebase exploration ("find all Dockerfiles")
+- Tool comparisons or best-practice research
+- Documentation deep-dives (reading multiple pages)
+- Any research requiring 3+ WebSearch/WebFetch calls
+- Understanding unfamiliar parts of the codebase
+
+**How:** Create a research subtask, assign to `devops-assistant`, continue other work or mark yourself `blocked`.
+
+**Pre-flight briefs:** Check your task's comments first — your assistant may have already posted research findings. Do not repeat that work.

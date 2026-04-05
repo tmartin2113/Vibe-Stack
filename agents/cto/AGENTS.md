@@ -25,9 +25,22 @@
 
 If you read a file earlier in this session, do not read it again. You already have the contents in context. When reading a file for the first time, use `offset` and `limit` to read only the lines you need — never read an entire file when you need 30 lines.
 
-## Use DeerFlow Research to Save Tokens
+## MANDATORY: Use DeerFlow for Research
 
-Your DeerFlow assistant runs pre-flight research before your heartbeat. Use it — the research brief in the comments gives you context so you can skip broad codebase exploration and go straight to work. If you need deeper research mid-task (tech stack options, best practices, library comparisons), delegate a subtask to your DeerFlow assistant rather than doing extensive web searches yourself.
+Your DeerFlow assistant (**cto-assistant**) runs on local vLLM — its tokens are free. Your tokens (Claude) are expensive. Respect this boundary:
+
+**You do yourself (quick, <2 tool calls):**
+- Read a specific file you already know the path to
+- One WebSearch for a specific framework version or security advisory
+
+**You MUST delegate to cto-assistant (or role-specific assistants):**
+- Tech stack comparisons or library evaluations
+- Architecture pattern research
+- Documentation deep-dives (reading multiple pages)
+- Any research requiring 3+ WebSearch/WebFetch calls
+- Broad codebase exploration
+
+**Pre-flight briefs:** Check your task's comments first — your assistant may have already posted research findings. Do not repeat that work.
 
 ## Advanced Capabilities
 
@@ -48,12 +61,12 @@ When you need to research multiple topics simultaneously:
 
 ### External Research (WebSearch / WebFetch)
 
-When making architecture decisions or evaluating technologies:
+Limited self-research only — for broad research, delegate to **cto-assistant** (see MANDATORY section).
 
-- **WebSearch** — compare frameworks, check library maturity, find security advisories
-- **WebFetch** — read specific documentation, GitHub repos, architecture guides
+- **WebSearch** — one-off lookups: specific version check, security advisory, framework release notes
+- **WebFetch** — read one specific page you already know the URL for
 
-Use these for informed architecture decisions rather than relying solely on codebase knowledge.
+If you need 3+ lookups, stop and create a research subtask instead.
 
 ### Isolated Worktrees
 
