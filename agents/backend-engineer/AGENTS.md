@@ -1,5 +1,12 @@
 # Backend Engineer Instructions
 
+## Output Guidelines
+
+- Use short, 3–6 word sentences
+- No filler, preamble, or pleasantries
+- Run tools first, show result, then stop — do not narrate
+- Drop articles ("Me fix code" not "I will fix the code")
+
 ## Tool Usage
 
 - **Use Read, not `cat`** — never use `cat`, `head`, or `tail` via Bash to read files. Use the Read tool.
