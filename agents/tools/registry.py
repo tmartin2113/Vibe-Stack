@@ -64,17 +64,27 @@ logger = logging.getLogger(__name__)
 # 'None' (or unlisted roles) means no filtering — all tools visible.
 
 ROLE_TOOL_SETS: Dict[str, Optional[frozenset]] = {
-    # CTO sees everything — no filter
-    "cto": None,
+    # CTO: manager role — review, coordinate, trivial fixes. No heavy IC tools.
+    "cto": frozenset({
+        # Review & coordination
+        "codebase_search_tool", "static_code_analyzer", "git_operations_tool",
+        "bulletin_board", "artifact_storage", "git_forge",
+        # Build/test verification (Phase 3 review)
+        "shell_executor",
+        # Rate-limited research (2 per session for architecture decisions)
+        "quick_lookup",
+        # File ops & memory
+        "file_reader", "file_writer", "memory_store", "memory_recall",
+        # OCR (reading screenshots in issues)
+        "OCRTool",
+    }),
 
     "frontend_engineer": frozenset({
         # Code execution & analysis
         "python_executor", "pytest_runner", "shell_executor",
-        "static_code_analyzer", "codebase_search_tool", "git_operations_tool", "data_parser_tool",
-        # Web & browser
-        "web_fetch", "web_search", "web_scrape", "browser_automation",
-        # Design & visual
-        "design", "image_generation",
+        "static_code_analyzer", "git_operations_tool", "data_parser_tool",
+        # Rate-limited research (1 per session)
+        "quick_lookup",
         # OCR
         "OCRTool",
         # SEO
@@ -88,15 +98,13 @@ ROLE_TOOL_SETS: Dict[str, Optional[frozenset]] = {
     "backend_engineer": frozenset({
         # Code execution & analysis
         "python_executor", "pytest_runner", "bandit_scanner", "shell_executor",
-        "static_code_analyzer", "codebase_search_tool", "git_operations_tool", "data_parser_tool",
-        # Web
-        "web_fetch", "web_search", "web_scrape",
+        "static_code_analyzer", "git_operations_tool", "data_parser_tool",
+        # Rate-limited research (1 per session)
+        "quick_lookup",
         # Database
         "database",
         # Security
         "dependency_scanner",
-        # Simulation
-        "MiroFishSimulation",
         # OCR
         "OCRTool",
         # Infrastructure
@@ -108,13 +116,13 @@ ROLE_TOOL_SETS: Dict[str, Optional[frozenset]] = {
     "qa_engineer": frozenset({
         # Code execution & testing
         "python_executor", "pytest_runner", "shell_executor",
-        "static_code_analyzer", "codebase_search_tool", "git_operations_tool", "data_parser_tool",
-        # Web & browser (for E2E testing)
-        "web_fetch", "web_search", "web_scrape", "browser_automation",
+        "static_code_analyzer", "git_operations_tool", "data_parser_tool",
+        # Rate-limited research (1 per session)
+        "quick_lookup",
+        # Browser (for E2E testing — this is implementation, not research)
+        "browser_automation",
         # Security
         "bandit_scanner", "dependency_scanner",
-        # Simulation
-        "MiroFishSimulation",
         # OCR
         "OCRTool",
         # SEO (for quality checks)
@@ -125,16 +133,32 @@ ROLE_TOOL_SETS: Dict[str, Optional[frozenset]] = {
         "file_reader", "file_writer", "memory_store", "memory_recall",
     }),
 
+    "devops_engineer": frozenset({
+        # Code execution & analysis
+        "python_executor", "shell_executor",
+        "static_code_analyzer", "git_operations_tool", "data_parser_tool",
+        # Rate-limited research (1 per session)
+        "quick_lookup",
+        # OCR
+        "OCRTool",
+        # Infrastructure
+        "container_inspect", "git_forge", "artifact_storage", "bulletin_board",
+        # File ops & memory
+        "file_reader", "file_writer", "memory_store", "memory_recall",
+    }),
+
     "ux_engineer": frozenset({
         # Browser & design
-        "web_fetch", "web_search", "web_scrape", "browser_automation",
+        "browser_automation",
         "design", "image_generation",
+        # Rate-limited research (1 per session)
+        "quick_lookup",
         # OCR
         "OCRTool",
         # SEO (UX-relevant)
         "lighthouse_seo", "page_analyzer", "seo_checklist",
         # Light code support
-        "shell_executor", "codebase_search_tool", "static_code_analyzer",
+        "shell_executor", "static_code_analyzer",
         # Infrastructure
         "git_forge", "artifact_storage", "bulletin_board",
         # File ops & memory
@@ -144,18 +168,44 @@ ROLE_TOOL_SETS: Dict[str, Optional[frozenset]] = {
     "security_engineer": frozenset({
         # Code execution & analysis
         "python_executor", "pytest_runner", "bandit_scanner", "shell_executor",
-        "static_code_analyzer", "codebase_search_tool", "git_operations_tool", "data_parser_tool",
+        "static_code_analyzer", "git_operations_tool", "data_parser_tool",
         # Security-specific
         "dependency_scanner",
+        # Rate-limited research (1 per session)
+        "quick_lookup",
         # OCR
         "OCRTool",
-        # Web (for security testing)
-        "web_fetch", "web_search", "web_scrape", "browser_automation",
+        # Browser (for security testing)
+        "browser_automation",
         # Infrastructure
         "container_inspect", "git_forge", "artifact_storage", "bulletin_board",
         # File ops & memory
         "file_reader", "file_writer", "memory_store", "memory_recall",
     }),
+
+    # DeerFlow research assistants: full research tools, no code execution
+    "research_assistant": frozenset({
+        "web_search", "web_fetch", "web_scrape",
+        "codebase_search_tool", "file_reader",
+        "memory_store", "memory_recall",
+        "bulletin_board",
+        "OCRTool",
+    }),
+}
+
+# Fallback: map legacy/generic roles to ROLE_TOOL_SETS keys using title keywords.
+# Used when the role field itself doesn't match (e.g., old deployments where
+# all agents had role="engineer" and specialization was only in the title).
+_TITLE_TO_ROLE: Dict[str, str] = {
+    "backend": "backend_engineer",
+    "frontend": "frontend_engineer",
+    "qa": "qa_engineer",
+    "devops": "devops_engineer",
+    "ux": "ux_engineer",
+    "security": "security_engineer",
+    "cto": "cto",
+    "chief technology": "cto",
+    "research assistant": "research_assistant",
 }
 
 
@@ -186,16 +236,43 @@ class ToolRegistry:
         """Get all tools in a category"""
         return [t for t in self.tools.values() if t.category == category]
 
-    def filter_for_role(self, role: str) -> "ToolRegistry":
+    def filter_for_role(self, role: str, title: str = "") -> "ToolRegistry":
         """Return a new ToolRegistry containing only tools allowed for *role*.
 
         Role names are normalized: lowercased, spaces replaced with underscores.
-        Unknown roles or roles mapped to ``None`` get an unfiltered copy.
+        If the normalized role doesn't match any key in ROLE_TOOL_SETS, falls
+        back to keyword matching against *title* (handles legacy deployments
+        where all agents had generic roles like "engineer").
+
+        Unknown roles with no title match get an unfiltered copy (safe default
+        for roles we haven't categorized yet).
+
+        Special handling: CTO gets a higher QuickLookup limit than engineers.
         """
         normalized = role.strip().lower().replace(" ", "_")
         allowed = ROLE_TOOL_SETS.get(normalized)
+
+        # Fallback: try to infer role from title keywords
+        if allowed is None and title:
+            title_lower = title.strip().lower()
+            for keyword, mapped_role in _TITLE_TO_ROLE.items():
+                if keyword in title_lower:
+                    allowed = ROLE_TOOL_SETS.get(mapped_role)
+                    if allowed is not None:
+                        normalized = mapped_role
+                        logger.info(
+                            "Role '%s' not in ROLE_TOOL_SETS, matched title '%s' → '%s'",
+                            role, title, mapped_role,
+                        )
+                        break
+
         if allowed is None:
-            # No filtering — clone with all tools
+            # Unknown role — clone with all tools
+            logger.warning(
+                "Role '%s' (title='%s') not matched in ROLE_TOOL_SETS — "
+                "returning unfiltered registry",
+                role, title,
+            )
             filtered = ToolRegistry()
             filtered.tools = dict(self.tools)
             return filtered
@@ -204,6 +281,17 @@ class ToolRegistry:
         for name, tool in self.tools.items():
             if name in allowed:
                 filtered.tools[name] = tool
+
+        # CTO gets a higher quick_lookup limit for architecture decisions
+        if normalized == "cto" and "quick_lookup" in filtered.tools:
+            from .quick_lookup import QuickLookupTool
+            original = filtered.tools["quick_lookup"]
+            if isinstance(original, QuickLookupTool):
+                cto_limit = int(os.environ.get("VIBE_CTO_LOOKUP_LIMIT", "2"))
+                filtered.tools["quick_lookup"] = QuickLookupTool(
+                    original._search_tool, max_lookups=cto_limit,
+                )
+
         logger.info(
             f"Filtered tools for role '{normalized}': "
             f"{len(filtered.tools)}/{len(self.tools)} tools"
@@ -421,8 +509,22 @@ def create_default_tool_registry(
     from .artifact_storage import ArtifactStorageTool
 
     if os.environ.get("SEARXNG_URL"):
-        registry.register(WebSearchTool())
+        search_tool = WebSearchTool()
+        registry.register(search_tool)
         logger.info("Tool registry: web_search enabled (SearXNG)")
+
+        # Rate-limited wrapper for senior engineers (role filtering gives
+        # them quick_lookup instead of web_search)
+        from .quick_lookup import QuickLookupTool
+        cto_limit = int(os.environ.get("VIBE_CTO_LOOKUP_LIMIT", "2"))
+        engineer_limit = int(os.environ.get("VIBE_ENGINEER_LOOKUP_LIMIT", "1"))
+        # Register with engineer limit by default; CTO override happens at
+        # filter_for_role time via _CTO_LOOKUP_LIMIT
+        registry.register(QuickLookupTool(search_tool, max_lookups=engineer_limit))
+        logger.info(
+            "Tool registry: quick_lookup enabled (engineer=%d, cto=%d)",
+            engineer_limit, cto_limit,
+        )
     if os.environ.get("PLAYWRIGHT_WS_URL"):
         registry.register(WebScrapeTool())
         logger.info("Tool registry: web_scrape enabled (Playwright)")

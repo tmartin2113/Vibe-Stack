@@ -354,7 +354,10 @@ class TestInfraRegistryWiring:
                 assert registry.get(name) is not None, f"Expected {name} to be registered"
 
     def test_tool_count_with_infra(self):
-        """Registry should have 7 more tools when all infra env vars are set."""
+        """Registry should have 8 more tools when all infra env vars are set.
+
+        SEARXNG_URL adds 2 (web_search + quick_lookup), the rest add 1 each.
+        """
         with patch.dict(os.environ, {}, clear=False):
             for key in ["SEARXNG_URL", "PLAYWRIGHT_WS_URL",
                          "PENPOT_API_URL", "COMFYUI_URL", "GITEA_URL", "MINIO_URL",
@@ -375,7 +378,7 @@ class TestInfraRegistryWiring:
             reg_with = create_default_tool_registry(sandbox_pool=MagicMock(), network_egress=False)
             count_with = len(reg_with.list_tools())
 
-        assert count_with == count_without + 7
+        assert count_with == count_without + 8
 
 
 # ============================================================

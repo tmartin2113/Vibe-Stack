@@ -31,6 +31,7 @@ from .image_generation import ImageGenerationTool
 from .git_forge import GitForgeTool
 from .artifact_storage import ArtifactStorageTool
 from .bulletin_board import BulletinBoardTool
+from .quick_lookup import QuickLookupTool
 
 __all__ = [
     # Core
@@ -62,4 +63,5 @@ __all__ = [
     'DependencyScannerTool',
     'DatabaseTool',
     'ContainerInspectTool',
+    'QuickLookupTool',
 ]

@@ -112,6 +112,8 @@ class WorkflowFactory:
         progress_callback: "Optional[Callable[[str, Dict[str, Any]], None]]" = None,
         partial_state: Optional[Dict[str, Any]] = None,
         clarification_reply: Optional[str] = None,
+        agent_role: Optional[str] = None,
+        agent_title: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Run the Vibe workflow graph on the given request.
 
@@ -170,6 +172,8 @@ class WorkflowFactory:
             config=self._config,
             base_model=self._base_model,
             cancellation_token=cancellation_token,
+            agent_role=agent_role,
+            agent_title=agent_title,
         )
 
         # Stream through graph nodes, collecting final state.

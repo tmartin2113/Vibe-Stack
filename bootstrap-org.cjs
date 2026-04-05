@@ -8,6 +8,25 @@
  * Uses direct database inserts (no API auth required).
  * Idempotent — skips agents that already exist (matched by name).
  * Writes agent IDs back to .env for vibe container pickup.
+ *
+ * MIGRATION NOTE (2026-04-05): Agent roles were changed from generic
+ * ("engineer", "ceo") to specialized ("backend_engineer", "cto",
+ * "research_assistant", etc.) for role-based tool filtering. Existing
+ * deployments with agents already in the DB will NOT get updated roles
+ * because this script skips agents matched by name. Two options:
+ *
+ *   1. (Recommended) Run this SQL to update roles in-place:
+ *      UPDATE agents SET role = 'cto' WHERE name = 'CTO';
+ *      UPDATE agents SET role = 'backend_engineer' WHERE name = 'Sr. Backend Engineer';
+ *      UPDATE agents SET role = 'frontend_engineer' WHERE name = 'Sr. Frontend Engineer';
+ *      UPDATE agents SET role = 'qa_engineer' WHERE name = 'Sr. QA Engineer';
+ *      UPDATE agents SET role = 'devops_engineer' WHERE name = 'Sr. DevOps Engineer';
+ *      UPDATE agents SET role = 'research_assistant' WHERE name LIKE '%Assistant';
+ *
+ *   2. (Fallback) Do nothing — filter_for_role() has a title-based
+ *      fallback that infers the correct role from the agent's title
+ *      field (e.g., "Senior Backend Engineer" → backend_engineer).
+ *      A warning is logged when this fallback is used.
  */
 
 const fs = require("node:fs");
@@ -50,7 +69,7 @@ const ORG = [
   // 1. CTO
   {
     name: "CTO",
-    role: "ceo",
+    role: "cto",
     title: "Chief Technology Officer",
     adapterType: "claude_local",
     model: "claude-opus-4-6",
@@ -65,7 +84,7 @@ const ORG = [
   // 2. CTO Assistant
   {
     name: "CTO Assistant",
-    role: "engineer",
+    role: "research_assistant",
     title: "CTO Research Assistant",
     adapterType: "deerflow",
     model: "qwen3.5-9b",
@@ -80,7 +99,7 @@ const ORG = [
   // 3. Sr. Backend Engineer
   {
     name: "Sr. Backend Engineer",
-    role: "engineer",
+    role: "backend_engineer",
     title: "Senior Backend Engineer",
     adapterType: "claude_local",
     model: "claude-opus-4-6",
@@ -95,7 +114,7 @@ const ORG = [
   // 4. Backend Assistant
   {
     name: "Backend Assistant",
-    role: "engineer",
+    role: "research_assistant",
     title: "Backend Research Assistant",
     adapterType: "deerflow",
     model: "qwen3.5-9b",
@@ -110,7 +129,7 @@ const ORG = [
   // 5. Sr. Frontend Engineer
   {
     name: "Sr. Frontend Engineer",
-    role: "engineer",
+    role: "frontend_engineer",
     title: "Senior Frontend Engineer",
     adapterType: "claude_local",
     model: "claude-opus-4-6",
@@ -125,7 +144,7 @@ const ORG = [
   // 6. Frontend Assistant
   {
     name: "Frontend Assistant",
-    role: "engineer",
+    role: "research_assistant",
     title: "Frontend Research Assistant",
     adapterType: "deerflow",
     model: "qwen3.5-9b",
@@ -140,7 +159,7 @@ const ORG = [
   // 7. Sr. QA Engineer
   {
     name: "Sr. QA Engineer",
-    role: "engineer",
+    role: "qa_engineer",
     title: "Senior QA Engineer",
     adapterType: "claude_local",
     model: "claude-opus-4-6",
@@ -155,7 +174,7 @@ const ORG = [
   // 8. QA Assistant
   {
     name: "QA Assistant",
-    role: "engineer",
+    role: "research_assistant",
     title: "QA Research Assistant",
     adapterType: "deerflow",
     model: "qwen3.5-9b",
@@ -170,7 +189,7 @@ const ORG = [
   // 9. Sr. DevOps Engineer
   {
     name: "Sr. DevOps Engineer",
-    role: "engineer",
+    role: "devops_engineer",
     title: "Senior DevOps Engineer",
     adapterType: "claude_local",
     model: "claude-opus-4-6",
@@ -185,7 +204,7 @@ const ORG = [
   // 10. DevOps Assistant
   {
     name: "DevOps Assistant",
-    role: "engineer",
+    role: "research_assistant",
     title: "DevOps Research Assistant",
     adapterType: "deerflow",
     model: "qwen3.5-9b",
