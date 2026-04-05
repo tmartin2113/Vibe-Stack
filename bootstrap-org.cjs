@@ -8,6 +8,25 @@
  * Uses direct database inserts (no API auth required).
  * Idempotent — skips agents that already exist (matched by name).
  * Writes agent IDs back to .env for vibe container pickup.
+ *
+ * MIGRATION NOTE (2026-04-05): Agent roles were changed from generic
+ * ("engineer", "ceo") to specialized ("backend_engineer", "cto",
+ * "research_assistant", etc.) for role-based tool filtering. Existing
+ * deployments with agents already in the DB will NOT get updated roles
+ * because this script skips agents matched by name. Two options:
+ *
+ *   1. (Recommended) Run this SQL to update roles in-place:
+ *      UPDATE agents SET role = 'cto' WHERE name = 'CTO';
+ *      UPDATE agents SET role = 'backend_engineer' WHERE name = 'Sr. Backend Engineer';
+ *      UPDATE agents SET role = 'frontend_engineer' WHERE name = 'Sr. Frontend Engineer';
+ *      UPDATE agents SET role = 'qa_engineer' WHERE name = 'Sr. QA Engineer';
+ *      UPDATE agents SET role = 'devops_engineer' WHERE name = 'Sr. DevOps Engineer';
+ *      UPDATE agents SET role = 'research_assistant' WHERE name LIKE '%Assistant';
+ *
+ *   2. (Fallback) Do nothing — filter_for_role() has a title-based
+ *      fallback that infers the correct role from the agent's title
+ *      field (e.g., "Senior Backend Engineer" → backend_engineer).
+ *      A warning is logged when this fallback is used.
  */
 
 const fs = require("node:fs");
