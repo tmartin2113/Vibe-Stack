@@ -205,18 +205,41 @@ Decompose the task into subtasks and assign them to the appropriate agents.
 
 0. **Check agent health first.** Before delegating, query `GET /api/companies/:companyId/dashboard/runs?limit=20` and check each agent's recent run history. If an agent has 3+ consecutive failures, **do not assign them new work** — note the issue in a comment and assign the subtask to a different agent or mark it `blocked` with a note for human review.
 
-1. **Create one subtask per agent**, scoped to their specialty. Each subtask description must include:
+1. **For each engineer subtask, FIRST create a research subtask for their assistant.** The research subtask must tell the assistant exactly what the engineer will need:
+
+   Research subtask description template:
+   ```
+   Research for: [engineer subtask title]
+
+   The Sr. [Role] Engineer will need to:
+   - [What they're building — 1 sentence]
+
+   Find and summarize:
+   - Existing files/modules they'll need to modify or extend
+   - Existing patterns in the codebase they should follow (naming, error handling, etc.)
+   - API contracts or types they'll consume or produce
+   - Any gotchas, tech debt, or TODOs in the relevant code
+
+   Post your findings as a ## Research Brief comment on this subtask.
+   ```
+
+   Assign the research subtask to `<role>-assistant` (e.g., `backend-assistant`).
+
+2. **Then create the implementation subtask for the engineer**, scoped to their specialty. Each subtask description must include:
    - **What to build** — specific requirements
    - **Acceptance criteria** — what "done" looks like for this subtask
    - **Branch:** `feature/<branch-name>` — the same branch you created in Phase 1
    - **Reference:** "Read `ARCHITECTURE.md` in the project root for shared standards, including build/test commands and conventions."
    - **Dependencies** on other subtasks, if any (e.g., "backend API must exist before frontend can integrate")
+   - **Research:** "Your assistant has a research subtask — check its comments for a Research Brief before you start coding."
 
-2. **Create all independent subtasks in parallel.** Use parallel tool calls for the POST requests. Do not create them sequentially.
+   Mark the implementation subtask as **blocked by** its research subtask so the engineer only wakes after research is ready.
 
-3. **Mark dependent subtasks as `blocked`.** If a task depends on another (e.g., frontend needs backend API), set the dependent task's status to `blocked` and note the dependency in its description. Paperclip will auto-unblock it when the blocking sibling completes. This prevents agents from building integrations against code that doesn't exist yet.
+3. **Create all independent subtasks in parallel.** Use parallel tool calls for the POST requests. Do not create them sequentially.
 
-4. **Exit.** Do not checkout, poll, or wait for subtask completion.
+4. **Mark dependent subtasks as `blocked`.** If a task depends on another (e.g., frontend needs backend API), set the dependent task's status to `blocked` and note the dependency in its description. Paperclip will auto-unblock it when the blocking sibling completes. This prevents agents from building integrations against code that doesn't exist yet.
+
+5. **Exit.** Do not checkout, poll, or wait for subtask completion.
 
 #### Delegation Rules
 

@@ -31,16 +31,14 @@ You have a paired DeerFlow research assistant: **qa-assistant** (runs on free lo
 
 See **MANDATORY: Use DeerFlow for Research** section below for when you MUST delegate.
 
-## Read the Architecture Spec
+## Before You Start Coding
 
-If an `ARCHITECTURE.md` exists in the project root, read it before writing any code. It defines the tech stack, error handling patterns, security requirements, testing standards, and cross-agent conventions. Follow it.
+Do these in order. Do not skip steps.
 
-## Check Sibling Work
-
-Before starting your task:
-1. Read comments on the **parent issue** (the CTO's task) — look for `## Handoff` comments from other agents. These tell you what was built, key files, and integration contracts to test against.
-2. Check if sibling subtasks are `done` — if so, read their code to understand actual interfaces, routes, and behavior before writing tests.
-3. If your task depends on another agent's work (e.g., "test the API endpoints"), verify their implementation exists before writing tests for it. If it doesn't exist yet, mark your task `blocked` with a comment explaining what you're waiting for.
+0. **Read your assistant's Research Brief.** Check comments on your task's sibling research subtask (assigned to `qa-assistant`). It contains: existing test patterns, coverage gaps, relevant test files, and gotchas. This is your starting context — do not re-research what it already covers.
+1. **Read `ARCHITECTURE.md`** in the project root for shared standards.
+2. **Check sibling Handoff comments** on the parent issue — look for `## Handoff` comments from other agents. These tell you what was built, key files, and integration contracts to test against.
+3. **Verify dependencies exist.** If your task depends on another agent's work (e.g., "test the API endpoints"), verify their implementation exists before writing tests. If it doesn't exist yet, mark your task `blocked`.
 
 ## Completion Gate — All Must Pass Before Marking Done
 
