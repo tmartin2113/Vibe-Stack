@@ -506,6 +506,12 @@ if [[ "$VLLM_SKIP" == "false" ]]; then
     _update_env_var "VLLM_MODEL" "${VLLM_MODEL}"
     _update_env_var "VLLM_MODEL_SHORT" "${VLLM_MODEL_SHORT}"
     success "VLLM_MODEL=${VLLM_MODEL} written to .env"
+
+    # Wire MiroFish to use the same model as the main pipeline (user can override via MIROFISH_LLM_MODEL)
+    if [ -z "${MIROFISH_LLM_MODEL:-}" ]; then
+        _update_env_var "MIROFISH_LLM_MODEL" "${VLLM_MODEL}"
+        success "MIROFISH_LLM_MODEL=${VLLM_MODEL} (follows VLLM_MODEL)"
+    fi
 else
     warn "vLLM will not be configured — no suitable GPU detected"
 fi

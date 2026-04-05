@@ -48,7 +48,8 @@ class MiroFishSimulationTool(Tool):
             "MIROFISH_LLM_API_URL", "http://host.docker.internal:8000/v1"
         )
         self._local_model = os.getenv(
-            "MIROFISH_LLM_MODEL", "QuantTrio/Qwen3.5-9B-AWQ"
+            "MIROFISH_LLM_MODEL",
+            os.getenv("VLLM_MODEL", "QuantTrio/Qwen3.5-9B-AWQ"),
         )
 
     def _select_llm_config(

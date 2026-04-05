@@ -22,10 +22,6 @@ models:
     base_url: "$VLLM_API_URL"
     api_key: "no-key-needed"
     temperature: 0.3
-    model_kwargs:
-      extra_body:
-        chat_template_kwargs:
-          enable_thinking: false
 
 # ── Sandbox ─────────────────────────────────────────────────────
 # Local sandbox — DeerFlow assistants explore the workspace directly.

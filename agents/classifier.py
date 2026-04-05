@@ -84,12 +84,12 @@ class LLMClassifier:
         try:
             # Generate with low temperature for consistency
             messages = [{"role": "user", "content": prompt}]
-            response = self.model.generate(
-                messages,
-                temperature=0.1,  # Low temp for deterministic classification
-                max_tokens=600,
-                chat_template_kwargs={"enable_thinking": False},
-            )
+            gen_kwargs = dict(temperature=0.1, max_tokens=600)
+            # enable_thinking is Qwen 3-specific; only send it for Qwen models
+            model_name = getattr(self.model, "model_name", "")
+            if "qwen" in model_name.lower():
+                gen_kwargs["chat_template_kwargs"] = {"enable_thinking": False}
+            response = self.model.generate(messages, **gen_kwargs)
 
             # Parse JSON response
             result = self._parse_classification_response(response)

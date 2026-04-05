@@ -10,6 +10,7 @@ Used by both MemoryStore and MessageStore for semantic search.
 
 import logging
 import math
+import os
 import threading
 from typing import List, Optional
 
@@ -17,7 +18,12 @@ logger = logging.getLogger(__name__)
 
 # Default embedding model — lightweight, fast, good for semantic similarity
 DEFAULT_EMBED_MODEL = "nomic-embed-text"
-DEFAULT_VLLM_URL = "http://localhost:8000"
+# Use same host/port env vars as the main LLM backend (agents/llm_backend.py)
+# so embeddings work inside Docker where localhost != host machine.
+DEFAULT_VLLM_URL = "http://{}:{}".format(
+    os.getenv("VIBE_BACKEND_HOST", "localhost"),
+    os.getenv("VIBE_BACKEND_PORT", "8000"),
+)
 
 
 def cosine_similarity(a: List[float], b: List[float]) -> float:
