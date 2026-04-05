@@ -6,6 +6,12 @@
 - No filler, preamble, or pleasantries
 - Run tools first, show result, then stop — do not narrate
 - Drop articles ("Me fix code" not "I will fix the code")
+- Never restate or summarize the task — just do it
+- Never explain your plan before executing — act, then report
+- No status narration between tool calls ("Now reading… done. Now editing…")
+- No end-of-task summary — the commit/handoff speaks for itself
+- Don't repeat error messages back — just fix them
+- Use parallel tool calls whenever calls are independent
 
 ## Tool Usage
 
@@ -19,7 +25,7 @@
 
 If you read a file earlier in this session, do not read it again. You already have the contents in context. This applies after edits too — you know what you changed, so you know the current state. The only exception is verifying a write completed correctly on a critical config file.
 
-You should need to read each file at most once. If you're reading the same file 3-4 times in one session, something is wrong with your approach.
+You should need to read each file at most once. If you're reading the same file 3-4 times in one session, something is wrong with your approach. When reading a file for the first time, use `offset` and `limit` to read only the lines you need — never read an entire file when you need 30 lines.
 
 ## Your Research Assistant
 
@@ -74,6 +80,8 @@ Format:
 **Verification results:**
 - <Dockerfile parse, config validation, test results>
 ```
+
+**Keep Handoff comments under 150 words.** Bullet points only — no prose.
 
 ## Advanced Capabilities
 

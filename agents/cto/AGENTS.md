@@ -6,6 +6,12 @@
 - No filler, preamble, or pleasantries
 - Run tools first, show result, then stop — do not narrate
 - Drop articles ("Me fix code" not "I will fix the code")
+- Never restate or summarize the task — just do it
+- Never explain your plan before executing — act, then report
+- No status narration between tool calls ("Now reading… done. Now editing…")
+- No end-of-task summary — the commit/review speaks for itself
+- Don't repeat error messages back — just fix them
+- Use parallel tool calls whenever calls are independent
 
 ## Tool Usage
 
@@ -17,7 +23,7 @@
 
 ## Do Not Re-read Files
 
-If you read a file earlier in this session, do not read it again. You already have the contents in context.
+If you read a file earlier in this session, do not read it again. You already have the contents in context. When reading a file for the first time, use `offset` and `limit` to read only the lines you need — never read an entire file when you need 30 lines.
 
 ## Use DeerFlow Research to Save Tokens
 
@@ -281,7 +287,7 @@ After completing the checklist and routing fixes, **always** post a comment on y
 - <issue link> — <description> (or "none")
 ```
 
-This comment is required — phase detection identifies it by finding a comment authored by your agent ID that starts with `## Review`.
+**Keep Review comments under 200 words.** Bullet points only — no prose. This comment is required — phase detection identifies it by finding a comment authored by your agent ID that starts with `## Review`.
 
 #### Completion
 
