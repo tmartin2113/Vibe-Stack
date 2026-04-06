@@ -41,6 +41,7 @@ def create_node_wrappers(
     from .skill_generator import generate_skills
     from .skill_loader import load_skills
     from .memory_store import MemoryStore
+    from .memory_persist import persist_memory_node
     from .tools.registry import _get_shared_memory_store
     from .skill_cleanup import cleanup_skills
 
@@ -90,9 +91,13 @@ def create_node_wrappers(
 
         try:
             store = _get_shared_memory_store()
+            agent_id = (state.get("agent_id") or "").strip()
+            task_id = (state.get("task_id") or state.get("session_id") or "").strip()
             results = store.hybrid_recall(
                 query=user_request,
                 max_results=5,
+                agent_id=agent_id,
+                task_id=task_id,
             )
 
             if not results:
@@ -331,6 +336,19 @@ def create_node_wrappers(
 
         return result
 
+    # ===== PERSIST MEMORY =====
+    def persist_memory_wrapper(state):
+        """Write run artifacts (spec, output, feedback, tools) into MemoryStore.
+
+        Runs on every terminal path so subsequent heartbeats can recall the
+        agent's prior decisions via inject_memory. Best-effort; never raises.
+        """
+        try:
+            return persist_memory_node(state)
+        except Exception as e:
+            logger.debug("persist_memory_wrapper: skipped (%s)", e)
+            return state
+
     # ===== RETURN ALL WRAPPERS =====
     return {
         "router": router_wrapper,
@@ -346,4 +364,5 @@ def create_node_wrappers(
         "aggregator": aggregator_wrapper,
         "final_critic": final_critic_wrapper,
         "skill_cleanup": skill_cleanup_wrapper,
+        "persist_memory": persist_memory_wrapper,
     }

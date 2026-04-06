@@ -134,6 +134,9 @@ class MemoryState(TypedDict, total=False):
 
     memory_context: str  # Relevant memories auto-injected for the specialist
     pending_messages: List[Dict[str, Any]]  # Raw message dicts from MessageStore
+    agent_id: str  # Agent identity (role/name) — scopes recall + persist
+    task_id: str  # Paperclip issue id (or session id) — scopes recall + persist
+    memory_persisted_ids: List[int]  # IDs written by persist_memory node this run
 
 
 class ToolState(TypedDict, total=False):

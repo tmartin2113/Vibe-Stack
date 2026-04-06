@@ -32,8 +32,10 @@ Embeddings:
     Stored as JSON-serialized float arrays in a separate embeddings table.
 """
 
+import hashlib
 import json
 import logging
+import math
 import sqlite3
 import threading
 from contextlib import contextmanager
@@ -67,6 +69,7 @@ class MemoryEntry:
     __slots__ = (
         "memory_id", "content", "source", "tags", "created_at",
         "updated_at", "access_count", "score",
+        "agent_id", "task_id", "importance",
     )
 
     def __init__(
@@ -79,6 +82,9 @@ class MemoryEntry:
         updated_at: str,
         access_count: int = 0,
         score: float = 0.0,
+        agent_id: str = "",
+        task_id: str = "",
+        importance: float = 0.5,
     ):
         self.memory_id = memory_id
         self.content = content
@@ -88,6 +94,9 @@ class MemoryEntry:
         self.updated_at = updated_at
         self.access_count = access_count
         self.score = score
+        self.agent_id = agent_id
+        self.task_id = task_id
+        self.importance = importance
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -99,6 +108,9 @@ class MemoryEntry:
             "updated_at": self.updated_at,
             "access_count": self.access_count,
             "score": self.score,
+            "agent_id": self.agent_id,
+            "task_id": self.task_id,
+            "importance": self.importance,
         }
 
     @property
@@ -134,6 +146,17 @@ class MemoryStore:
     # Maximum number of memories to keep (oldest evicted first)
     MAX_ENTRIES = 10000
 
+    # Extra columns added in subsequent revisions. The base CREATE TABLE
+    # uses the legacy column set so existing test fixtures and prior
+    # SQLite databases continue to work; the migration step in _init_db
+    # adds new columns via ALTER TABLE for older databases.
+    _NEW_COLUMNS = (
+        ("agent_id", "TEXT NOT NULL DEFAULT ''"),
+        ("task_id", "TEXT NOT NULL DEFAULT ''"),
+        ("importance", "REAL NOT NULL DEFAULT 0.5"),
+        ("content_hash", "TEXT NOT NULL DEFAULT ''"),
+    )
+
     _SCHEMA_DDL = """
         CREATE TABLE IF NOT EXISTS memories (
             id           INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -142,7 +165,11 @@ class MemoryStore:
             tags         TEXT NOT NULL DEFAULT '',
             created_at   TEXT NOT NULL,
             updated_at   TEXT NOT NULL,
-            access_count INTEGER NOT NULL DEFAULT 0
+            access_count INTEGER NOT NULL DEFAULT 0,
+            agent_id     TEXT NOT NULL DEFAULT '',
+            task_id      TEXT NOT NULL DEFAULT '',
+            importance   REAL NOT NULL DEFAULT 0.5,
+            content_hash TEXT NOT NULL DEFAULT ''
         );
 
         CREATE INDEX IF NOT EXISTS idx_memories_source
@@ -153,6 +180,15 @@ class MemoryStore:
 
         CREATE INDEX IF NOT EXISTS idx_memories_updated
             ON memories(updated_at);
+
+        CREATE INDEX IF NOT EXISTS idx_memories_agent_id
+            ON memories(agent_id);
+
+        CREATE INDEX IF NOT EXISTS idx_memories_task_id
+            ON memories(task_id);
+
+        CREATE INDEX IF NOT EXISTS idx_memories_content_hash
+            ON memories(content_hash);
 
         CREATE TABLE IF NOT EXISTS memory_embeddings (
             memory_id  INTEGER PRIMARY KEY REFERENCES memories(id) ON DELETE CASCADE,
@@ -177,7 +213,9 @@ class MemoryStore:
             # storage_backend handles its own storage; skip Path.mkdir
             self._db_path = str(db_path) if db_path else str(_DB_PATH)
         self._max_entries = max_entries
-        self._lock = threading.Lock()
+        # RLock so hybrid_recall (which calls both recall + semantic_recall)
+        # can hold the lock across both reads without deadlocking.
+        self._lock = threading.RLock()
         self._embedder = embedder  # None = lazy-init on first use
         self._embedder_checked = embedder is not None
         self._init_db()
@@ -255,10 +293,46 @@ class MemoryStore:
     # Override via subclass or constructor if using a different model.
     EMBEDDING_DIM = 768
 
+    def _migrate_add_columns(self, existing_cols: set) -> None:
+        """Add any new columns missing from a legacy `memories` table.
+
+        Idempotent: only ALTERs columns that aren't already present.
+        Used by both SQLite (per-connection) and storage_backend paths.
+        """
+        for col_name, col_decl in self._NEW_COLUMNS:
+            if col_name not in existing_cols:
+                ddl = f"ALTER TABLE memories ADD COLUMN {col_name} {col_decl}"
+                if self.storage_backend is not None:
+                    try:
+                        self.storage_backend.execute(ddl)
+                    except Exception as e:
+                        logger.debug(
+                            "ALTER TABLE for %s skipped: %s", col_name, e
+                        )
+                else:
+                    with self._connect() as conn:
+                        try:
+                            conn.execute(ddl)
+                        except sqlite3.OperationalError as e:
+                            logger.debug(
+                                "ALTER TABLE for %s skipped: %s", col_name, e
+                            )
+
     def _init_db(self):
         """Create tables, FTS5 virtual table, and embeddings table."""
         if self.storage_backend is not None:
             self.storage_backend.execute_script(self._SCHEMA_DDL)
+            # Migrate legacy tables that may pre-date the new columns.
+            try:
+                rows = self.storage_backend.fetchall_dict(
+                    "SELECT column_name FROM information_schema.columns "
+                    "WHERE table_name = 'memories'"
+                )
+                existing_cols = {r["column_name"] for r in rows} if rows else set()
+                if existing_cols:
+                    self._migrate_add_columns(existing_cols)
+            except Exception as e:
+                logger.debug("Postgres column introspection skipped: %s", e)
             # Create Postgres FTS index if supported
             if self.storage_backend.supports_fts:
                 try:
@@ -291,6 +365,32 @@ class MemoryStore:
 
         with self._connect() as conn:
             conn.executescript(self._SCHEMA_DDL)
+
+            # Migrate legacy DBs that pre-date the new columns. PRAGMA
+            # table_info is the canonical SQLite introspection path.
+            existing_cols = {
+                row[1] for row in conn.execute("PRAGMA table_info(memories)")
+            }
+            for col_name, col_decl in self._NEW_COLUMNS:
+                if col_name not in existing_cols:
+                    try:
+                        conn.execute(
+                            f"ALTER TABLE memories ADD COLUMN {col_name} {col_decl}"
+                        )
+                    except sqlite3.OperationalError as e:
+                        logger.debug(
+                            "ALTER TABLE for %s skipped: %s", col_name, e
+                        )
+            # Indexes for the migrated columns (skipped if they already exist).
+            for idx_sql in (
+                "CREATE INDEX IF NOT EXISTS idx_memories_agent_id ON memories(agent_id)",
+                "CREATE INDEX IF NOT EXISTS idx_memories_task_id ON memories(task_id)",
+                "CREATE INDEX IF NOT EXISTS idx_memories_content_hash ON memories(content_hash)",
+            ):
+                try:
+                    conn.execute(idx_sql)
+                except sqlite3.OperationalError as e:
+                    logger.debug("Index creation skipped: %s", e)
 
             # FTS5 virtual table for full-text search with BM25 ranking.
             # content_rowid links to memories.id for synchronization.
@@ -335,25 +435,51 @@ class MemoryStore:
 
     # ── Public API ───────────────────────────────────────────────────
 
+    @staticmethod
+    def _content_hash(content: str, agent_id: str, task_id: str) -> str:
+        """Stable dedup key. Scoped per (agent, task) so different agents
+        can record the same fact without one suppressing the other."""
+        h = hashlib.sha256()
+        h.update(agent_id.encode("utf-8"))
+        h.update(b"\x1f")
+        h.update(task_id.encode("utf-8"))
+        h.update(b"\x1f")
+        h.update(content.encode("utf-8"))
+        return h.hexdigest()
+
     def store(
         self,
         content: str,
         source: str = "agent",
         tags: str = "",
+        agent_id: str = "",
+        task_id: str = "",
+        importance: float = 0.5,
     ) -> int:
         """
         Store a memory entry.
 
         Args:
-            content: The fact, decision, or insight to remember.
-            source:  Where this information came from.
-                     Conventions: "user", "url:<url>", "file:<path>",
-                     "tool:<name>", "agent"
-            tags:    Space-separated tags for categorization.
-                     e.g. "architecture decision python"
+            content:    The fact, decision, or insight to remember.
+            source:     Where this information came from.
+                        Conventions: "user", "url:<url>", "file:<path>",
+                        "tool:<name>", "agent"
+            tags:       Space-separated tags for categorization.
+                        e.g. "architecture decision python"
+            agent_id:   Optional agent identifier for scoped recall.
+                        Use the heartbeat agent role/name (e.g. "backend-engineer").
+            task_id:    Optional task identifier for scoped recall.
+                        Use the Paperclip issue id or workflow session id.
+            importance: 0.0–1.0 weight applied during hybrid recall fusion.
+                        Persist nodes typically pass critic_score / 100.
+
+        Behaviour:
+            On duplicate (same agent_id + task_id + content), the existing
+            row's `access_count` and `updated_at` are bumped, and the highest
+            importance is retained — no duplicate row is inserted.
 
         Returns:
-            The memory ID of the stored entry.
+            The memory ID of the stored (or already-existing) entry.
         """
         if not content or not content.strip():
             raise ValueError("Memory content cannot be empty")
@@ -361,23 +487,47 @@ class MemoryStore:
         content = content.strip()
         source = source.strip() if source else "agent"
         tags = tags.strip() if tags else ""
+        agent_id = (agent_id or "").strip()
+        task_id = (task_id or "").strip()
+        importance = max(0.0, min(1.0, float(importance)))
 
         now = datetime.utcnow().isoformat() + "Z"
+        chash = self._content_hash(content, agent_id, task_id)
         ph = self._ph
 
         with self._lock:
+            # Dedup: bump access_count + updated_at + importance on hit.
+            existing = self._query_one(
+                f"SELECT id, importance FROM memories WHERE content_hash = {ph}",
+                (chash,),
+            )
+            if existing is not None:
+                existing_id = existing["id"]
+                existing_importance = existing["importance"] or 0.0
+                new_importance = max(existing_importance, importance)
+                self._exec(
+                    f"UPDATE memories SET access_count = access_count + 1, "
+                    f"updated_at = {ph}, importance = {ph} WHERE id = {ph}",
+                    (now, new_importance, existing_id),
+                )
+                logger.debug(
+                    "Memory dedup hit #%s (agent=%s task=%s): %s...",
+                    existing_id, agent_id, task_id, content[:60],
+                )
+                return existing_id
+
             if self.storage_backend is not None:
                 # Insert then retrieve the new ID.
-                # Can't use fetchone for INSERT RETURNING because
-                # fetchone doesn't commit — use execute + fetchval.
                 self._exec(
-                    f"INSERT INTO memories (content, source, tags, created_at, updated_at) "
-                    f"VALUES ({ph}, {ph}, {ph}, {ph}, {ph})",
-                    (content, source, tags, now, now),
+                    f"INSERT INTO memories (content, source, tags, created_at, updated_at, "
+                    f"agent_id, task_id, importance, content_hash) "
+                    f"VALUES ({ph}, {ph}, {ph}, {ph}, {ph}, {ph}, {ph}, {ph}, {ph})",
+                    (content, source, tags, now, now,
+                     agent_id, task_id, importance, chash),
                 )
                 row = self._query_one(
-                    f"SELECT id FROM memories WHERE content = {ph} AND created_at = {ph}",
-                    (content, now),
+                    f"SELECT id FROM memories WHERE content_hash = {ph}",
+                    (chash,),
                 )
                 memory_id = row["id"] if row else None
 
@@ -397,9 +547,11 @@ class MemoryStore:
             else:
                 with self._connect() as conn:
                     cursor = conn.execute(
-                        f"INSERT INTO memories (content, source, tags, created_at, updated_at) "
-                        f"VALUES ({ph}, {ph}, {ph}, {ph}, {ph})",
-                        (content, source, tags, now, now),
+                        f"INSERT INTO memories (content, source, tags, created_at, updated_at, "
+                        f"agent_id, task_id, importance, content_hash) "
+                        f"VALUES ({ph}, {ph}, {ph}, {ph}, {ph}, {ph}, {ph}, {ph}, {ph})",
+                        (content, source, tags, now, now,
+                         agent_id, task_id, importance, chash),
                     )
                     memory_id = cursor.lastrowid
 
@@ -429,12 +581,61 @@ class MemoryStore:
         logger.debug(f"Stored memory #{memory_id}: {content[:80]}...")
         return memory_id
 
+    # ── Recall scoping helpers ──────────────────────────────────────
+
+    def _scope_clauses(
+        self,
+        agent_id: str,
+        task_id: str,
+        col_prefix: str = "",
+    ) -> Tuple[List[str], List[Any]]:
+        """Build scoping WHERE-clause fragments for agent_id/task_id.
+
+        Returns (clauses, params). Empty agent_id/task_id are no-ops.
+        col_prefix is "m." when joining tables, "" otherwise.
+        """
+        ph = self._ph
+        clauses: List[str] = []
+        params: List[Any] = []
+        if agent_id:
+            clauses.append(f"{col_prefix}agent_id = {ph}")
+            params.append(agent_id)
+        if task_id:
+            clauses.append(f"{col_prefix}task_id = {ph}")
+            params.append(task_id)
+        return clauses, params
+
+    def _row_to_entry(self, row, score: float = 0.0) -> "MemoryEntry":
+        """Build a MemoryEntry from a row dict, gracefully handling
+        legacy rows that pre-date the new columns."""
+        def _get(key, default):
+            try:
+                v = row[key]
+                return v if v is not None else default
+            except (KeyError, IndexError):
+                return default
+        return MemoryEntry(
+            memory_id=row["id"],
+            content=row["content"],
+            source=row["source"],
+            tags=row["tags"],
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+            access_count=row["access_count"],
+            score=score,
+            agent_id=_get("agent_id", ""),
+            task_id=_get("task_id", ""),
+            importance=_get("importance", 0.5),
+        )
+
     def recall(
         self,
         query: str,
         max_results: int = 5,
         tag_filter: str = "",
         source_filter: str = "",
+        agent_id: str = "",
+        task_id: str = "",
     ) -> List[MemoryEntry]:
         """
         Search memories using full-text search (BM25 ranking).
@@ -446,6 +647,8 @@ class MemoryStore:
                            this substring (case-insensitive).
             source_filter: If set, only return memories whose source starts
                            with this prefix (e.g. "url:" for web sources).
+            agent_id:      If set, only return memories owned by this agent.
+            task_id:       If set, only return memories tied to this task.
 
         Returns:
             List of MemoryEntry objects, sorted by relevance (best first).
@@ -456,175 +659,158 @@ class MemoryStore:
         max_results = max(1, min(max_results, 50))
         ph = self._ph
 
-        if self.storage_backend is not None:
-            if self.storage_backend.supports_fts:
-                # Postgres tsvector search with ranking
-                conditions = [f"to_tsvector('english', content) @@ plainto_tsquery('english', {ph})"]
-                params: list = [query]
-                if tag_filter:
-                    conditions.append(f"tags LIKE {ph}")
-                    params.append(f"%{tag_filter}%")
-                if source_filter:
-                    conditions.append(f"source = {ph}")
-                    params.append(source_filter)
-                where = " AND ".join(conditions)
-                # Params order must match SQL placeholder order:
-                # 1. ts_rank query (in SELECT), 2. WHERE conditions, 3. LIMIT
-                rows = self._query_all(
-                    f"SELECT id, content, source, tags, created_at, updated_at, access_count, "
-                    f"ts_rank(to_tsvector('english', content), plainto_tsquery('english', {ph})) as score "
-                    f"FROM memories WHERE {where} "
-                    f"ORDER BY score DESC LIMIT {ph}",
-                    tuple([query] + params + [max_results]),
-                )
-                # Update access counts
-                for r in rows:
-                    self._exec(
-                        f"UPDATE memories SET access_count = access_count + 1 WHERE id = {ph}",
-                        (r["id"],),
+        with self._lock:
+            if self.storage_backend is not None:
+                if self.storage_backend.supports_fts:
+                    # Postgres tsvector search with ranking
+                    conditions = [
+                        f"to_tsvector('english', content) @@ plainto_tsquery('english', {ph})"
+                    ]
+                    params: list = [query]
+                    if tag_filter:
+                        conditions.append(f"tags LIKE {ph}")
+                        params.append(f"%{tag_filter}%")
+                    if source_filter:
+                        conditions.append(f"source = {ph}")
+                        params.append(source_filter)
+                    scope_clauses, scope_params = self._scope_clauses(
+                        agent_id, task_id,
                     )
-                results = []
-                for row in rows:
-                    results.append(MemoryEntry(
-                        memory_id=row["id"],
-                        content=row["content"],
-                        source=row["source"],
-                        tags=row["tags"],
-                        created_at=row["created_at"],
-                        updated_at=row["updated_at"],
-                        access_count=row["access_count"],
-                        score=row["score"],
-                    ))
-                return results
-            else:
-                # LIKE fallback for backends without FTS
-                like_param = f"%{query.strip()}%"
-                conditions = [f"content LIKE {ph}"]
-                params: list = [like_param]
+                    conditions.extend(scope_clauses)
+                    params.extend(scope_params)
+                    where = " AND ".join(conditions)
+                    # Params order must match SQL placeholder order:
+                    # 1. ts_rank query (in SELECT), 2. WHERE conditions, 3. LIMIT
+                    rows = self._query_all(
+                        f"SELECT id, content, source, tags, created_at, updated_at, access_count, "
+                        f"agent_id, task_id, importance, "
+                        f"ts_rank(to_tsvector('english', content), plainto_tsquery('english', {ph})) as score "
+                        f"FROM memories WHERE {where} "
+                        f"ORDER BY score DESC LIMIT {ph}",
+                        tuple([query] + params + [max_results]),
+                    )
+                    # Update access counts
+                    for r in rows:
+                        self._exec(
+                            f"UPDATE memories SET access_count = access_count + 1 WHERE id = {ph}",
+                            (r["id"],),
+                        )
+                    return [self._row_to_entry(row, row["score"]) for row in rows]
+                else:
+                    # LIKE fallback for backends without FTS
+                    like_param = f"%{query.strip()}%"
+                    conditions = [f"content LIKE {ph}"]
+                    params: list = [like_param]
 
-                if tag_filter:
-                    conditions.append(f"LOWER(tags) LIKE {ph}")
-                    params.append(f"%{tag_filter.lower()}%")
+                    if tag_filter:
+                        conditions.append(f"LOWER(tags) LIKE {ph}")
+                        params.append(f"%{tag_filter.lower()}%")
 
-                if source_filter:
-                    conditions.append(f"source LIKE {ph}")
-                    params.append(f"{source_filter}%")
+                    if source_filter:
+                        conditions.append(f"source LIKE {ph}")
+                        params.append(f"{source_filter}%")
 
-                where_clause = " AND ".join(conditions)
+                    scope_clauses, scope_params = self._scope_clauses(
+                        agent_id, task_id,
+                    )
+                    conditions.extend(scope_clauses)
+                    params.extend(scope_params)
 
-                rows = self._query_all(
-                    f"SELECT id, content, source, tags, created_at, updated_at, access_count "
-                    f"FROM memories WHERE {where_clause} "
-                    f"ORDER BY updated_at DESC LIMIT {ph}",
-                    tuple(params + [max_results]),
-                )
+                    where_clause = " AND ".join(conditions)
 
-                results = []
+                    rows = self._query_all(
+                        f"SELECT id, content, source, tags, created_at, updated_at, access_count, "
+                        f"agent_id, task_id, importance "
+                        f"FROM memories WHERE {where_clause} "
+                        f"ORDER BY updated_at DESC LIMIT {ph}",
+                        tuple(params + [max_results]),
+                    )
+
+                    results = []
+                    memory_ids = []
+                    for row in rows:
+                        results.append(self._row_to_entry(row, 0.0))
+                        memory_ids.append(row["id"])
+
+                    # Bump access counts for returned results
+                    if memory_ids:
+                        now = datetime.utcnow().isoformat() + "Z"
+                        placeholders = ",".join(ph for _ in memory_ids)
+                        self._exec(
+                            f"UPDATE memories SET access_count = access_count + 1, "
+                            f"updated_at = {ph} WHERE id IN ({placeholders})",
+                            tuple([now] + memory_ids),
+                        )
+
+                    return results
+
+            # SQLite path: use FTS5
+            # Build FTS5 query: quote each token to avoid syntax errors
+            tokens = query.strip().split()
+            fts_query = " OR ".join(f'"{t}"' for t in tokens if t)
+
+            if not fts_query:
+                return []
+
+            results = []
+            with self._connect() as conn:
+                # BM25 returns negative scores (lower = better match).
+                # We negate to get positive scores where higher = better.
+                rows = conn.execute(
+                    """SELECT m.id, m.content, m.source, m.tags,
+                              m.created_at, m.updated_at, m.access_count,
+                              m.agent_id, m.task_id, m.importance,
+                              -rank AS score
+                       FROM memories_fts fts
+                       JOIN memories m ON m.id = fts.rowid
+                       WHERE memories_fts MATCH ?
+                       ORDER BY rank
+                       LIMIT ?""",
+                    (fts_query, max_results * 5),  # Over-fetch for filtering
+                ).fetchall()
+
                 memory_ids = []
                 for row in rows:
-                    results.append(MemoryEntry(
-                        memory_id=row["id"],
-                        content=row["content"],
-                        source=row["source"],
-                        tags=row["tags"],
-                        created_at=row["created_at"],
-                        updated_at=row["updated_at"],
-                        access_count=row["access_count"],
-                        score=0.0,
-                    ))
+                    # Apply optional filters
+                    if tag_filter and tag_filter.lower() not in row["tags"].lower():
+                        continue
+                    if source_filter and not row["source"].startswith(source_filter):
+                        continue
+                    if agent_id and row["agent_id"] != agent_id:
+                        continue
+                    if task_id and row["task_id"] != task_id:
+                        continue
+
+                    results.append(self._row_to_entry(row, row["score"]))
                     memory_ids.append(row["id"])
+
+                    if len(results) >= max_results:
+                        break
 
                 # Bump access counts for returned results
                 if memory_ids:
                     now = datetime.utcnow().isoformat() + "Z"
-                    placeholders = ",".join(ph for _ in memory_ids)
-                    self._exec(
+                    placeholders = ",".join("?" for _ in memory_ids)
+                    conn.execute(
                         f"UPDATE memories SET access_count = access_count + 1, "
-                        f"updated_at = {ph} WHERE id IN ({placeholders})",
-                        tuple([now] + memory_ids),
+                        f"updated_at = ? WHERE id IN ({placeholders})",
+                        [now] + memory_ids,
                     )
 
-                return results
-
-        # SQLite path: use FTS5
-        # Build FTS5 query: quote each token to avoid syntax errors
-        tokens = query.strip().split()
-        fts_query = " OR ".join(f'"{t}"' for t in tokens if t)
-
-        if not fts_query:
-            return []
-
-        results = []
-        with self._connect() as conn:
-            # BM25 returns negative scores (lower = better match).
-            # We negate to get positive scores where higher = better.
-            rows = conn.execute(
-                """SELECT m.id, m.content, m.source, m.tags,
-                          m.created_at, m.updated_at, m.access_count,
-                          -rank AS score
-                   FROM memories_fts fts
-                   JOIN memories m ON m.id = fts.rowid
-                   WHERE memories_fts MATCH ?
-                   ORDER BY rank
-                   LIMIT ?""",
-                (fts_query, max_results * 3),  # Over-fetch for filtering
-            ).fetchall()
-
-            memory_ids = []
-            for row in rows:
-                # Apply optional filters
-                if tag_filter and tag_filter.lower() not in row["tags"].lower():
-                    continue
-                if source_filter and not row["source"].startswith(source_filter):
-                    continue
-
-                results.append(MemoryEntry(
-                    memory_id=row["id"],
-                    content=row["content"],
-                    source=row["source"],
-                    tags=row["tags"],
-                    created_at=row["created_at"],
-                    updated_at=row["updated_at"],
-                    access_count=row["access_count"],
-                    score=row["score"],
-                ))
-                memory_ids.append(row["id"])
-
-                if len(results) >= max_results:
-                    break
-
-            # Bump access counts for returned results
-            if memory_ids:
-                now = datetime.utcnow().isoformat() + "Z"
-                placeholders = ",".join("?" for _ in memory_ids)
-                conn.execute(
-                    f"UPDATE memories SET access_count = access_count + 1, "
-                    f"updated_at = ? WHERE id IN ({placeholders})",
-                    [now] + memory_ids,
-                )
-
-        return results
+            return results
 
     def get_by_id(self, memory_id: int) -> Optional[MemoryEntry]:
         """Retrieve a single memory by its ID."""
         ph = self._ph
         row = self._query_one(
             f"SELECT id, content, source, tags, created_at, "
-            f"updated_at, access_count "
+            f"updated_at, access_count, agent_id, task_id, importance "
             f"FROM memories WHERE id = {ph}",
             (memory_id,),
         )
         if row is None:
             return None
-        return MemoryEntry(
-            memory_id=row["id"],
-            content=row["content"],
-            source=row["source"],
-            tags=row["tags"],
-            created_at=row["created_at"],
-            updated_at=row["updated_at"],
-            access_count=row["access_count"],
-        )
+        return self._row_to_entry(row)
 
     def delete(self, memory_id: int) -> bool:
         """Delete a memory by its ID. Returns True if it existed."""
@@ -712,22 +898,11 @@ class MemoryStore:
         limit = max(1, min(limit, 100))
         rows = self._query_all(
             f"SELECT id, content, source, tags, created_at, "
-            f"updated_at, access_count "
+            f"updated_at, access_count, agent_id, task_id, importance "
             f"FROM memories ORDER BY updated_at DESC LIMIT {ph}",
             (limit,),
         )
-        return [
-            MemoryEntry(
-                memory_id=row["id"],
-                content=row["content"],
-                source=row["source"],
-                tags=row["tags"],
-                created_at=row["created_at"],
-                updated_at=row["updated_at"],
-                access_count=row["access_count"],
-            )
-            for row in rows
-        ]
+        return [self._row_to_entry(row) for row in rows]
 
     def cleanup(self, keep: int = 0) -> int:
         """
@@ -868,6 +1043,8 @@ class MemoryStore:
         tag_filter: str = "",
         source_filter: str = "",
         min_similarity: float = 0.3,
+        agent_id: str = "",
+        task_id: str = "",
     ) -> List[MemoryEntry]:
         """
         Search memories using vector cosine similarity.
@@ -880,6 +1057,8 @@ class MemoryStore:
             tag_filter:     If set, only memories with matching tag substring.
             source_filter:  If set, only memories whose source starts with prefix.
             min_similarity: Minimum cosine similarity threshold (0.0-1.0).
+            agent_id:       If set, only memories owned by this agent.
+            task_id:        If set, only memories tied to this task.
 
         Returns:
             List of MemoryEntry objects sorted by similarity (best first).
@@ -887,120 +1066,133 @@ class MemoryStore:
         if not query or not query.strip():
             return []
 
-        if self.storage_backend is not None:
-            if not self.storage_backend.supports_vector:
-                logger.debug("Semantic search not available with this storage backend")
+        ph = self._ph
+
+        with self._lock:
+            if self.storage_backend is not None:
+                if not self.storage_backend.supports_vector:
+                    logger.debug("Semantic search not available with this storage backend")
+                    return []
+                if not self._embedder:
+                    return []
+                query_vec = self._embedder.embed(query)
+                if query_vec is None:
+                    return []
+                vec_str = "[" + ",".join(str(x) for x in query_vec) + "]"
+
+                max_results = max(1, min(max_results, 50))
+
+                conditions = ["1=1"]
+                params_list: list = []
+                if tag_filter:
+                    conditions.append(f"m.tags LIKE {ph}")
+                    params_list.append(f"%{tag_filter}%")
+                if source_filter:
+                    conditions.append(f"m.source = {ph}")
+                    params_list.append(source_filter)
+                scope_clauses, scope_params = self._scope_clauses(
+                    agent_id, task_id, col_prefix="m.",
+                )
+                conditions.extend(scope_clauses)
+                params_list.extend(scope_params)
+                where = " AND ".join(conditions)
+
+                rows = self._query_all(
+                    f"SELECT m.id, m.content, m.source, m.tags, m.created_at, m.updated_at, "
+                    f"m.access_count, m.agent_id, m.task_id, m.importance, "
+                    f"1 - (e.embedding <=> {ph}::vector) as score "
+                    f"FROM memories m JOIN memory_embeddings e ON m.id = e.memory_id "
+                    f"WHERE {where} AND 1 - (e.embedding <=> {ph}::vector) >= {ph} "
+                    f"ORDER BY e.embedding <=> {ph}::vector LIMIT {ph}",
+                    tuple([vec_str] + params_list + [vec_str, min_similarity, vec_str, max_results]),
+                )
+                for r in rows:
+                    self._exec(
+                        f"UPDATE memories SET access_count = access_count + 1 WHERE id = {ph}",
+                        (r["id"],),
+                    )
+                return [self._row_to_entry(row, row["score"]) for row in rows]
+
+            embedder = self._get_embedder()
+            if embedder is None:
                 return []
-            if not self._embedder:
-                return []
-            query_vec = self._embedder.embed(query)
+
+            query_vec = embedder.embed(query.strip())
             if query_vec is None:
                 return []
-            vec_str = "[" + ",".join(str(x) for x in query_vec) + "]"
 
             max_results = max(1, min(max_results, 50))
 
-            conditions = ["1=1"]
-            params_list: list = []
-            if tag_filter:
-                conditions.append(f"m.tags LIKE {ph}")
-                params_list.append(f"%{tag_filter}%")
-            if source_filter:
-                conditions.append(f"m.source = {ph}")
-                params_list.append(source_filter)
-            where = " AND ".join(conditions)
+            results: List[MemoryEntry] = []
+            with self._connect() as conn:
+                # Fetch all embeddings — for stores up to 10K entries this is fast.
+                # A full vector DB would use an ANN index; here we brute-force since
+                # the max store size is bounded at 10K.
+                rows = conn.execute(
+                    """SELECT m.id, m.content, m.source, m.tags,
+                              m.created_at, m.updated_at, m.access_count,
+                              m.agent_id, m.task_id, m.importance,
+                              e.embedding
+                       FROM memory_embeddings e
+                       JOIN memories m ON m.id = e.memory_id"""
+                ).fetchall()
 
-            rows = self._query_all(
-                f"SELECT m.id, m.content, m.source, m.tags, m.created_at, m.updated_at, "
-                f"m.access_count, 1 - (e.embedding <=> {ph}::vector) as score "
-                f"FROM memories m JOIN memory_embeddings e ON m.id = e.memory_id "
-                f"WHERE {where} AND 1 - (e.embedding <=> {ph}::vector) >= {ph} "
-                f"ORDER BY e.embedding <=> {ph}::vector LIMIT {ph}",
-                tuple([vec_str] + params_list + [vec_str, min_similarity, vec_str, max_results]),
-            )
-            for r in rows:
-                self._exec(
-                    f"UPDATE memories SET access_count = access_count + 1 WHERE id = {ph}",
-                    (r["id"],),
-                )
-            results = []
-            for row in rows:
-                results.append(MemoryEntry(
-                    memory_id=row["id"],
-                    content=row["content"],
-                    source=row["source"],
-                    tags=row["tags"],
-                    created_at=row["created_at"],
-                    updated_at=row["updated_at"],
-                    access_count=row["access_count"],
-                    score=row["score"],
-                ))
+                scored: List[Tuple[float, sqlite3.Row]] = []
+                for row in rows:
+                    # Apply filters before computing similarity
+                    if tag_filter and tag_filter.lower() not in row["tags"].lower():
+                        continue
+                    if source_filter and not row["source"].startswith(source_filter):
+                        continue
+                    if agent_id and row["agent_id"] != agent_id:
+                        continue
+                    if task_id and row["task_id"] != task_id:
+                        continue
+
+                    stored_vec = json.loads(row["embedding"])
+                    sim = _cosine_similarity(query_vec, stored_vec)
+                    if sim >= min_similarity:
+                        scored.append((sim, row))
+
+                # Sort by similarity descending
+                scored.sort(key=lambda x: -x[0])
+
+                memory_ids = []
+                for sim, row in scored[:max_results]:
+                    results.append(self._row_to_entry(row, sim))
+                    memory_ids.append(row["id"])
+
+                # Bump access counts
+                if memory_ids:
+                    now = datetime.utcnow().isoformat() + "Z"
+                    placeholders = ",".join("?" for _ in memory_ids)
+                    conn.execute(
+                        f"UPDATE memories SET access_count = access_count + 1, "
+                        f"updated_at = ? WHERE id IN ({placeholders})",
+                        [now] + memory_ids,
+                    )
+
             return results
 
-        embedder = self._get_embedder()
-        if embedder is None:
-            return []
+    # Half-life (in days) for the time-decay term applied during hybrid
+    # fusion. After this many days a memory's recency contribution drops
+    # to half. Tuned for typical agent workflows: weeks-old context still
+    # surfaces, but freshly-recorded facts win ties.
+    DECAY_HALFLIFE_DAYS = 30.0
 
-        query_vec = embedder.embed(query.strip())
-        if query_vec is None:
-            return []
-
-        max_results = max(1, min(max_results, 50))
-
-        results: List[MemoryEntry] = []
-        with self._connect() as conn:
-            # Fetch all embeddings — for stores up to 10K entries this is fast.
-            # A full vector DB would use an ANN index; here we brute-force since
-            # the max store size is bounded at 10K.
-            rows = conn.execute(
-                """SELECT m.id, m.content, m.source, m.tags,
-                          m.created_at, m.updated_at, m.access_count,
-                          e.embedding
-                   FROM memory_embeddings e
-                   JOIN memories m ON m.id = e.memory_id"""
-            ).fetchall()
-
-            scored: List[Tuple[float, sqlite3.Row]] = []
-            for row in rows:
-                # Apply filters before computing similarity
-                if tag_filter and tag_filter.lower() not in row["tags"].lower():
-                    continue
-                if source_filter and not row["source"].startswith(source_filter):
-                    continue
-
-                stored_vec = json.loads(row["embedding"])
-                sim = _cosine_similarity(query_vec, stored_vec)
-                if sim >= min_similarity:
-                    scored.append((sim, row))
-
-            # Sort by similarity descending
-            scored.sort(key=lambda x: -x[0])
-
-            memory_ids = []
-            for sim, row in scored[:max_results]:
-                results.append(MemoryEntry(
-                    memory_id=row["id"],
-                    content=row["content"],
-                    source=row["source"],
-                    tags=row["tags"],
-                    created_at=row["created_at"],
-                    updated_at=row["updated_at"],
-                    access_count=row["access_count"],
-                    score=sim,
-                ))
-                memory_ids.append(row["id"])
-
-            # Bump access counts
-            if memory_ids:
-                now = datetime.utcnow().isoformat() + "Z"
-                placeholders = ",".join("?" for _ in memory_ids)
-                conn.execute(
-                    f"UPDATE memories SET access_count = access_count + 1, "
-                    f"updated_at = ? WHERE id IN ({placeholders})",
-                    [now] + memory_ids,
-                )
-
-        return results
+    def _recency_factor(self, updated_at: str) -> float:
+        """Exponential decay multiplier in [0, 1] based on age in days."""
+        if not updated_at:
+            return 1.0
+        try:
+            ts = datetime.fromisoformat(updated_at.rstrip("Z"))
+        except (ValueError, AttributeError):
+            return 1.0
+        age_days = (datetime.utcnow() - ts).total_seconds() / 86400.0
+        if age_days <= 0:
+            return 1.0
+        # 2 ** (-age / halflife) — half-life decay.
+        return math.pow(2.0, -age_days / max(self.DECAY_HALFLIFE_DAYS, 0.001))
 
     def hybrid_recall(
         self,
@@ -1010,41 +1202,71 @@ class MemoryStore:
         source_filter: str = "",
         keyword_weight: float = 0.4,
         semantic_weight: float = 0.6,
+        agent_id: str = "",
+        task_id: str = "",
+        importance_weight: float = 0.2,
+        decay_weight: float = 0.1,
     ) -> List[MemoryEntry]:
         """
-        Merged BM25 keyword + vector semantic search.
+        Merged BM25 keyword + vector semantic search with importance + decay.
 
         If embeddings are unavailable, falls back to BM25-only.
-        Score fusion: normalized BM25 score * keyword_weight +
-                      cosine similarity * semantic_weight.
+
+        Score fusion (per memory):
+            relevance = bm25_norm * keyword_weight + cosine * semantic_weight
+            quality   = importance * importance_weight
+            recency   = recency_factor(updated_at) * decay_weight
+            final     = relevance + quality + recency
 
         Args:
-            query:           Search query.
-            max_results:     Maximum results to return.
-            tag_filter:      Tag substring filter.
-            source_filter:   Source prefix filter.
-            keyword_weight:  Weight for BM25 results (0.0-1.0).
-            semantic_weight: Weight for semantic results (0.0-1.0).
+            query:             Search query.
+            max_results:       Maximum results to return.
+            tag_filter:        Tag substring filter.
+            source_filter:     Source prefix filter.
+            keyword_weight:    Weight for BM25 results (0.0-1.0).
+            semantic_weight:   Weight for semantic results (0.0-1.0).
+            agent_id:          Optional per-agent scope.
+            task_id:           Optional per-task scope.
+            importance_weight: Weight for the per-entry importance score.
+            decay_weight:      Weight for the time-decay recency boost.
 
         Returns:
             List of MemoryEntry objects sorted by fused score (best first).
         """
-        # Get BM25 results (always available)
-        bm25_results = self.recall(
-            query, max_results=max_results * 2,
-            tag_filter=tag_filter, source_filter=source_filter,
-        )
+        with self._lock:
+            # Get BM25 results (always available)
+            bm25_results = self.recall(
+                query, max_results=max_results * 2,
+                tag_filter=tag_filter, source_filter=source_filter,
+                agent_id=agent_id, task_id=task_id,
+            )
 
-        # Get semantic results (may be empty if no embeddings)
-        sem_results = self.semantic_recall(
-            query, max_results=max_results * 2,
-            tag_filter=tag_filter, source_filter=source_filter,
-        )
+            # Get semantic results (may be empty if no embeddings)
+            sem_results = self.semantic_recall(
+                query, max_results=max_results * 2,
+                tag_filter=tag_filter, source_filter=source_filter,
+                agent_id=agent_id, task_id=task_id,
+            )
 
-        # If only one source available, return it directly
+        def _quality_recency(entry: MemoryEntry) -> float:
+            return (
+                (entry.importance or 0.0) * importance_weight
+                + self._recency_factor(entry.updated_at) * decay_weight
+            )
+
+        # If only one source available, still apply quality/recency boost
+        # so importance and decay take effect even without embeddings.
         if not sem_results:
+            for entry in bm25_results:
+                bm25_max = max((e.score for e in bm25_results), default=1.0) or 1.0
+                norm = entry.score / bm25_max if bm25_max else 0.0
+                entry.score = norm * keyword_weight + _quality_recency(entry)
+            bm25_results.sort(key=lambda e: -e.score)
             return bm25_results[:max_results]
         if not bm25_results:
+            for entry in sem_results:
+                entry.score = entry.score * semantic_weight + _quality_recency(entry)
+            sem_results.sort(key=lambda e: -e.score)
             return sem_results[:max_results]
 
         # Normalize BM25 scores to 0-1 range
@@ -1068,7 +1290,11 @@ class MemoryStore:
         # Compute fused score and sort
         ranked: List[Tuple[float, MemoryEntry]] = []
         for mid, (bm25_score, sem_score, entry) in fused.items():
-            combined = bm25_score * keyword_weight + sem_score * semantic_weight
+            combined = (
+                bm25_score * keyword_weight
+                + sem_score * semantic_weight
+                + _quality_recency(entry)
+            )
             entry.score = combined
             ranked.append((combined, entry))
 
