@@ -96,9 +96,11 @@ class SkillRegistry(
     if MIN_AVG_SCORE_FOR_PROMOTION < 0 or MIN_AVG_SCORE_FOR_PROMOTION > 100:
         raise ValueError(f"VIBE_SKILL_MIN_AVG_SCORE_FOR_PROMOTION must be 0-100, got {MIN_AVG_SCORE_FOR_PROMOTION}")
 
-    # Confidence thresholds for tier selection
-    # These are tuned for keyword-based matching; raise when semantic
-    # (embedding) matching is implemented.
+    # Confidence thresholds for tier selection.
+    # find_skill() now blends keyword scoring with embedding similarity
+    # (see agents/skill_embeddings.py) but these thresholds remain tuned
+    # for the keyword path — they will be revisited once telemetry on the
+    # blended distribution is collected.
     OFFICIAL_CONFIDENCE_THRESHOLD = float(os.getenv("VIBE_SKILL_OFFICIAL_CONFIDENCE", "0.4"))
     LOCAL_CONFIDENCE_THRESHOLD = float(os.getenv("VIBE_SKILL_LOCAL_CONFIDENCE", "0.35"))
     TEMP_CONFIDENCE_THRESHOLD = float(os.getenv("VIBE_SKILL_TEMP_CONFIDENCE", "0.35"))  # Same as local — retained temp skills are proven

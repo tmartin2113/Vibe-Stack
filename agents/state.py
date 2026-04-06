@@ -73,7 +73,6 @@ class SkillState(TypedDict, total=False):
 
     discovered_skills: List[Dict[str, Any]]  # Skills found during routing
     skills_in_use: List[str]  # Active skill names being used
-    skill_quality_scores: Dict[str, int]  # Quality scores for each skill (0-100)
     loaded_skills: List[Dict[str, Any]]  # Loaded skill content (SKILL.md)
     skills_cleaned_up: bool  # Cleanup complete marker
     workspace_dir: Optional[str]  # Project repo being worked on (scanned for skills/)
@@ -272,7 +271,6 @@ def create_initial_state(
         # Skill management
         discovered_skills=[],
         skills_in_use=[],
-        skill_quality_scores={},
         loaded_skills=[],
         skills_cleaned_up=False,
 

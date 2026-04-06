@@ -97,6 +97,12 @@ class SkillLoaderNode:
                 adapter_prompt = self.skill_registry.security.parse_adapter_prompt(
                     skill_content
                 )
+                # Re-scan the override for injection patterns.  If it fails,
+                # drop just the override — the rest of the skill remains usable.
+                if adapter_prompt and not self.skill_registry.security.validate_adapter_prompt(
+                    adapter_prompt, skill_name
+                ):
+                    adapter_prompt = None
                 generation_config = self.skill_registry.security.parse_generation_config(
                     skill_content
                 )

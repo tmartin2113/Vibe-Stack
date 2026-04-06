@@ -148,11 +148,6 @@ class SkillGeneratorNode:
             skills_in_use.append(skill_name)
             state["skills_in_use"] = skills_in_use
 
-            # Initialize quality score
-            skill_quality_scores = state.get("skill_quality_scores", {})
-            skill_quality_scores[skill_name] = 0
-            state["skill_quality_scores"] = skill_quality_scores
-
         # Update state with modified discovered_skills
         state["discovered_skills"] = discovered_skills
 
