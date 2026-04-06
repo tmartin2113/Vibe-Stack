@@ -131,6 +131,15 @@ class SkillRegistryLifecycleMixin:
                 json.dump(asdict(metadata), f, indent=2)
 
         self._save_index()
+
+        # Warm the semantic-matching cache for this skill. If the embedder
+        # is unavailable, this is a silent no-op — find_skill() will fall
+        # back to keyword-only scoring for this entry.
+        try:
+            self._get_embedding_cache().embed_skill(name, description, task_types)
+        except Exception as e:  # pragma: no cover — defensive
+            logger.debug(f"Skill embedding warm failed for {name}: {e}")
+
         logger.info(f"✅ Registered {tier} skill: {name}")
 
         return metadata
@@ -382,6 +391,11 @@ class SkillRegistryLifecycleMixin:
             tier_skills.pop(skill_name, None)
             # Clean up orphaned integrity hash for this skill
             self.security.remove_integrity_hash(skill_name)
+            # Drop the cached embedding (silent no-op if absent)
+            try:
+                self._get_embedding_cache().invalidate(skill_name)
+            except Exception as e:  # pragma: no cover — defensive
+                logger.debug(f"Embedding cache invalidate failed for {skill_name}: {e}")
             logger.debug(f"Evicted stale {tier} skill: {skill_name}")
 
         return len(to_evict)

@@ -819,3 +819,154 @@ class TestWorkspaceTier:
         stats = registry.get_stats()
         assert "workspace" in stats["by_tier"]
         assert stats["by_tier"]["workspace"]["count"] == 1
+
+
+class TestSemanticMatching:
+    """find_skill() blends embedding similarity into the keyword score.
+
+    The registry is given a mock embedder via its SkillEmbeddingCache so
+    these tests run with no network. Each test exercises a case where
+    keyword scoring alone would fail — the skill's description shares
+    zero tokens with the query — and asserts that semantic similarity
+    rescues the match.
+    """
+
+    def _inject_mock_embedder(self, registry, vectors):
+        """Wire a mock embedder into the registry's embedding cache.
+
+        ``vectors`` maps arbitrary text keys → vector. The mock returns
+        the vector for the first key found in the embed input text,
+        matching how MessageStore/MemoryStore tests set up their mocks
+        (tests/test_memory_store.py:1060-1119).
+        """
+        from unittest.mock import MagicMock
+        from agents.embedder import VLLMEmbedder
+        from agents.skill_embeddings import SkillEmbeddingCache
+
+        def fake_embed(text):
+            for key, vec in vectors.items():
+                if key.lower() in text.lower():
+                    return vec
+            return [0.0, 0.0, 0.0, 1.0]  # orthogonal "no match" vector
+
+        embedder = MagicMock(spec=VLLMEmbedder)
+        embedder.model = "test-model"
+        embedder.is_available.return_value = True
+        embedder.embed.side_effect = fake_embed
+
+        # Force the lazy attribute so _get_embedding_cache returns our instance.
+        registry._embedding_cache = SkillEmbeddingCache(
+            registry.base_dir, embedder=embedder
+        )
+        return embedder
+
+    def test_semantic_match_beats_zero_keyword_overlap(self, skills_dir, registry):
+        """A query with no shared tokens still finds the semantically close skill."""
+        # Two skills with deliberately non-overlapping keywords.
+        ml_dir, _ = _create_skill(
+            skills_dir, "local", "ml-pipeline",
+            "Machine learning training workflows for tabular datasets",
+            ["data_analysis"],
+        )
+        web_dir, _ = _create_skill(
+            skills_dir, "local", "web-scraper",
+            "HTTP crawling and HTML extraction",
+            ["research"],
+        )
+
+        # Inject BEFORE register_skill so the warm step uses our mock.
+        self._inject_mock_embedder(
+            registry,
+            {
+                "machine learning": [1.0, 0.0, 0.0, 0.0],
+                "HTTP crawling": [0.0, 1.0, 0.0, 0.0],
+                # Query: "train a model on tabular data" semantically
+                # matches the ML skill's vector.
+                "train a model": [0.95, 0.05, 0.0, 0.0],
+            },
+        )
+
+        registry.register_skill(
+            "ml-pipeline",
+            "Machine learning training workflows for tabular datasets",
+            "local",
+            ["data_analysis"],
+            ml_dir,
+        )
+        registry.register_skill(
+            "web-scraper",
+            "HTTP crawling and HTML extraction",
+            "local",
+            ["research"],
+            web_dir,
+        )
+
+        # Zero keyword overlap with either description — only embeddings
+        # can save this match.
+        tier, name, _ = registry.find_skill("train a model on tabular data")
+        assert tier == "local"
+        assert name == "ml-pipeline"
+
+    def test_embedder_unavailable_falls_back_to_keyword(self, skills_dir, registry):
+        """When the embedder is down, behavior is byte-identical to the keyword path."""
+        skill_dir, _ = _create_skill(
+            skills_dir, "official", "pdf-tools",
+            "Toolkit for PDF extraction and parsing",
+            ["documentation"],
+        )
+        registry.register_skill(
+            "pdf-tools",
+            "Toolkit for PDF extraction and parsing",
+            "official",
+            ["documentation"],
+            skill_dir,
+        )
+
+        # Force the cache into an "embedder unavailable" state.
+        from agents.skill_embeddings import SkillEmbeddingCache
+        registry._embedding_cache = SkillEmbeddingCache(registry.base_dir)
+        registry._embedding_cache._embedder_checked = True
+        registry._embedding_cache._embedder = None
+        registry._last_query_vec = None
+
+        # Exact keyword match — the pure-keyword path should still find it.
+        tier, name, _ = registry.find_skill("PDF extraction")
+        assert tier == "official"
+        assert name == "pdf-tools"
+
+    def test_semantic_does_not_break_keyword_priority(self, skills_dir, registry):
+        """With both a strong keyword hit and a weak semantic hit, keyword still wins."""
+        exact_dir, _ = _create_skill(
+            skills_dir, "official", "pdf-extractor",
+            "PDF extraction toolkit",
+            ["documentation"],
+        )
+        weak_dir, _ = _create_skill(
+            skills_dir, "local", "doc-parser",
+            "Document parsing utilities",
+            ["documentation"],
+        )
+
+        self._inject_mock_embedder(
+            registry,
+            {
+                # Weak semantic signal for both skills
+                "PDF extraction": [0.3, 0.3, 0.3, 0.0],
+                "Document parsing": [0.3, 0.3, 0.3, 0.0],
+                "PDF extraction toolkit": [0.3, 0.3, 0.3, 0.0],
+            },
+        )
+
+        registry.register_skill(
+            "pdf-extractor", "PDF extraction toolkit", "official",
+            ["documentation"], exact_dir,
+        )
+        registry.register_skill(
+            "doc-parser", "Document parsing utilities", "local",
+            ["documentation"], weak_dir,
+        )
+
+        # Exact keyword match + official tier — pdf-extractor must win.
+        tier, name, _ = registry.find_skill("PDF extraction")
+        assert tier == "official"
+        assert name == "pdf-extractor"

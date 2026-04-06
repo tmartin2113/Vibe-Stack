@@ -37,6 +37,39 @@ class SkillRegistrySearchMixin:
     - self.security: SkillSecurity
     """
 
+    def _get_embedding_cache(self):
+        """
+        Return the lazily-initialized SkillEmbeddingCache.
+
+        The import is local so ``skill_registry`` stays loadable in
+        environments where the embedder module (or its network-touching
+        ``requests`` dependency) is absent — e.g., test collection,
+        ``--doctor`` mode, or CI runners without vLLM.
+        """
+        cache = getattr(self, "_embedding_cache", None)
+        if cache is None:
+            from .skill_embeddings import SkillEmbeddingCache
+            cache = SkillEmbeddingCache(self.base_dir)
+            self._embedding_cache = cache
+        return cache
+
+    def _query_vec_for(self, requirement: str) -> Optional[List[float]]:
+        """
+        Embed a search query, memoizing on ``self`` so a single
+        ``find_skills()`` call that iterates multiple tiers only pays
+        the embedding round-trip once.
+        """
+        last = getattr(self, "_last_query_vec", None)
+        if last is not None and last[0] == requirement:
+            return last[1]
+        try:
+            vec = self._get_embedding_cache().embed_query(requirement)
+        except Exception as e:  # pragma: no cover — defensive
+            logger.debug(f"Query embedding failed: {e}")
+            vec = None
+        self._last_query_vec = (requirement, vec)
+        return vec
+
     def find_skill(self, requirement: str) -> Tuple[str, Optional[str], Optional[Path]]:
         """
         Find best matching skill across all tiers.
@@ -222,12 +255,27 @@ class SkillRegistrySearchMixin:
             return []
 
         req_lower = requirement.lower()
+        query_vec = self._query_vec_for(requirement)
+        cache = self._get_embedding_cache() if query_vec is not None else None
+
         matches = []
         for skill_name, skill_data in self._workspace_skills.items():
+            # Workspace skills are in-memory only (never persisted), so
+            # embeddings are computed on the fly when the embedder is up.
+            sem_score: Optional[float] = None
+            if query_vec is not None and cache is not None:
+                vec = cache.embed_skill(
+                    skill_name,
+                    skill_data.get("description", ""),
+                    skill_data.get("task_types", []),
+                )
+                if vec is not None:
+                    sem_score = cache.semantic_score(query_vec, skill_name)
             confidence = self._calculate_match_confidence(
                 req_lower,
                 skill_data.get("description", "").lower(),
                 skill_data.get("task_types", []),
+                semantic_score=sem_score,
             )
             if confidence >= min_confidence:
                 matches.append({
@@ -337,13 +385,26 @@ class SkillRegistrySearchMixin:
             return []
 
         requirement_lower = requirement.lower()
+        query_vec = self._query_vec_for(requirement)
+        cache = self._get_embedding_cache() if query_vec is not None else None
         matches: List[Dict[str, Any]] = []
 
         for skill_name, skill_data in tier_skills.items():
+            sem_score: Optional[float] = None
+            if query_vec is not None and cache is not None:
+                # Registered tiers have warm vectors from register_skill();
+                # re-embed lazily if the stored description changed.
+                cache.embed_skill(
+                    skill_name,
+                    skill_data.get("description", ""),
+                    skill_data.get("task_types", []),
+                )
+                sem_score = cache.semantic_score(query_vec, skill_name)
             match_confidence = self._calculate_match_confidence(
                 requirement_lower,
                 skill_data.get("description", "").lower(),
                 skill_data.get("task_types", []),
+                semantic_score=sem_score,
             )
 
             avg_score = skill_data.get("avg_score", 0.0)
@@ -390,14 +451,25 @@ class SkillRegistrySearchMixin:
             return None
 
         requirement_lower = requirement.lower()
+        query_vec = self._query_vec_for(requirement)
+        cache = self._get_embedding_cache() if query_vec is not None else None
         best_match = None
         best_score = 0.0
 
         for skill_name, skill_data in tier_skills.items():
+            sem_score: Optional[float] = None
+            if query_vec is not None and cache is not None:
+                cache.embed_skill(
+                    skill_name,
+                    skill_data.get("description", ""),
+                    skill_data.get("task_types", []),
+                )
+                sem_score = cache.semantic_score(query_vec, skill_name)
             match_confidence = self._calculate_match_confidence(
                 requirement_lower,
                 skill_data.get("description", "").lower(),
-                skill_data.get("task_types", [])
+                skill_data.get("task_types", []),
+                semantic_score=sem_score,
             )
 
             # Quality-weighted ranking: factor in historical performance.
@@ -434,13 +506,21 @@ class SkillRegistrySearchMixin:
         self,
         requirement: str,
         description: str,
-        task_types: List[str]
+        task_types: List[str],
+        semantic_score: Optional[float] = None,
     ) -> float:
         """
         Calculate confidence score for a skill match.
 
         Uses keyword overlap, task type matching, and substring containment.
         Returns score between 0.0 and 1.0.
+
+        When ``semantic_score`` is provided (a clamped cosine similarity
+        between the query and the skill's cached embedding), the return
+        value is a weighted blend: ``0.4 * keyword + 0.6 * semantic``.
+        A ``None`` or non-positive ``semantic_score`` falls back to pure
+        keyword scoring — behavior is byte-identical to the pre-embedding
+        implementation when the embedder is unavailable.
         """
         # Early exit: no meaningful input → no match
         if not requirement or not requirement.strip():
@@ -477,5 +557,11 @@ class SkillRegistrySearchMixin:
 
         # Weighted combination
         confidence = (desc_overlap * 0.5) + (task_overlap * 0.25) + substring_bonus
+        keyword_conf = min(confidence, 1.0)
 
-        return min(confidence, 1.0)
+        # Blend with embedding similarity when available. The 0.4/0.6 split
+        # lets semantic override weak keyword matches while preserving
+        # enough keyword weight that exact-term tests keep their ordering.
+        if semantic_score is not None and semantic_score > 0:
+            return (keyword_conf * 0.4) + (min(semantic_score, 1.0) * 0.6)
+        return keyword_conf
