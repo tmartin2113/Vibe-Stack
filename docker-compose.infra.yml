@@ -211,8 +211,14 @@ services:
       - NEO4J_URI=bolt://neo4j:7687
       - NEO4J_USER=neo4j
       - NEO4J_PASSWORD=${ZEP_NEO4J_PASSWORD:-zep-neo4j-pass}
+      # Pin listen port to 8003 (matches ZEP_GRAPHITI_URL elsewhere in the
+      # stack). The zepai/graphiti:0.3 image defaults to 8000 now, so set it
+      # explicitly rather than chasing the URL change everywhere.
+      - PORT=8003
+    # zepai/graphiti:0.3 no longer exposes a /healthz endpoint, so use a
+    # plain TCP check on the configured port.
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8003/healthz')"]
+      test: ["CMD", "python", "-c", "import socket; s=socket.socket(); s.connect(('localhost', 8003)); s.close()"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -225,14 +231,15 @@ services:
         condition: service_healthy
       graphiti:
         condition: service_healthy
-    environment:
-      - ZEP_STORE_TYPE=postgres
-      - ZEP_STORE_POSTGRES_DSN=postgres://postgres:postgres@zep-db:5432/zep?sslmode=disable
-      - ZEP_GRAPHITI_URL=http://graphiti:8003
+    # All Zep config now lives in zep.yaml — the legacy ZEP_STORE_*,
+    # ZEP_GRAPHITI_URL, ZEP_API_SECRET env vars were removed in newer
+    # zepai/zep images and the binary panics if relied upon.
     volumes:
       - ./zep.yaml:/app/zep.yaml:ro
+    # /healthz went away in newer images and the slim runtime has no curl
+    # or python — use bash /dev/tcp for a plain port-open check.
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/healthz"]
+      test: ["CMD", "bash", "-c", "echo > /dev/tcp/localhost/8000"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -252,7 +259,10 @@ services:
       - LLM_API_KEY=${MIROFISH_LLM_API_KEY:-no-key-needed-for-local}
       - LLM_BASE_URL=${MIROFISH_LLM_API_URL:-http://host.docker.internal:8000/v1}
       - LLM_MODEL_NAME=${MIROFISH_LLM_MODEL:-QuantTrio/Qwen3.5-9B-AWQ}
-      - ZEP_API_KEY=${ZEP_API_KEY:-}
+      # Zep CE uses the server's api_secret as the bearer token for API
+      # clients. Default matches the placeholder in zep.yaml; override both
+      # together via .env in production.
+      - ZEP_API_KEY=${ZEP_API_KEY:-local-dev-only-change-in-production}
       - ZEP_API_URL=http://zep:8000
     volumes:
       - mirofish-uploads:/app/backend/uploads
@@ -291,6 +301,13 @@ services:
       context: ./dev-runner
       dockerfile: Dockerfile
     restart: unless-stopped
+    # Override the Dockerfile's baked healthcheck which hits /docs (404).
+    # main.py exposes /health at line 531.
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
 
 volumes:
   gitea-data:
