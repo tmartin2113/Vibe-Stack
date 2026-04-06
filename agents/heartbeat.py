@@ -211,6 +211,18 @@ def run_heartbeat(config: SystemConfig) -> HeartbeatResult:
     Reads task assignments from Paperclip, runs the Vibe workflow
     on the highest-priority task, and posts results back.
 
+    Skill lifecycle is fully transparent to this entry point: the workflow
+    graph built by ``WorkflowFactory.run_workflow()`` wires Router →
+    Skill Generator → Skill Loader → Specialist injection → Skill Cleanup
+    automatically.  SKILL.md files are discovered across the 3-tier registry
+    (official/local/temp) plus the in-memory workspace tier, validated by
+    ``SkillSecurity`` (content scan + SHA-256 integrity + allowed-tools +
+    adapter-prompt re-scan), injected into the specialist prompt with
+    ``allowed_tools``/``adapter_prompt``/``generation_config`` overrides,
+    and tracked + promoted + TTL-evicted at the end of the run.  See
+    ``agents/skill_loader.py``, ``agents/skill_cleanup.py``, and the edge
+    wiring in ``agents/graph.py`` for the full pipeline.
+
     Returns:
         HeartbeatResult with status and metadata for the adapter.
     """

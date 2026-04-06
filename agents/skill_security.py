@@ -429,6 +429,35 @@ class SkillSecurity:
         """
         return self._parse_frontmatter_string(content, "adapter-prompt")
 
+    def validate_adapter_prompt(self, prompt: str, skill_name: str) -> bool:
+        """
+        Scan an adapter-prompt override for injection patterns.
+
+        The override is used verbatim as a specialist system prompt, so it
+        must be re-scanned at load time even though the surrounding SKILL.md
+        passed validation at registration.  This catches the narrow case
+        where a tampered or poisoned frontmatter string escaped the initial
+        scan (e.g. via an encoding trick).
+
+        Returns:
+            True if the prompt is safe; False if any critical or high
+            severity SUSPICIOUS_PATTERNS match.  On False, callers should
+            drop the override and fall back to the hardcoded adapter prompt
+            — the rest of the skill is still usable.
+        """
+        if not prompt:
+            return True
+        for pattern, severity, description in SUSPICIOUS_PATTERNS:
+            if severity in ("critical", "high") and re.search(
+                pattern, prompt, re.IGNORECASE
+            ):
+                logger.warning(
+                    f"Skill {skill_name}: adapter-prompt override rejected "
+                    f"[{severity.upper()}] {description}"
+                )
+                return False
+        return True
+
     def parse_generation_config(self, content: str) -> Optional[Dict[str, float]]:
         """
         Parse the generation-config field from SKILL.md frontmatter.

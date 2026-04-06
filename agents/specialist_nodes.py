@@ -535,7 +535,11 @@ Focus on the top 2-3 highest-impact improvements that are actionable by this spe
         # Filter to skills relevant to this sub-task's type (used for both
         # prompt injection AND tool permission enforcement below).
         relevant_skills = [s for s in loaded_skills if s.get("task_type") == task_type]
-        if not relevant_skills:
+        if not relevant_skills and loaded_skills:
+            logger.debug(
+                f"No skills match sub-task task_type={task_type!r}; "
+                f"falling back to all {len(loaded_skills)} loaded skills"
+            )
             relevant_skills = loaded_skills  # Fall back to all loaded skills
         if relevant_skills:
             for skill in relevant_skills[:2]:  # Limit to 2 skills per sub-task
