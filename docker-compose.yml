@@ -63,6 +63,14 @@ services:
       - "host.docker.internal:host-gateway"
     volumes:
       - ./deerflow/config.yaml:/app/backend/config.yaml:ro
+      # Mount the user's project directory read-only at two paths:
+      #   /workspace          — canonical container path (use in agent prompts)
+      #   ${HOME}/Projects    — host-HOME path (so absolute paths like
+      #                         /home/alice/Projects/... from an issue
+      #                         description resolve inside the container)
+      # The same pattern is used by the `server` service above.
+      - ${PAPERCLIP_PROJECTS_DIR:-${HOME}/Projects}:/workspace:ro
+      - ${PAPERCLIP_PROJECTS_DIR:-${HOME}/Projects}:${HOME}/Projects:ro
     environment:
       - SEARXNG_URL=${SEARXNG_URL:-http://searxng:8080}
       - GITEA_URL=${GITEA_URL:-http://gitea:3000}
@@ -84,6 +92,10 @@ services:
       - "host.docker.internal:host-gateway"
     volumes:
       - ./deerflow/config.yaml:/app/backend/config.yaml:ro
+      # Same workspace mounts as deerflow-langgraph — some gateway tools
+      # (e.g. file previews) may resolve paths directly.
+      - ${PAPERCLIP_PROJECTS_DIR:-${HOME}/Projects}:/workspace:ro
+      - ${PAPERCLIP_PROJECTS_DIR:-${HOME}/Projects}:${HOME}/Projects:ro
     environment:
       - SEARXNG_URL=${SEARXNG_URL:-http://searxng:8080}
       - GITEA_URL=${GITEA_URL:-http://gitea:3000}
