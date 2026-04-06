@@ -378,6 +378,32 @@ class PaperclipClient:
         except PaperclipConflictError:
             return CheckoutResult(success=False, conflict_owner=issue_id)
 
+    def register_self_run(self) -> Optional[str]:
+        """Invoke heartbeat on self to create a server-registered heartbeat_runs record.
+
+        The server creates a heartbeat_runs row and returns it. The run will be
+        auto-cancelled server-side (no issue context), but the record persists
+        so that checkout FK constraints are satisfied.
+
+        Returns the server-assigned run ID, or None on failure.
+        """
+        try:
+            data = self._request(
+                "POST",
+                f"/api/agents/{self.agent_id}/heartbeat/invoke",
+            )
+            if isinstance(data, dict):
+                if data.get("status") == "skipped":
+                    return None
+                run_id = data.get("id")
+                if run_id:
+                    self.run_id = run_id
+                    return run_id
+            return None
+        except PaperclipAPIError as e:
+            logger.warning("Failed to register heartbeat run: %s", e)
+            return None
+
     def get_issue(self, issue_id: str) -> Issue:
         """GET /api/issues/{issueId} — fetch issue with ancestors and project."""
         data = self._request("GET", f"/api/issues/{issue_id}")

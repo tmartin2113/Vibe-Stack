@@ -269,9 +269,11 @@ def run_heartbeat(config: SystemConfig) -> HeartbeatResult:
             ))
 
     # ── Step 0c: Auto-generate run ID for standalone heartbeat polling ──
+    _run_id_auto = False
     if not os.environ.get("PAPERCLIP_RUN_ID"):
         import uuid
         os.environ["PAPERCLIP_RUN_ID"] = str(uuid.uuid4())
+        _run_id_auto = True
         logger.info("Auto-generated PAPERCLIP_RUN_ID=%s", os.environ["PAPERCLIP_RUN_ID"])
 
     # ── Step 0d: Wait for Paperclip server to be reachable ──
@@ -306,6 +308,24 @@ def run_heartbeat(config: SystemConfig) -> HeartbeatResult:
 
     # ── Step 2b: Best-effort WebSocket connection ──
     ws_client = _try_connect_ws(client)
+
+    # ── Step 2c: Register run with server for standalone heartbeat ──
+    # When the heartbeat auto-generates its own run ID, that ID doesn't exist
+    # in the server's heartbeat_runs table. The checkout endpoint requires a
+    # valid FK reference, so we call heartbeat/invoke to create a server-side
+    # record and adopt its ID.
+    if _run_id_auto:
+        registered_id = client.register_self_run()
+        if registered_id:
+            os.environ["PAPERCLIP_RUN_ID"] = registered_id
+            logger.info("Registered run with server, using run ID: %s", registered_id)
+            set_paperclip_context(
+                agent_id=identity.id,
+                run_id=registered_id,
+                task_type=_resolve_task_type(config),
+            )
+        else:
+            logger.warning("Could not register run with server — checkout may fail")
 
     # ── Step 3: Get assignments ──
     try:
