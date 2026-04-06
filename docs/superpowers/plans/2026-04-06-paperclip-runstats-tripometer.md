@@ -10,22 +10,22 @@
 
 **Spec:** `docs/superpowers/specs/2026-04-06-paperclip-runstats-tripometer-design.md`
 
-**Repo:** `~/Repos/paperclip` (commits go to the user's `tmartin2113/paperclip` fork; never push to upstream `paperclipai/paperclip`). The Vibe Stack uses the resulting GHCR image — see Task 16.
+**Repo:** `~/Repos/paperclip-tripometer` (commits go to the user's `tmartin2113/paperclip` fork; never push to upstream `paperclipai/paperclip`). The Vibe Stack uses the resulting GHCR image — see Task 16.
 
 ---
 
 ## Prerequisites
 
-The Paperclip fork must be checked out at `~/Repos/paperclip` on the `main` branch with a clean working tree. The Vibe Stack `~/Repos/Vibe-Stack` should also be available (only used for the spec/plan reference and the final image deploy).
+The work happens in an isolated git worktree at `~/Repos/paperclip-tripometer`, on branch `feature/runstats-tripometer` (created off `master`). The Vibe Stack `~/Repos/Vibe-Stack` should also be available (only used for the spec/plan reference and the final image deploy).
 
 Verify before starting:
 
 ```bash
-cd ~/Repos/paperclip && git status
-cd ~/Repos/paperclip && git remote -v | grep fork
+cd ~/Repos/paperclip-tripometer && git status
+cd ~/Repos/paperclip-tripometer && git remote -v
 ```
 
-Expected: clean tree, `fork` remote points at `tmartin2113/paperclip`.
+Expected: clean tree on `feature/runstats-tripometer`. The only remote is `origin`, which points at `tmartin2113/paperclip` (the user's fork — there is no upstream `paperclipai` remote configured here, so pushing to `origin` is safe).
 
 ---
 
@@ -62,7 +62,7 @@ Expected: clean tree, `fork` remote points at `tmartin2113/paperclip`.
 - [ ] **Step 1: Read the current companies schema**
 
 ```bash
-cd ~/Repos/paperclip && cat packages/db/src/schema/companies.ts
+cd ~/Repos/paperclip-tripometer && cat packages/db/src/schema/companies.ts
 ```
 
 - [ ] **Step 2: Add the column to the schema**
@@ -78,7 +78,7 @@ Make sure `timestamp` is already imported from `drizzle-orm/pg-core` at the top 
 - [ ] **Step 3: Generate the migration**
 
 ```bash
-cd ~/Repos/paperclip && pnpm db:generate
+cd ~/Repos/paperclip-tripometer && pnpm db:generate
 ```
 
 Expected: a new migration file appears under `packages/db/src/migrations/` numbered `0029_*.sql` containing exactly:
@@ -92,7 +92,7 @@ If `pnpm db:generate` produces other unrelated changes, stop and investigate —
 - [ ] **Step 4: Inspect the generated migration**
 
 ```bash
-cd ~/Repos/paperclip && cat packages/db/src/migrations/0029_*.sql
+cd ~/Repos/paperclip-tripometer && cat packages/db/src/migrations/0029_*.sql
 ```
 
 Confirm it matches the expected ALTER above and contains nothing else.
@@ -100,7 +100,7 @@ Confirm it matches the expected ALTER above and contains nothing else.
 - [ ] **Step 5: Commit**
 
 ```bash
-cd ~/Repos/paperclip && git add packages/db/src/schema/companies.ts packages/db/src/migrations/0029_*.sql packages/db/src/migrations/meta/
+cd ~/Repos/paperclip-tripometer && git add packages/db/src/schema/companies.ts packages/db/src/migrations/0029_*.sql packages/db/src/migrations/meta/
 git commit -m "feat(db): add run_stats_reset_at to companies for dashboard tripometer"
 ```
 
@@ -115,7 +115,7 @@ git commit -m "feat(db): add run_stats_reset_at to companies for dashboard tripo
 - [ ] **Step 1: Read the current agent_runtime_state schema**
 
 ```bash
-cd ~/Repos/paperclip && cat packages/db/src/schema/agent_runtime_state.ts
+cd ~/Repos/paperclip-tripometer && cat packages/db/src/schema/agent_runtime_state.ts
 ```
 
 You should see the existing `totalInputTokens`, `totalOutputTokens`, `totalCachedInputTokens`, `totalCostCents` columns.
@@ -137,7 +137,7 @@ In `packages/db/src/schema/agent_runtime_state.ts`, add these columns immediatel
 - [ ] **Step 3: Generate the migration**
 
 ```bash
-cd ~/Repos/paperclip && pnpm db:generate
+cd ~/Repos/paperclip-tripometer && pnpm db:generate
 ```
 
 Expected output: new migration file `packages/db/src/migrations/0030_*.sql` containing exactly:
@@ -153,7 +153,7 @@ ALTER TABLE "agent_runtime_state" ADD COLUMN "total_cost_cents_baseline" bigint 
 - [ ] **Step 4: Inspect the generated migration**
 
 ```bash
-cd ~/Repos/paperclip && cat packages/db/src/migrations/0030_*.sql
+cd ~/Repos/paperclip-tripometer && cat packages/db/src/migrations/0030_*.sql
 ```
 
 Confirm it matches above and contains no other unrelated ALTERs.
@@ -161,7 +161,7 @@ Confirm it matches above and contains no other unrelated ALTERs.
 - [ ] **Step 5: Commit**
 
 ```bash
-cd ~/Repos/paperclip && git add packages/db/src/schema/agent_runtime_state.ts packages/db/src/migrations/0030_*.sql packages/db/src/migrations/meta/
+cd ~/Repos/paperclip-tripometer && git add packages/db/src/schema/agent_runtime_state.ts packages/db/src/migrations/0030_*.sql packages/db/src/migrations/meta/
 git commit -m "feat(db): add token/cost baseline columns to agent_runtime_state"
 ```
 
@@ -176,7 +176,7 @@ git commit -m "feat(db): add token/cost baseline columns to agent_runtime_state"
 - [ ] **Step 1: Look at how an existing service test sets up its DB**
 
 ```bash
-cd ~/Repos/paperclip && cat server/src/__tests__/companies-route-path-guard.test.ts | head -60
+cd ~/Repos/paperclip-tripometer && cat server/src/__tests__/companies-route-path-guard.test.ts | head -60
 ```
 
 Note the imports, the test runner pattern (vitest), and how they get a Db instance. Copy that setup style for the new test file.
@@ -287,7 +287,7 @@ describe("dashboardService.runStats — tripometer behavior", () => {
 - [ ] **Step 3: Run the test to confirm it fails**
 
 ```bash
-cd ~/Repos/paperclip && pnpm --filter server test dashboard-runstats-tripometer
+cd ~/Repos/paperclip-tripometer && pnpm --filter server test dashboard-runstats-tripometer
 ```
 
 Expected: failures along the lines of `stats.lifetime is undefined` or `stats.sinceReset is undefined` — because `runStats` currently returns the flat shape with no `lifetime`/`sinceReset` keys. If the test fails because of import errors first, fix those before continuing (the helper path placeholder, missing imports, etc.).
@@ -295,7 +295,7 @@ Expected: failures along the lines of `stats.lifetime is undefined` or `stats.si
 - [ ] **Step 4: Commit the failing test**
 
 ```bash
-cd ~/Repos/paperclip && git add server/src/__tests__/dashboard-runstats-tripometer.test.ts
+cd ~/Repos/paperclip-tripometer && git add server/src/__tests__/dashboard-runstats-tripometer.test.ts
 git commit -m "test(server): add failing tests for dashboard runStats tripometer shape"
 ```
 
@@ -309,7 +309,7 @@ git commit -m "test(server): add failing tests for dashboard runStats tripometer
 - [ ] **Step 1: Read the current implementation**
 
 ```bash
-cd ~/Repos/paperclip && sed -n '180,215p' server/src/services/dashboard.ts
+cd ~/Repos/paperclip-tripometer && sed -n '180,215p' server/src/services/dashboard.ts
 ```
 
 Confirm it matches the snippet in the spec (single query, 14-day filter, flat response shape).
@@ -373,7 +373,7 @@ The 14-day filter (`gte(heartbeatRuns.startedAt, fourteenDaysAgo)`) and the `fou
 - [ ] **Step 3: Run the test**
 
 ```bash
-cd ~/Repos/paperclip && pnpm --filter server test dashboard-runstats-tripometer
+cd ~/Repos/paperclip-tripometer && pnpm --filter server test dashboard-runstats-tripometer
 ```
 
 Expected: all three test cases pass.
@@ -381,7 +381,7 @@ Expected: all three test cases pass.
 - [ ] **Step 4: Run the full server test suite**
 
 ```bash
-cd ~/Repos/paperclip && pnpm --filter server test
+cd ~/Repos/paperclip-tripometer && pnpm --filter server test
 ```
 
 Expected: full pass. If any other test that consumed the old `{ totalRuns, ... }` flat shape now fails, fix those callers — they need to read `stats.lifetime.totalRuns` instead. Investigate and fix; do not proceed with broken existing tests.
@@ -389,7 +389,7 @@ Expected: full pass. If any other test that consumed the old `{ totalRuns, ... }
 - [ ] **Step 5: Commit**
 
 ```bash
-cd ~/Repos/paperclip && git add server/src/services/dashboard.ts
+cd ~/Repos/paperclip-tripometer && git add server/src/services/dashboard.ts
 git commit -m "feat(server): runStats returns lifetime + sinceReset blocks, drops 14-day filter"
 ```
 
@@ -448,7 +448,7 @@ describe("dashboardService.resetRunStats", () => {
 - [ ] **Step 2: Run the test to confirm it fails**
 
 ```bash
-cd ~/Repos/paperclip && pnpm --filter server test dashboard-runstats-tripometer
+cd ~/Repos/paperclip-tripometer && pnpm --filter server test dashboard-runstats-tripometer
 ```
 
 Expected: failure on `svc.resetRunStats is not a function`.
@@ -456,7 +456,7 @@ Expected: failure on `svc.resetRunStats is not a function`.
 - [ ] **Step 3: Commit the failing test**
 
 ```bash
-cd ~/Repos/paperclip && git add server/src/__tests__/dashboard-runstats-tripometer.test.ts
+cd ~/Repos/paperclip-tripometer && git add server/src/__tests__/dashboard-runstats-tripometer.test.ts
 git commit -m "test(server): add failing tests for dashboardService.resetRunStats"
 ```
 
@@ -483,7 +483,7 @@ In `server/src/services/dashboard.ts`, inside the object returned by `dashboardS
 - [ ] **Step 2: Run the test**
 
 ```bash
-cd ~/Repos/paperclip && pnpm --filter server test dashboard-runstats-tripometer
+cd ~/Repos/paperclip-tripometer && pnpm --filter server test dashboard-runstats-tripometer
 ```
 
 Expected: both new test cases pass; previous tests still pass.
@@ -491,7 +491,7 @@ Expected: both new test cases pass; previous tests still pass.
 - [ ] **Step 3: Commit**
 
 ```bash
-cd ~/Repos/paperclip && git add server/src/services/dashboard.ts
+cd ~/Repos/paperclip-tripometer && git add server/src/services/dashboard.ts
 git commit -m "feat(server): dashboardService.resetRunStats writes/clears the baseline"
 ```
 
@@ -505,7 +505,7 @@ git commit -m "feat(server): dashboardService.resetRunStats writes/clears the ba
 - [ ] **Step 1: Read the current routes file**
 
 ```bash
-cd ~/Repos/paperclip && cat server/src/routes/dashboard.ts
+cd ~/Repos/paperclip-tripometer && cat server/src/routes/dashboard.ts
 ```
 
 Confirm the existing pattern (`assertCompanyAccess`, `svc.runStats(...)`, JSON response).
@@ -527,7 +527,7 @@ In `server/src/routes/dashboard.ts`, add this route immediately after the existi
 - [ ] **Step 3: Verify the route by running the full server test suite**
 
 ```bash
-cd ~/Repos/paperclip && pnpm --filter server test
+cd ~/Repos/paperclip-tripometer && pnpm --filter server test
 ```
 
 Expected: all green. The new route doesn't have a dedicated test file (auth is just `assertCompanyAccess`, and the underlying service method is already covered); the existing route auth tests cover the helper itself.
@@ -535,7 +535,7 @@ Expected: all green. The new route doesn't have a dedicated test file (auth is j
 - [ ] **Step 4: Commit**
 
 ```bash
-cd ~/Repos/paperclip && git add server/src/routes/dashboard.ts
+cd ~/Repos/paperclip-tripometer && git add server/src/routes/dashboard.ts
 git commit -m "feat(server): add POST /dashboard/run-stats/reset route"
 ```
 
@@ -639,7 +639,7 @@ describe("agentService runtime-state with token baselines", () => {
 - [ ] **Step 2: Run the test to confirm it fails**
 
 ```bash
-cd ~/Repos/paperclip && pnpm --filter server test agent-runtime-reset-tokens
+cd ~/Repos/paperclip-tripometer && pnpm --filter server test agent-runtime-reset-tokens
 ```
 
 Expected failures: missing fields on the returned object, and `svc.resetRuntimeStateTokens is not a function`.
@@ -647,7 +647,7 @@ Expected failures: missing fields on the returned object, and `svc.resetRuntimeS
 - [ ] **Step 3: Commit the failing test**
 
 ```bash
-cd ~/Repos/paperclip && git add server/src/__tests__/agent-runtime-reset-tokens.test.ts
+cd ~/Repos/paperclip-tripometer && git add server/src/__tests__/agent-runtime-reset-tokens.test.ts
 git commit -m "test(server): add failing tests for agent runtime token baseline reset"
 ```
 
@@ -661,7 +661,7 @@ git commit -m "test(server): add failing tests for agent runtime token baseline 
 - [ ] **Step 1: Find the existing read method**
 
 ```bash
-cd ~/Repos/paperclip && grep -n "agentRuntimeState\b" server/src/services/agents.ts
+cd ~/Repos/paperclip-tripometer && grep -n "agentRuntimeState\b" server/src/services/agents.ts
 ```
 
 Identify the function that reads from `agentRuntimeState` (the one returning the data the existing GET `/agents/:id/runtime-state` route serves). It's likely a `select()` building a column list.
@@ -683,7 +683,7 @@ If the existing read uses `db.select().from(agentRuntimeState)` (whole-row), the
 - [ ] **Step 3: Update the shared `AgentRuntimeState` type if it exists**
 
 ```bash
-cd ~/Repos/paperclip && grep -rn "AgentRuntimeState" packages/shared/src/ 2>/dev/null
+cd ~/Repos/paperclip-tripometer && grep -rn "AgentRuntimeState" packages/shared/src/ 2>/dev/null
 ```
 
 If the type is defined in `packages/shared/src/...`, add the five new fields there. Match the existing field naming/casing.
@@ -691,7 +691,7 @@ If the type is defined in `packages/shared/src/...`, add the five new fields the
 - [ ] **Step 4: Run the read tests**
 
 ```bash
-cd ~/Repos/paperclip && pnpm --filter server test agent-runtime-reset-tokens
+cd ~/Repos/paperclip-tripometer && pnpm --filter server test agent-runtime-reset-tokens
 ```
 
 Expected: the first test ("read returns baseline columns ...") now passes. The other two still fail.
@@ -699,7 +699,7 @@ Expected: the first test ("read returns baseline columns ...") now passes. The o
 - [ ] **Step 5: Commit**
 
 ```bash
-cd ~/Repos/paperclip && git add server/src/services/agents.ts packages/shared/src
+cd ~/Repos/paperclip-tripometer && git add server/src/services/agents.ts packages/shared/src
 git commit -m "feat(server): expose token baseline columns on runtime-state read"
 ```
 
@@ -757,7 +757,7 @@ In `server/src/services/agents.ts`, inside the object returned by `agentService(
 - [ ] **Step 2: Run the tests**
 
 ```bash
-cd ~/Repos/paperclip && pnpm --filter server test agent-runtime-reset-tokens
+cd ~/Repos/paperclip-tripometer && pnpm --filter server test agent-runtime-reset-tokens
 ```
 
 Expected: all three test cases now pass.
@@ -765,7 +765,7 @@ Expected: all three test cases now pass.
 - [ ] **Step 3: Run the full server suite to catch regressions**
 
 ```bash
-cd ~/Repos/paperclip && pnpm --filter server test
+cd ~/Repos/paperclip-tripometer && pnpm --filter server test
 ```
 
 Expected: all green.
@@ -773,7 +773,7 @@ Expected: all green.
 - [ ] **Step 4: Commit**
 
 ```bash
-cd ~/Repos/paperclip && git add server/src/services/agents.ts
+cd ~/Repos/paperclip-tripometer && git add server/src/services/agents.ts
 git commit -m "feat(server): agentService.resetRuntimeStateTokens snapshots/clears baselines"
 ```
 
@@ -787,7 +787,7 @@ git commit -m "feat(server): agentService.resetRuntimeStateTokens snapshots/clea
 - [ ] **Step 1: Look at how the existing `/runtime-state` and `/runtime-state/reset-session` routes are wired**
 
 ```bash
-cd ~/Repos/paperclip && grep -n "runtime-state" server/src/routes/agents.ts
+cd ~/Repos/paperclip-tripometer && grep -n "runtime-state" server/src/routes/agents.ts
 ```
 
 Find the existing pattern: how the company id is resolved from the agent, and how `assertCompanyAccess` is called. Match it for the new route.
@@ -815,7 +815,7 @@ In `server/src/routes/agents.ts`, add the new route immediately after the existi
 - [ ] **Step 3: Run the full server suite**
 
 ```bash
-cd ~/Repos/paperclip && pnpm --filter server test
+cd ~/Repos/paperclip-tripometer && pnpm --filter server test
 ```
 
 Expected: all green.
@@ -823,7 +823,7 @@ Expected: all green.
 - [ ] **Step 4: Commit**
 
 ```bash
-cd ~/Repos/paperclip && git add server/src/routes/agents.ts
+cd ~/Repos/paperclip-tripometer && git add server/src/routes/agents.ts
 git commit -m "feat(server): add POST /agents/:agentId/runtime-state/reset-tokens route"
 ```
 
@@ -837,7 +837,7 @@ git commit -m "feat(server): add POST /agents/:agentId/runtime-state/reset-token
 - [ ] **Step 1: Read the current file**
 
 ```bash
-cd ~/Repos/paperclip && cat ui/src/api/dashboard.ts
+cd ~/Repos/paperclip-tripometer && cat ui/src/api/dashboard.ts
 ```
 
 - [ ] **Step 2: Update the types and add the reset method**
@@ -872,7 +872,7 @@ Then in the `dashboardApi` object (or wherever the existing `runStats` method li
 - [ ] **Step 3: Verify the project type-checks**
 
 ```bash
-cd ~/Repos/paperclip && pnpm --filter ui typecheck
+cd ~/Repos/paperclip-tripometer && pnpm --filter ui typecheck
 ```
 
 Expected: errors in `Dashboard.tsx` referring to the old flat shape (`runStats.totalRuns` etc.). Those are real and will be fixed in Task 13. Do not commit until Task 13 also lands — keep the working tree dirty into the next task.
@@ -892,7 +892,7 @@ The shared types change is incomplete on its own — committing now would break 
 - [ ] **Step 1: Read the current panel block**
 
 ```bash
-cd ~/Repos/paperclip && sed -n '270,310p' ui/src/pages/Dashboard.tsx
+cd ~/Repos/paperclip-tripometer && sed -n '270,310p' ui/src/pages/Dashboard.tsx
 ```
 
 Identify the JSX block for the runStats panel. It currently contains tile cards reading `runStats.totalRuns`, `runStats.successRate`, etc.
@@ -1034,8 +1034,8 @@ If the original panel had additional context (a sub-paragraph saying "X succeede
 - [ ] **Step 6: Run the type check and the dev build**
 
 ```bash
-cd ~/Repos/paperclip && pnpm --filter ui typecheck
-cd ~/Repos/paperclip && pnpm --filter ui build
+cd ~/Repos/paperclip-tripometer && pnpm --filter ui typecheck
+cd ~/Repos/paperclip-tripometer && pnpm --filter ui build
 ```
 
 Expected: both succeed. Fix any type errors (likely places where the old `runStats.totalRuns` flat-shape was referenced elsewhere in the file).
@@ -1043,7 +1043,7 @@ Expected: both succeed. Fix any type errors (likely places where the old `runSta
 - [ ] **Step 7: Commit Tasks 12 + 13 together**
 
 ```bash
-cd ~/Repos/paperclip && git add ui/src/api/dashboard.ts ui/src/pages/Dashboard.tsx ui/src/components/StatCard.tsx
+cd ~/Repos/paperclip-tripometer && git add ui/src/api/dashboard.ts ui/src/pages/Dashboard.tsx ui/src/components/StatCard.tsx
 git commit -m "feat(ui): dashboard runStats kebab menu + lifetime/since-reset display"
 ```
 
@@ -1057,7 +1057,7 @@ git commit -m "feat(ui): dashboard runStats kebab menu + lifetime/since-reset di
 - [ ] **Step 1: Read the current file around the runtimeState method**
 
 ```bash
-cd ~/Repos/paperclip && sed -n '105,125p' ui/src/api/agents.ts
+cd ~/Repos/paperclip-tripometer && sed -n '105,125p' ui/src/api/agents.ts
 ```
 
 Locate the `AgentRuntimeState` type (it may be in `ui/src/api/agents.ts` or imported from `@paperclipai/shared`).
@@ -1097,7 +1097,7 @@ Same reason as Task 12. The type change leaves the working tree in a half-state 
 - [ ] **Step 1: Locate the existing token/cost panel**
 
 ```bash
-cd ~/Repos/paperclip && grep -n "totalCostCents\|totalInputTokens\|totalOutputTokens\|totalCachedInputTokens" ui/src/pages/AgentDetail.tsx
+cd ~/Repos/paperclip-tripometer && grep -n "totalCostCents\|totalInputTokens\|totalOutputTokens\|totalCachedInputTokens" ui/src/pages/AgentDetail.tsx
 ```
 
 The cards live around `runtimeState.totalCostCents` (~line 991). Read 30 lines around each occurrence to understand the panel layout.
@@ -1220,8 +1220,8 @@ Replace the existing token/cost panel JSX block with:
 - [ ] **Step 6: Type check and build**
 
 ```bash
-cd ~/Repos/paperclip && pnpm --filter ui typecheck
-cd ~/Repos/paperclip && pnpm --filter ui build
+cd ~/Repos/paperclip-tripometer && pnpm --filter ui typecheck
+cd ~/Repos/paperclip-tripometer && pnpm --filter ui build
 ```
 
 Expected: both succeed. Fix any other call sites that referenced the old runtime state shape.
@@ -1229,7 +1229,7 @@ Expected: both succeed. Fix any other call sites that referenced the old runtime
 - [ ] **Step 7: Commit Tasks 14 + 15 together**
 
 ```bash
-cd ~/Repos/paperclip && git add ui/src/api/agents.ts ui/src/pages/AgentDetail.tsx
+cd ~/Repos/paperclip-tripometer && git add ui/src/api/agents.ts ui/src/pages/AgentDetail.tsx
 git commit -m "feat(ui): agent runtime panel kebab menu + lifetime/since-reset display"
 ```
 
@@ -1243,18 +1243,18 @@ git commit -m "feat(ui): agent runtime panel kebab menu + lifetime/since-reset d
 - [ ] **Step 1: Run the full test suite one more time**
 
 ```bash
-cd ~/Repos/paperclip && pnpm --filter server test && pnpm --filter ui typecheck && pnpm --filter ui build
+cd ~/Repos/paperclip-tripometer && pnpm --filter server test && pnpm --filter ui typecheck && pnpm --filter ui build
 ```
 
 Expected: all green.
 
-- [ ] **Step 2: Push the fork branch**
+- [ ] **Step 2: Push the feature branch**
 
 ```bash
-cd ~/Repos/paperclip && git push fork main
+cd ~/Repos/paperclip-tripometer && git push -u origin feature/runstats-tripometer
 ```
 
-(Use `fork`, never `origin` — `origin` is the upstream paperclipai repo per the user's git rules.)
+(`origin` here points at `tmartin2113/paperclip` — the user's fork. There is no upstream `paperclipai` remote configured in this clone, so pushing to `origin` is safe. The branch will be merged to `master` separately after final review.)
 
 - [ ] **Step 3: Build and push the new server image**
 
