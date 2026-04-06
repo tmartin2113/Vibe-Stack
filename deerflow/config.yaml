@@ -4,9 +4,15 @@
 # Uses $VAR syntax for env var resolution (DeerFlow's config parser
 # does NOT support ${VAR:-default} bash syntax).
 #
-# Module paths use the "deerflow.*" namespace — this matches the
-# installed harness package inside the Docker image. Do NOT use
-# "src.*" paths (those only exist in the source repo, not the image).
+# Module paths use the "src.*" namespace, which matches the source
+# layout shipped inside the current paperclip-deerflow image. The
+# image previously installed a "deerflow" Python package and the old
+# config used "deerflow.*" paths — that package was removed in a
+# refactor, so anything using "deerflow.*" now fails at graph init
+# with `ImportError: Missing dependency 'deerflow'` and the lead
+# agent never starts. Always verify with:
+#   docker compose exec deerflow-langgraph bash -c \
+#     'cd /app/backend && uv run python -c "from src.community.tavily.tools import web_search_tool"'
 #
 # Required env vars (set in .env by setup.sh):
 #   VLLM_MODEL     — model name served by vLLM
@@ -22,12 +28,33 @@ models:
     base_url: "$VLLM_API_URL"
     api_key: "no-key-needed"
     temperature: 0.3
+    # CRITICAL: suppress Qwen3.5's reasoning/thinking tokens at the chat
+    # template layer. Without this, vLLM streams `<think>...</think>` blocks
+    # as the response content. DeerFlow's adapter strips that boilerplate
+    # and is then left with "0 chars after stripping boilerplate", flagging
+    # every response as non-substantive and retrying until the budget is
+    # exhausted. (Same symptom class as the prior --reasoning-parser bug,
+    # different root cause.)
+    #
+    # Passthrough chain:
+    #   model_kwargs.extra_body.chat_template_kwargs.enable_thinking: false
+    #   → ChatOpenAI(model_kwargs={"extra_body": {...}})
+    #   → OpenAI client sends `chat_template_kwargs` in the request body
+    #   → vLLM applies Qwen3.5's chat template with enable_thinking=false
+    #   → model skips the reasoning section entirely
+    #
+    # If VLLM_MODEL is swapped to a non-Qwen model, this block is harmless
+    # — vLLM ignores chat_template_kwargs that the template doesn't use.
+    model_kwargs:
+      extra_body:
+        chat_template_kwargs:
+          enable_thinking: false
 
 # ── Sandbox ─────────────────────────────────────────────────────
 # Local sandbox — DeerFlow assistants explore the workspace directly.
 # No Docker-in-Docker needed; the container already has filesystem access.
 sandbox:
-  use: "deerflow.sandbox.local.local_sandbox_provider:LocalSandboxProvider"
+  use: "src.sandbox.local.local_sandbox_provider:LocalSandboxProvider"
 
 # ── Tools ───────────────────────────────────────────────────────
 tool_groups:
@@ -39,27 +66,27 @@ tools:
   # Tavily web search (set TAVILY_API_KEY in .env, or swap for infoquest)
   - name: "web_search"
     group: "web_search"
-    use: "deerflow.community.tavily.tools:web_search_tool"
+    use: "src.community.tavily.tools:web_search_tool"
   # Jina AI web fetch — reads and extracts web page content
   - name: "crawl"
     group: "crawl"
-    use: "deerflow.community.jina_ai.tools:web_fetch_tool"
+    use: "src.community.jina_ai.tools:web_fetch_tool"
   # Sandbox tools — bash, file I/O for codebase exploration
   - name: "bash"
     group: "code_interpreter"
-    use: "deerflow.sandbox.tools:bash_tool"
+    use: "src.sandbox.tools:bash_tool"
   - name: "read_file"
     group: "code_interpreter"
-    use: "deerflow.sandbox.tools:read_file_tool"
+    use: "src.sandbox.tools:read_file_tool"
   - name: "write_file"
     group: "code_interpreter"
-    use: "deerflow.sandbox.tools:write_file_tool"
+    use: "src.sandbox.tools:write_file_tool"
   - name: "ls"
     group: "code_interpreter"
-    use: "deerflow.sandbox.tools:ls_tool"
+    use: "src.sandbox.tools:ls_tool"
   - name: "str_replace"
     group: "code_interpreter"
-    use: "deerflow.sandbox.tools:str_replace_tool"
+    use: "src.sandbox.tools:str_replace_tool"
 
 # ── Checkpointer ────────────────────────────────────────────────
 checkpointer:

@@ -20,32 +20,54 @@
 services:
 
   # ── vLLM (local OpenAI-compatible inference server) ────────────────────────
+  #
+  # Canonical Vibe Stack inference backend. Defaults are tuned for the
+  # Qwen3.5-9B-AWQ model on a 24 GB GPU. Override any flag via env vars in
+  # .env (see .env.example for the full list and tuning notes).
+  #
+  # Hardware sizing (default model = Qwen3.5-9B-AWQ, ~5 GB weights):
+  #   24 GB GPU  →  works as-is (default)
+  #   16 GB GPU  →  set VLLM_MAX_MODEL_LEN=16384 VLLM_MAX_NUM_SEQS=4
+  #   12 GB GPU  →  use a smaller model: VLLM_MODEL=Qwen/Qwen3.5-4B-Instruct
+  #
   vllm:
     image: vllm/vllm-openai:latest
     restart: unless-stopped
     ports:
       - "8000:8000"
     command:
-      - ${VLLM_MODEL:-Qwen/Qwen3.5-9B}
+      - ${VLLM_MODEL:-QuantTrio/Qwen3.5-9B-AWQ}
       - --host
       - "0.0.0.0"
       - --port
       - "8000"
       - --max-model-len
-      - "${VLLM_MAX_MODEL_LEN:-12288}"
+      - "${VLLM_MAX_MODEL_LEN:-32768}"
       - --gpu-memory-utilization
       - "${VLLM_GPU_MEM_UTIL:-0.92}"
       - --enable-prefix-caching
       - --enable-chunked-prefill
       - --max-num-seqs
-      - "${VLLM_MAX_NUM_SEQS:-4}"
+      - "${VLLM_MAX_NUM_SEQS:-8}"
       - --trust-remote-code
       - --enable-auto-tool-choice
+      # IMPORTANT: tool-call parser must match the model family.
+      # Qwen3.5 emits XML-tagged tool calls and requires qwen3_xml. Using
+      # the wrong parser (e.g. hermes) causes vLLM to silently swallow tool
+      # calls and stream empty content, which DeerFlow surfaces as repeated
+      # "non-substantive response detected" retry warnings. If you change
+      # VLLM_MODEL to a non-Qwen model, also override VLLM_TOOL_CALL_PARSER.
       - --tool-call-parser
-      - "${VLLM_TOOL_CALL_PARSER:-hermes}"
-      # NOTE: --reasoning-parser removed — causes content:null responses.
-      # vLLM splits output into content (null) + reasoning (actual text),
-      # but DeerFlow/LangChain only reads content. See deerflow-config memory.
+      - "${VLLM_TOOL_CALL_PARSER:-qwen3_xml}"
+      # Explicit AWQ quantization (matches the default AWQ weights).
+      # If you point VLLM_MODEL at unquantized weights, set VLLM_QUANTIZATION
+      # to an empty string to omit this flag (or override to gptq/fp8/etc).
+      - --quantization
+      - "${VLLM_QUANTIZATION:-awq}"
+      # NOTE: --reasoning-parser intentionally NOT set. Enabling it (e.g.
+      # --reasoning-parser qwen3) makes vLLM split output into content (null)
+      # + reasoning (the actual text), and DeerFlow/LangChain only read
+      # content — agents see empty responses.
     volumes:
       - vllm-models:/root/.cache/huggingface
     healthcheck:
@@ -53,7 +75,9 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 60s
+      # 9B AWQ model loads in ~15-30s on a warm cache, longer on first
+      # boot when weights need to download (~5 GB).
+      start_period: 120s
     deploy:
       resources:
         limits:
