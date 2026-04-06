@@ -623,9 +623,6 @@ class RouterNode(ClassificationMixin):
         ]
         state["skills_in_use"] = active_skills
 
-        # Initialize quality scores dict
-        state["skill_quality_scores"] = {name: 0 for name in active_skills}
-
         # Log skill discovery
         debug_info = state.get("debug_info", {})
         debug_info["discovered_skills"] = {

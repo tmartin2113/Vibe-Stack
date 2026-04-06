@@ -788,7 +788,6 @@ class TestSkillGeneratorExecute:
         result = node.execute(state)
 
         assert "ephemeral-test-gen" in result["skills_in_use"]
-        assert "ephemeral-test-gen" in result["skill_quality_scores"]
         assert result["debug_info"]["generated_skills"]["count"] == 1
 
     def test_execute_no_ephemeral_skills(self):

@@ -117,9 +117,8 @@ class SkillCleanupNode:
         """
         Track usage statistics for all skills used in this session.
 
-        Derives quality scores from actual critic evaluations rather than
-        relying on skill_quality_scores (which is never populated by
-        upstream nodes).  Falls back through:
+        Derives quality scores from actual critic evaluations, falling
+        back through:
           1. Per-skill scores from sub-task critics (multi-specialist path)
           2. The top-level output_critic_score (single-specialist path)
           3. Zero (no score available)

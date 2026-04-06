@@ -30,7 +30,6 @@ def _make_state(
         start_time="2024-01-01T00:00:00",
         discovered_skills=[],
         skills_in_use=[],
-        skill_quality_scores={},
         loaded_skills=[],
 skills_cleaned_up=False,
         specialist_iteration_count=0,

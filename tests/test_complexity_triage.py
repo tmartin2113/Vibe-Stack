@@ -26,7 +26,6 @@ def _make_state(request: str, intent: str = "code_generation", threshold: int = 
         heuristic_critic_passed=False,
         discovered_skills=[],
         skills_in_use=[],
-        skill_quality_scores={},
         loaded_skills=[],
 skills_cleaned_up=False,
         specialist_iteration_count=0,

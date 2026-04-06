@@ -823,7 +823,6 @@ class TestRouterExecute:
             "debug_info": {},
             "discovered_skills": [],
             "skills_in_use": [],
-            "skill_quality_scores": {},
         }
         result = router.execute(state)
         assert result["routed_task_type"] == "custom_type"
@@ -839,7 +838,6 @@ class TestRouterExecute:
             "debug_info": {},
             "discovered_skills": [],
             "skills_in_use": [],
-            "skill_quality_scores": {},
         }
         result = router.execute(state)
         assert result["routed_task_type"] == "test_generation"
