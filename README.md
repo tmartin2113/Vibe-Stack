@@ -39,6 +39,7 @@ You create an issue. The CTO decomposes it, dispatches research to free local-GP
 - **Stateless agents** -- all state lives in the Paperclip issue tree; killed containers retry with zero data loss
 - **Cost-optimized** -- Opus for deep reasoning, free local vLLM for research; engineers are rate-limited to 1-2 web lookups and must delegate broad research
 - **Self-improving** -- agents detect recurring quality issues and propose source code changes to themselves, gated by a 5-stage safety pipeline with human review
+- **Cross-run learning** -- each heartbeat persists spec, output, and critic feedback to a per-agent memory store with importance + 30-day decay; future runs recall scoped context via BM25 + semantic hybrid
 - **Role-based tool filtering** -- each agent only sees tools relevant to their role
 - **3000+ tests** across 52 files covering all major subsystems
 
@@ -236,7 +237,7 @@ python -m pytest tests/test_skill_security.py -v     # Security hardening (142 t
 python -m pytest tests/test_tool_system.py -v        # Tool system (157 tests)
 python -m pytest tests/test_mirofish_tool.py -v      # MiroFish simulation (11 tests)
 python -m pytest tests/test_ocr_tool.py -v           # OCR tool (21 tests)
-python -m pytest tests/test_memory_store.py -v       # Long-term memory (139 tests)
+python -m pytest tests/test_memory_store.py -v       # Long-term memory (167 tests)
 python -m pytest tests/test_message_store.py -v      # Message bus (107 tests)
 ```
 </details>
