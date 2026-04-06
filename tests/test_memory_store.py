@@ -1519,3 +1519,491 @@ class TestDoctorCheckEmbeddings:
             result = check_memory()
         assert result.status == "ok"
         assert "1/1 embedded" in result.summary
+
+
+# ---------------------------------------------------------------------------
+# Scoping (agent_id / task_id) tests
+# ---------------------------------------------------------------------------
+
+
+class TestMemoryStoreScoping:
+    """agent_id / task_id should partition recall results."""
+
+    @pytest.fixture()
+    def store(self, tmp_path):
+        from agents.memory_store import MemoryStore
+        s = MemoryStore(db_path=tmp_path / "scoped.db")
+        s.store("alpha decided to use postgres", agent_id="cto", task_id="ISSUE-1")
+        s.store("alpha picked redis cache", agent_id="cto", task_id="ISSUE-1")
+        s.store("alpha implemented login flow", agent_id="backend-engineer", task_id="ISSUE-1")
+        s.store("zeta task lives elsewhere", agent_id="cto", task_id="ISSUE-2")
+        return s
+
+    def test_recall_scoped_by_agent(self, store):
+        results = store.recall("alpha", agent_id="cto")
+        agents_seen = {r.agent_id for r in results}
+        assert agents_seen == {"cto"}
+        assert len(results) >= 2
+
+    def test_recall_scoped_by_task(self, store):
+        results = store.recall("alpha", task_id="ISSUE-1")
+        for r in results:
+            assert r.task_id == "ISSUE-1"
+
+    def test_recall_scoped_by_agent_and_task(self, store):
+        results = store.recall("alpha", agent_id="cto", task_id="ISSUE-1")
+        for r in results:
+            assert r.agent_id == "cto"
+            assert r.task_id == "ISSUE-1"
+        assert len(results) == 2
+
+    def test_recall_unscoped_returns_all(self, store):
+        results = store.recall("alpha")
+        # 3 entries contain 'alpha' regardless of agent/task
+        assert len(results) >= 3
+
+    def test_get_by_id_returns_scope_fields(self, store):
+        results = store.recall("postgres", agent_id="cto")
+        assert results
+        entry = store.get_by_id(results[0].memory_id)
+        assert entry.agent_id == "cto"
+        assert entry.task_id == "ISSUE-1"
+
+    def test_hybrid_recall_scoped(self, store):
+        results = store.hybrid_recall("alpha", agent_id="backend-engineer")
+        for r in results:
+            assert r.agent_id == "backend-engineer"
+
+
+# ---------------------------------------------------------------------------
+# Dedup / content_hash tests
+# ---------------------------------------------------------------------------
+
+
+class TestMemoryStoreDedup:
+    """Storing the same (agent, task, content) twice should not insert twice."""
+
+    @pytest.fixture()
+    def store(self, tmp_path):
+        from agents.memory_store import MemoryStore
+        return MemoryStore(db_path=tmp_path / "dedup.db")
+
+    def test_dedup_same_scope(self, store):
+        id1 = store.store("identical fact", agent_id="cto", task_id="X")
+        id2 = store.store("identical fact", agent_id="cto", task_id="X")
+        assert id1 == id2
+        # Only one row in DB
+        stats = store.get_stats()
+        assert stats["total"] == 1
+
+    def test_dedup_bumps_access_count(self, store):
+        id1 = store.store("repeated fact", agent_id="cto", task_id="X")
+        store.store("repeated fact", agent_id="cto", task_id="X")
+        store.store("repeated fact", agent_id="cto", task_id="X")
+        entry = store.get_by_id(id1)
+        assert entry.access_count >= 2
+
+    def test_dedup_keeps_max_importance(self, store):
+        id1 = store.store(
+            "fact", agent_id="cto", task_id="X", importance=0.3,
+        )
+        store.store(
+            "fact", agent_id="cto", task_id="X", importance=0.9,
+        )
+        entry = store.get_by_id(id1)
+        assert entry.importance == 0.9
+
+    def test_no_dedup_across_agents(self, store):
+        id1 = store.store("shared fact", agent_id="cto", task_id="X")
+        id2 = store.store("shared fact", agent_id="qa-engineer", task_id="X")
+        assert id1 != id2
+        stats = store.get_stats()
+        assert stats["total"] == 2
+
+    def test_no_dedup_across_tasks(self, store):
+        id1 = store.store("shared fact", agent_id="cto", task_id="A")
+        id2 = store.store("shared fact", agent_id="cto", task_id="B")
+        assert id1 != id2
+
+    def test_dedup_works_without_scope(self, store):
+        id1 = store.store("anonymous fact")
+        id2 = store.store("anonymous fact")
+        assert id1 == id2
+
+
+# ---------------------------------------------------------------------------
+# Importance + decay (hybrid fusion)
+# ---------------------------------------------------------------------------
+
+
+class TestMemoryStoreImportanceAndDecay:
+    """Hybrid fusion should respect importance scores and time decay."""
+
+    @pytest.fixture()
+    def store(self, tmp_path):
+        from agents.memory_store import MemoryStore
+        return MemoryStore(db_path=tmp_path / "importance.db")
+
+    def test_importance_clamped(self, store):
+        mid = store.store("fact", importance=2.5)
+        entry = store.get_by_id(mid)
+        assert entry.importance == 1.0
+        mid = store.store("other fact", importance=-0.5)
+        entry = store.get_by_id(mid)
+        assert entry.importance == 0.0
+
+    def test_recency_factor_recent(self, store):
+        # Just-stored entry should have a recency factor close to 1.0
+        from datetime import datetime
+        now = datetime.utcnow().isoformat() + "Z"
+        assert store._recency_factor(now) > 0.99
+
+    def test_recency_factor_old(self, store):
+        # 365 days old, halflife = 30 → 2^(-365/30) ≈ very small
+        old_ts = "2020-01-01T00:00:00"
+        assert store._recency_factor(old_ts) < 0.01
+
+    def test_recency_factor_invalid(self, store):
+        # Garbage timestamps should not crash; default to 1.0
+        assert store._recency_factor("not-a-date") == 1.0
+        assert store._recency_factor("") == 1.0
+
+    def test_hybrid_recall_score_includes_importance(self, store):
+        # Importance should boost the fused score above the bare BM25 contribution.
+        store.store("apples", importance=1.0)
+        results = store.hybrid_recall("apples", max_results=1)
+        assert results
+        # With keyword_weight=0.4 + importance_weight=0.2*1.0 + recency≈0.1
+        # the fused score should comfortably exceed 0.4 (the BM25-only term).
+        assert results[0].score > 0.5
+
+    def test_hybrid_recall_importance_zero_lower_than_one(self, store):
+        # Same content (different scope so no dedup) — high importance > low.
+        store.store("kiwi", agent_id="A", importance=0.05)
+        store.store("kiwi", agent_id="B", importance=0.95)
+        high = store.hybrid_recall("kiwi", agent_id="B", max_results=1)
+        low = store.hybrid_recall("kiwi", agent_id="A", max_results=1)
+        assert high and low
+        assert high[0].score > low[0].score
+
+
+# ---------------------------------------------------------------------------
+# Postgres ph bug regression — ensure semantic_recall doesn't NameError
+# ---------------------------------------------------------------------------
+
+
+class TestSemanticRecallPostgresBugRegression:
+    """Regression: semantic_recall used to reference an undefined `ph` var
+    in the storage_backend branch. We can't spin up real Postgres in this
+    test, but we can simulate one with a mock backend that supports vector
+    search to make sure the code path doesn't NameError."""
+
+    def test_semantic_recall_storage_backend_path_does_not_nameerror(self, tmp_path):
+        from unittest.mock import MagicMock
+        from agents.memory_store import MemoryStore
+
+        # Mock backend that pretends to be pgvector-capable.
+        backend = MagicMock()
+        backend.placeholder = "%s"
+        backend.supports_fts = True
+        backend.supports_vector = True
+        backend.fetchone_dict.return_value = None
+        backend.fetchall_dict.return_value = []
+        backend.execute = MagicMock()
+        backend.execute_script = MagicMock()
+
+        store = MemoryStore(
+            db_path=tmp_path / "noop.db", storage_backend=backend,
+        )
+        # Inject a fake embedder so we hit the storage_backend SQL path.
+        fake_embedder = MagicMock()
+        fake_embedder.embed.return_value = [0.1, 0.2, 0.3]
+        store._embedder = fake_embedder
+
+        # Should NOT raise NameError; should return empty list because
+        # the mock backend returns no rows.
+        result = store.semantic_recall(
+            "test query",
+            tag_filter="x",
+            source_filter="user",
+            agent_id="cto",
+            task_id="ISSUE-1",
+        )
+        assert result == []
+
+        # Verify the SQL that was sent contains all expected placeholders
+        # and includes the scoping clauses.
+        called_sql = backend.fetchall_dict.call_args[0][0]
+        assert "agent_id = %s" in called_sql
+        assert "task_id = %s" in called_sql
+        assert "%s::vector" in called_sql
+
+
+# ---------------------------------------------------------------------------
+# Concurrency — recall and store run from multiple threads safely
+# ---------------------------------------------------------------------------
+
+
+class TestMemoryStoreConcurrency:
+    """Read-while-write safety: recall paths now hold the lock."""
+
+    def test_concurrent_store_and_recall(self, tmp_path):
+        import threading
+        from agents.memory_store import MemoryStore
+
+        store = MemoryStore(db_path=tmp_path / "concurrent.db")
+        # Pre-seed some entries so recall has hits.
+        for i in range(10):
+            store.store(f"seed entry {i}", tags="seed")
+
+        errors = []
+        stop = threading.Event()
+
+        def writer():
+            try:
+                i = 0
+                while not stop.is_set():
+                    store.store(f"writer entry {i}", tags="writer")
+                    i += 1
+                    if i > 50:
+                        return
+            except Exception as e:
+                errors.append(("writer", e))
+
+        def reader():
+            try:
+                while not stop.is_set():
+                    store.recall("entry", max_results=5)
+                    store.hybrid_recall("entry", max_results=5)
+            except Exception as e:
+                errors.append(("reader", e))
+
+        threads = [
+            threading.Thread(target=writer),
+            threading.Thread(target=reader),
+            threading.Thread(target=reader),
+        ]
+        for t in threads:
+            t.start()
+        # Let them race for a short window
+        threads[0].join(timeout=2.0)
+        stop.set()
+        for t in threads[1:]:
+            t.join(timeout=2.0)
+
+        assert not errors, f"Concurrency errors: {errors}"
+
+
+# ---------------------------------------------------------------------------
+# Persist helpers — graph node + heartbeat partial-state writer
+# ---------------------------------------------------------------------------
+
+
+class TestPersistMemoryNode:
+    """`persist_memory_node` should write spec/output/feedback to MemoryStore."""
+
+    def _patch_shared_store(self, store, monkeypatch):
+        import agents.tools.registry as _reg
+        monkeypatch.setattr(
+            _reg, "_shared_memory_store", store, raising=False,
+        )
+
+    def test_persist_writes_spec_and_output(self, tmp_path, monkeypatch):
+        from agents.memory_store import MemoryStore
+        from agents.memory_persist import persist_memory_node
+
+        store = MemoryStore(db_path=tmp_path / "persist.db")
+        self._patch_shared_store(store, monkeypatch)
+
+        state = {
+            "agent_id": "backend-engineer",
+            "task_id": "ISSUE-42",
+            "routed_task_type": "code",
+            "specification": "Build a JWT auth middleware.",
+            "final_output": "def jwt_middleware(): pass",
+            "final_score": 92,
+            "output_critic_feedback": "Looks good, minor style nits.",
+            "tool_calls_made": [
+                {"tool": "python_executor"},
+                {"tool": "pytest_runner"},
+            ],
+        }
+
+        result = persist_memory_node(state)
+        ids = result["memory_persisted_ids"]
+        assert len(ids) >= 3  # spec, output, feedback, tools
+
+        # Subsequent recall should find what we just wrote.
+        recalled = store.recall(
+            "JWT", agent_id="backend-engineer", task_id="ISSUE-42",
+        )
+        assert any("JWT" in r.content for r in recalled)
+
+    def test_persist_dedups_within_run(self, tmp_path, monkeypatch):
+        from agents.memory_store import MemoryStore
+        from agents.memory_persist import persist_memory_node
+
+        store = MemoryStore(db_path=tmp_path / "persist.db")
+        self._patch_shared_store(store, monkeypatch)
+
+        state = {
+            "agent_id": "cto",
+            "task_id": "ISSUE-1",
+            "specification": "Decide stack.",
+            "final_output": "Use Postgres + Redis.",
+            "final_score": 88,
+        }
+        ids1 = persist_memory_node(state)["memory_persisted_ids"]
+        ids2 = persist_memory_node(state)["memory_persisted_ids"]
+        # Both runs should resolve to the same memory ids (dedup).
+        assert ids1 == ids2
+
+    def test_persist_handles_missing_fields(self, tmp_path, monkeypatch):
+        from agents.memory_store import MemoryStore
+        from agents.memory_persist import persist_memory_node
+
+        store = MemoryStore(db_path=tmp_path / "persist.db")
+        self._patch_shared_store(store, monkeypatch)
+
+        # Empty state should not crash; just write nothing.
+        result = persist_memory_node({})
+        assert result["memory_persisted_ids"] == []
+
+    def test_persist_truncates_long_output(self, tmp_path, monkeypatch):
+        from agents.memory_store import MemoryStore
+        from agents.memory_persist import persist_memory_node
+
+        store = MemoryStore(db_path=tmp_path / "persist.db")
+        self._patch_shared_store(store, monkeypatch)
+
+        huge = "x" * 10000
+        state = {
+            "agent_id": "cto",
+            "task_id": "ISSUE-1",
+            "final_output": huge,
+            "final_score": 90,
+        }
+        ids = persist_memory_node(state)["memory_persisted_ids"]
+        assert ids
+        entry = store.get_by_id(ids[0])
+        # Should be truncated and end with ellipsis.
+        assert len(entry.content) <= 4100
+        assert entry.content.endswith("...")
+
+    def test_persist_partial_state_clarification(self, tmp_path, monkeypatch):
+        from agents.memory_store import MemoryStore
+        from agents.memory_persist import persist_partial_state
+
+        store = MemoryStore(db_path=tmp_path / "persist.db")
+        self._patch_shared_store(store, monkeypatch)
+
+        partial = {
+            "specification": "Build something",
+            "clarification_questions": [
+                "Which database?",
+                "Which auth provider?",
+            ],
+            "last_node": "specialist",
+        }
+        ids = persist_partial_state(
+            partial,
+            agent_id="cto",
+            task_id="ISSUE-9",
+            status="clarification_needed",
+        )
+        assert ids
+        # Subsequent run should be able to recall the clarification ask.
+        results = store.recall(
+            "database auth", agent_id="cto", task_id="ISSUE-9",
+        )
+        assert any("Clarification" in r.content for r in results)
+
+    def test_persist_partial_state_blocked(self, tmp_path, monkeypatch):
+        from agents.memory_store import MemoryStore
+        from agents.memory_persist import persist_partial_state
+
+        store = MemoryStore(db_path=tmp_path / "persist.db")
+        self._patch_shared_store(store, monkeypatch)
+
+        partial = {
+            "specialist_output": "half-finished work",
+            "output_critic_score": 40,
+            "output_critic_feedback": "missing tests",
+            "last_node": "critic_output",
+        }
+        ids = persist_partial_state(
+            partial,
+            agent_id="backend-engineer",
+            task_id="ISSUE-7",
+            status="blocked",
+        )
+        assert ids
+        results = store.recall(
+            "tests", agent_id="backend-engineer", task_id="ISSUE-7",
+        )
+        assert any("Blocker feedback" in r.content for r in results)
+
+    def test_persist_partial_state_sigterm(self, tmp_path, monkeypatch):
+        from agents.memory_store import MemoryStore
+        from agents.memory_persist import persist_partial_state
+
+        store = MemoryStore(db_path=tmp_path / "persist.db")
+        self._patch_shared_store(store, monkeypatch)
+
+        partial = {
+            "specialist_output": "interrupted halfway",
+            "last_node": "specialist",
+        }
+        ids = persist_partial_state(
+            partial,
+            agent_id="cto",
+            task_id="ISSUE-1",
+            status="sigterm",
+        )
+        assert ids
+        results = store.recall(
+            "interrupted", agent_id="cto", task_id="ISSUE-1",
+        )
+        assert any("Partial output" in r.content for r in results)
+
+
+# ---------------------------------------------------------------------------
+# End-to-end: persist on run 1 → inject_memory on run 2
+# ---------------------------------------------------------------------------
+
+
+class TestMemoryEndToEnd:
+    """Persist → recall round-trip mimics two heartbeat runs."""
+
+    def test_persist_then_inject(self, tmp_path, monkeypatch):
+        from agents.memory_store import MemoryStore
+        from agents.memory_persist import persist_memory_node
+        import agents.tools.registry as _reg
+
+        store = MemoryStore(db_path=tmp_path / "e2e.db")
+        monkeypatch.setattr(
+            _reg, "_shared_memory_store", store, raising=False,
+        )
+
+        # ── Run 1: persist ──
+        run1 = {
+            "agent_id": "cto",
+            "task_id": "ISSUE-1",
+            "routed_task_type": "code",
+            "specification": "Pick database for new service",
+            "final_output": "Selected Postgres with pgvector for embeddings",
+            "final_score": 91,
+        }
+        persist_memory_node(run1)
+
+        # ── Run 2: inject_memory simulation ──
+        # Mimic graph_nodes.inject_memory's hybrid_recall call.
+        results = store.hybrid_recall(
+            query="Postgres pgvector database",
+            agent_id="cto",
+            task_id="ISSUE-1",
+            max_results=5,
+        )
+        assert results
+        joined = " ".join(r.content for r in results)
+        assert "Postgres" in joined

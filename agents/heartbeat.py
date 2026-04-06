@@ -491,6 +491,16 @@ def _execute_checked_out_task(
 
     workflow_start = time.monotonic()
     try:
+        # Memory scoping: use the agent role (or name) as the scope key
+        # so the same agent's memories cluster together across runs, and
+        # tag every entry with the Paperclip issue id.
+        _agent_id = (
+            getattr(identity, "role", None)
+            or getattr(identity, "name", None)
+            or os.environ.get("PAPERCLIP_AGENT_ID", "")
+            if identity
+            else os.environ.get("PAPERCLIP_AGENT_ID", "")
+        )
         final_state = _run_workflow(
             config, user_request, task_type,
             complexity_tier=complexity_tier,
@@ -500,6 +510,8 @@ def _execute_checked_out_task(
             clarification_reply=clarification_reply,
             agent_role=getattr(identity, "role", None) if identity else None,
             agent_title=getattr(identity, "title", None) if identity else None,
+            agent_id=_agent_id,
+            task_id=issue.id,
         )
     except WorkflowCancelledError as e:
         logger.info("Workflow cancelled for %s: %s", issue.id, e.reason,
@@ -517,6 +529,16 @@ def _execute_checked_out_task(
                      extra={"event": "sigterm", "issue_id": issue.id})
         metrics.increment("vibe_heartbeat_total", labels={"status": "sigterm"})
         _post_sigterm_partial(client, issue.id, sigterm_state)
+        try:
+            from .memory_persist import persist_partial_state
+            persist_partial_state(
+                sigterm_state,
+                agent_id=_agent_id,
+                task_id=issue.id,
+                status="sigterm",
+            )
+        except Exception as _e:
+            logger.debug("persist_partial_state (sigterm) skipped: %s", _e)
         return HeartbeatResult(
             status="blocked",
             issue_id=issue.id,
@@ -550,6 +572,16 @@ def _execute_checked_out_task(
                       extra={"event": "workflow_error", "issue_id": issue.id, "error_type": type(e).__name__})
         metrics.increment("vibe_heartbeat_total", labels={"status": "workflow_error"})
         _post_failure(client, issue.id, str(e))
+        try:
+            from .memory_persist import persist_partial_state
+            persist_partial_state(
+                sigterm_state,
+                agent_id=_agent_id,
+                task_id=issue.id,
+                status="blocked",
+            )
+        except Exception as _e:
+            logger.debug("persist_partial_state (failure) skipped: %s", _e)
         return HeartbeatResult(
             status="failed",
             issue_id=issue.id,
@@ -771,6 +803,8 @@ def _run_workflow(
     factory: Optional[WorkflowFactory] = None,
     agent_role: Optional[str] = None,
     agent_title: Optional[str] = None,
+    agent_id: Optional[str] = None,
+    task_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Run the Vibe workflow graph on the given request.
@@ -789,6 +823,8 @@ def _run_workflow(
         clarification_reply=clarification_reply,
         agent_role=agent_role,
         agent_title=agent_title,
+        agent_id=agent_id,
+        task_id=task_id,
     )
 
 

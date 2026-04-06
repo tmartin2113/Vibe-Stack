@@ -278,6 +278,7 @@ def create_agent_graph(adapter_registry: AdapterRegistry, tool_registry: Optiona
     workflow.add_node("aggregator", wrappers["aggregator"])
     workflow.add_node("final_critic", wrappers["final_critic"])
     workflow.add_node("skill_cleanup", wrappers["skill_cleanup"])
+    workflow.add_node("persist_memory", wrappers["persist_memory"])
 
     # Stage 3: Output Formatting
     workflow.add_node("format", nodes.format_for_mattermost)
@@ -421,10 +422,15 @@ def create_agent_graph(adapter_registry: AdapterRegistry, tool_registry: Optiona
 
     # ===== FINAL STEPS =====
 
-    # Format -> Post -> Skill Cleanup -> END
+    # Format -> Post -> Skill Cleanup -> Persist Memory -> END
+    # persist_memory writes spec/output/feedback/tools into MemoryStore so
+    # subsequent runs can recall them via inject_memory. Sits at the end of
+    # every terminal path (success, blocked, fail, clarification) so the
+    # agent never finishes amnesiac.
     workflow.add_edge("format", "post")
     workflow.add_edge("post", "skill_cleanup")
-    workflow.add_edge("skill_cleanup", END)
+    workflow.add_edge("skill_cleanup", "persist_memory")
+    workflow.add_edge("persist_memory", END)
 
     # Read timeout settings from config
     node_timeout = 0

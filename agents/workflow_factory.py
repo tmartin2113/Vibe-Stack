@@ -114,6 +114,8 @@ class WorkflowFactory:
         clarification_reply: Optional[str] = None,
         agent_role: Optional[str] = None,
         agent_title: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        task_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Run the Vibe workflow graph on the given request.
 
@@ -147,6 +149,15 @@ class WorkflowFactory:
         # Pre-set task type if specified (skips router classification)
         if task_type:
             initial_state["routed_task_type"] = task_type
+
+        # Memory scoping — flow agent identity + task id through the graph
+        # so inject_memory and persist_memory both use a consistent scope.
+        if agent_id:
+            initial_state["agent_id"] = agent_id
+        elif agent_role:
+            initial_state["agent_id"] = agent_role
+        if task_id:
+            initial_state["task_id"] = task_id
 
         # Pre-set complexity tier (from orchestrator or bridge)
         if complexity_tier:
