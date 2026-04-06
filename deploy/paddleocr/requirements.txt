@@ -1,5 +1,8 @@
-paddlepaddle==3.0.0
-paddleocr==3.0.0
-fastapi==0.115.0
-uvicorn==0.30.0
-python-multipart==0.0.9
+# Only the FastAPI server layer. paddlepaddle and paddleocr come from the
+# paddlecloud base image (Python 3.7), so these pins target 3.7 compatibility:
+# FastAPI 0.95.x is the last line that supports Python 3.7 before 0.99 dropped
+# it, uvicorn 0.22 is the matching server, python-multipart 0.0.6 is the last
+# release that supports 3.7.
+fastapi==0.95.2
+uvicorn==0.22.0
+python-multipart==0.0.6
