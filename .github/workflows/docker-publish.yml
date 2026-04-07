@@ -47,7 +47,9 @@ jobs:
       SEARXNG_URL: http://searxng.test/
       PLAYWRIGHT_WS_URL: ws://playwright.test/
       PENPOT_API_URL: http://penpot.test/
-      COMFYUI_URL: http://comfyui.test/
+      # NOTE: COMFYUI_URL is deliberately NOT set. The test_tool_system
+      # expected set does not include image_generation; setting COMFYUI_URL
+      # would register it as an extra tool and fail the count assertion.
       GITEA_URL: http://gitea.test/
       MINIO_URL: http://minio.test/
       MIROFISH_URL: http://mirofish.test/
