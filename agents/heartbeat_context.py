@@ -8,8 +8,9 @@ clarification resume detection, and complexity hint extraction.
 import logging
 import os
 import re
-from typing import Any, List, Optional
+from typing import Any, Dict, List, Optional
 
+from .lesson_store import LessonStore
 from .paperclip_client import Issue
 
 logger = logging.getLogger(__name__)
@@ -67,10 +68,38 @@ def _resolve_task_type(config: Any) -> str:
     return os.environ.get("VIBE_TASK_TYPE", "")
 
 
+def _load_lessons_for_run(
+    *,
+    lesson_store: "LessonStore",
+    role: str,
+    task_type: str,
+) -> List[str]:
+    """Return a list of formatted lesson strings for injection into user_request.
+
+    Each string is formatted as ``- (lesson_id) lesson_text`` so the lesson_id
+    can be parsed out later by injected_lesson_ids tracking.
+    """
+    matches = lesson_store.list_by_scope(
+        role=role,
+        task_type=task_type,
+        status="active",
+        limit=5,
+    )
+    return [
+        f"- ({m.lesson_id}) {m.lesson}"
+        for m in matches
+    ]
+
+
 def _build_user_request(
     issue: Issue,
     comments: list,
     clarification_reply: Optional[str] = None,
+    *,
+    lesson_store: "Optional[LessonStore]" = None,
+    role: Optional[str] = None,
+    task_type: Optional[str] = None,
+    state: Optional[Dict[str, Any]] = None,
 ) -> str:
     """
     Build a user_request string from issue context.
@@ -78,6 +107,11 @@ def _build_user_request(
     Includes title, description, ancestor chain (the "why"), and
     recent comments for additional context. When resuming from a
     clarification, the human's reply is injected prominently.
+
+    If ``lesson_store``, ``role``, and ``task_type`` are all provided, appends a
+    "## Lessons from past runs" block with up to 5 matching lessons. If
+    ``state`` is also provided, the injected lesson_ids are recorded in
+    ``state["injected_lesson_ids"]`` for later scoring attribution.
     """
     parts = []
 
@@ -104,6 +138,25 @@ def _build_user_request(
         recent = comments[-5:]
         comment_text = "\n".join(f"- {c.body[:200]}" for c in recent)
         parts.append(f"\nRecent discussion:\n{comment_text}")
+
+    # Tier 0 lesson injection — only if all lesson args were provided
+    if lesson_store is not None and role and task_type:
+        try:
+            lessons = _load_lessons_for_run(
+                lesson_store=lesson_store,
+                role=role,
+                task_type=task_type,
+            )
+            if lessons:
+                parts.append("\n## Lessons from past runs\n" + "\n".join(lessons))
+                if state is not None:
+                    # Parse lesson_ids out of the "- (lesson_id) text" format
+                    state["injected_lesson_ids"] = [
+                        line.split(")", 1)[0].lstrip("- (")
+                        for line in lessons
+                    ]
+        except Exception as e:
+            logger.debug("lesson injection skipped: %s", e)
 
     return "\n".join(parts)
 
