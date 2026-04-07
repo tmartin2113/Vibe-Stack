@@ -200,6 +200,32 @@ class LessonStore:
             )
             return delta
 
+    def decay_check(self, min_uses: int = 10) -> List[str]:
+        """Mark underperforming lessons as decayed.
+
+        A lesson is decayed when it has at least `min_uses` recorded uses AND
+        its outcome_delta is negative. Returns the list of lesson_ids that were
+        decayed this call.
+        """
+        with self._lock, self._connect() as conn:
+            rows = conn.execute(
+                "SELECT lesson_id FROM lessons "
+                "WHERE status = 'active' "
+                "AND uses >= ? "
+                "AND outcome_delta IS NOT NULL "
+                "AND outcome_delta < 0",
+                (min_uses,),
+            ).fetchall()
+
+            decayed = [r["lesson_id"] for r in rows]
+            if decayed:
+                conn.executemany(
+                    "UPDATE lessons SET status = 'decayed' WHERE lesson_id = ?",
+                    [(lid,) for lid in decayed],
+                )
+
+        return decayed
+
     def _row_to_lesson(self, row: sqlite3.Row) -> Lesson:
         return Lesson(
             lesson_id=row["lesson_id"],

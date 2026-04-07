@@ -93,3 +93,50 @@ def test_record_use_is_idempotent_per_run(tmp_path):
 
     lessons = store.list_by_scope(role="r", task_type="t")
     assert lessons[0].uses == 1
+
+
+def test_decay_check_marks_underperforming_lessons(tmp_path):
+    store = LessonStore(db_path=str(tmp_path / "lessons.db"))
+    lesson_id = store.add(role="r", task_type="t", tag="",
+                          lesson="bad", author_agent_id="", author_run_id="")
+
+    # 10 uses, all scoring 50, baseline 70 → delta -20
+    for i in range(10):
+        store.record_use(lesson_id, run_id=f"run_{i}", run_score=50)
+    store.recompute_outcome_delta(lesson_id, baseline_score=70.0)
+
+    decayed = store.decay_check(min_uses=10)
+    assert lesson_id in decayed
+
+    lessons = store.list_by_scope(role="r", task_type="t", status="active")
+    assert len(lessons) == 0  # It's been decayed
+
+    decayed_list = store.list_by_scope(role="r", task_type="t", status="decayed")
+    assert len(decayed_list) == 1
+
+
+def test_decay_check_preserves_good_lessons(tmp_path):
+    store = LessonStore(db_path=str(tmp_path / "lessons.db"))
+    lesson_id = store.add(role="r", task_type="t", tag="",
+                          lesson="good", author_agent_id="", author_run_id="")
+
+    for i in range(10):
+        store.record_use(lesson_id, run_id=f"run_{i}", run_score=90)
+    store.recompute_outcome_delta(lesson_id, baseline_score=70.0)
+
+    decayed = store.decay_check(min_uses=10)
+    assert lesson_id not in decayed
+
+
+def test_decay_check_ignores_low_use_lessons(tmp_path):
+    store = LessonStore(db_path=str(tmp_path / "lessons.db"))
+    lesson_id = store.add(role="r", task_type="t", tag="",
+                          lesson="early", author_agent_id="", author_run_id="")
+
+    # Only 5 uses — not enough to judge
+    for i in range(5):
+        store.record_use(lesson_id, run_id=f"run_{i}", run_score=50)
+    store.recompute_outcome_delta(lesson_id, baseline_score=70.0)
+
+    decayed = store.decay_check(min_uses=10)
+    assert lesson_id not in decayed
