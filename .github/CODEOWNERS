@@ -1,0 +1,32 @@
+# Vibe-Stack Code Owners
+# https://docs.github.com/en/repositories/managing-your-repositories-settings-and-features/customizing-your-repository/about-code-owners
+#
+# Code owners are auto-requested as reviewers when a PR modifies matching paths.
+# The "Require review from Code Owners" branch protection rule depends on this
+# file existing on the default branch.
+#
+# Order matters: the LAST matching rule wins.
+
+# Default owner for everything not matched by a more specific rule.
+*                               @tmartin2113
+
+# ── Critical infrastructure (extra scrutiny) ─────────────────────────────────
+# Anything that touches the agent runtime, security gates, or self-upgrade
+# pipeline lands the same default owner today, but this section makes the
+# intent explicit so a future second maintainer can be added without digging
+# through git history.
+
+agents/self_upgrade/            @tmartin2113
+agents/self_upgrade_dispatcher.py  @tmartin2113
+agents/self_upgrade_trigger.py  @tmartin2113
+agents/skill_security.py        @tmartin2113
+agents/lesson_store.py          @tmartin2113
+
+# ── CI / build / deploy ──────────────────────────────────────────────────────
+.github/                        @tmartin2113
+docker-compose*.yml             @tmartin2113
+deploy/                         @tmartin2113
+setup.sh                        @tmartin2113
+pyproject.toml                  @tmartin2113
+requirements*.txt               @tmartin2113
+requirements*.lock              @tmartin2113
