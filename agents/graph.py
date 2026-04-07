@@ -228,6 +228,10 @@ def create_agent_graph(adapter_registry: AdapterRegistry, tool_registry: Optiona
     from .self_upgrade_trigger import SelfUpgradeTrigger
     shared_upgrade_trigger = SelfUpgradeTrigger()
 
+    # Shared LessonStore for Tier 0 memory notes
+    from .lesson_store import LessonStore
+    shared_lesson_store = LessonStore()
+
     # Result cache (Artifact Store)
     cache_config = getattr(config, 'cache', None) if config else None
     shared_artifact_store: Optional[ArtifactStore] = None
@@ -249,6 +253,7 @@ def create_agent_graph(adapter_registry: AdapterRegistry, tool_registry: Optiona
         shared_outcome_store=shared_outcome_store,
         shared_artifact_store=shared_artifact_store,
         shared_upgrade_trigger=shared_upgrade_trigger,
+        shared_lesson_store=shared_lesson_store,
         base_model=base_model,
         config=config,
         adapter_registry=adapter_registry,
@@ -279,6 +284,7 @@ def create_agent_graph(adapter_registry: AdapterRegistry, tool_registry: Optiona
     workflow.add_node("final_critic", wrappers["final_critic"])
     workflow.add_node("skill_cleanup", wrappers["skill_cleanup"])
     workflow.add_node("persist_memory", wrappers["persist_memory"])
+    workflow.add_node("memory_note", wrappers["memory_note"])
 
     # Stage 3: Output Formatting
     workflow.add_node("format", nodes.format_for_mattermost)
@@ -367,8 +373,12 @@ def create_agent_graph(adapter_registry: AdapterRegistry, tool_registry: Optiona
     )
 
     # Quality Gate 2: Output Approval (LLM critic, reached only when heuristic fails)
+    # Critic -> memory_note (pass-through that writes a lesson if eligible)
+    workflow.add_edge("critic_output", "memory_note")
+
+    # memory_note -> downstream based on critic's approval decision
     workflow.add_conditional_edges(
-        "critic_output",
+        "memory_note",
         should_approve_output,
         {
             "approved": "format",

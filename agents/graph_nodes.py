@@ -68,6 +68,7 @@ def create_node_wrappers(
     shared_outcome_store,
     shared_artifact_store: Optional[ArtifactStore],
     shared_upgrade_trigger,
+    shared_lesson_store,
     base_model,
     config,
     adapter_registry,
@@ -348,6 +349,29 @@ def create_node_wrappers(
             logger.debug("persist_memory_wrapper: skipped (%s)", e)
             return state
 
+    # ===== MEMORY NOTE (Tier 0 lesson writer) =====
+    def memory_note_wrapper(state: AgentState) -> AgentState:
+        """Write a Tier 0 lesson when the critic flagged lesson_eligible.
+
+        Lazy-imports Tier0Builder to avoid circular imports, and constructs
+        it per-call with the shared base_model so the builder reuses the same
+        LLM backend as the rest of the workflow. The builder is stateless so
+        re-creation per call is cheap.
+        """
+        from .memory_note_node import memory_note_node
+        from .self_upgrade.tier0_builder import Tier0Builder
+
+        try:
+            builder = Tier0Builder(llm=base_model)
+            return memory_note_node(
+                state,
+                lesson_store=shared_lesson_store,
+                tier0_builder=builder,
+            )
+        except Exception as e:
+            logger.debug("memory_note_wrapper: skipped (%s)", e)
+            return state
+
     # ===== RETURN ALL WRAPPERS =====
     return {
         "router": router_wrapper,
@@ -364,4 +388,5 @@ def create_node_wrappers(
         "final_critic": final_critic_wrapper,
         "skill_cleanup": skill_cleanup_wrapper,
         "persist_memory": persist_memory_wrapper,
+        "memory_note": memory_note_wrapper,
     }
