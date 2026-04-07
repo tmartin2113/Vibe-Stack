@@ -52,10 +52,12 @@ def _run_self_upgrade_dispatch(
         artifact_ref = result.issue_id
 
     if artifact_ref:
-        trigger.mark_artifact_ref(
-            [s.id for s in signals],
-            artifact_ref,
-        )
+        # Use result.signal_refs (which the dispatcher computed for this
+        # specific tier) rather than the full accumulated signals list. In
+        # M0 these sets are identical, but in M1+ a classifier may select
+        # only a subset, and marking the wrong superset would prevent the
+        # remaining signals from being re-dispatched on the next run.
+        trigger.mark_artifact_ref(result.signal_refs, artifact_ref)
 
     return result
 
@@ -329,7 +331,7 @@ def create_node_wrappers(
                 )
                 result["upgrade_dispatch_result"] = type(dispatch_result).__name__
         except Exception as e:
-            logger.debug("Self-upgrade dispatch skipped: %s", e)
+            logger.warning("Self-upgrade dispatch skipped: %s", e)
 
         return result
 
