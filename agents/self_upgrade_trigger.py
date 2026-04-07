@@ -28,6 +28,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
+from uuid import uuid4
 
 from .state import AgentState
 
@@ -57,6 +58,8 @@ class UpgradeSignal:
     detail: str             # Human-readable description of what went wrong
     score: int = 0          # The score that triggered this (if applicable)
     source_node: str = ""   # Which workflow node generated the signal
+    id: str = field(default_factory=lambda: f"sig_{uuid4().hex[:12]}")
+    artifact_ref: Optional[str] = None
 
 
 @dataclass
@@ -175,6 +178,8 @@ class SelfUpgradeTrigger:
                 with open(self._signal_store_path, "a", encoding="utf-8") as f:
                     for s in signals:
                         entry = {
+                            "id": s.id,
+                            "artifact_ref": s.artifact_ref,
                             "category": s.category,
                             "task_type": s.task_type,
                             "detail": s.detail[:300],
@@ -204,6 +209,8 @@ class SelfUpgradeTrigger:
                             detail=entry.get("detail", ""),
                             score=entry.get("score", 0),
                             source_node=entry.get("source_node", ""),
+                            id=entry.get("id", f"sig_legacy_{uuid4().hex[:12]}"),
+                            artifact_ref=entry.get("artifact_ref"),
                         )
                         history = self._signal_history.setdefault(
                             signal.task_type, []
@@ -243,6 +250,40 @@ class SelfUpgradeTrigger:
                         f.write(line + "\n")
             except OSError as e:
                 logger.debug("Failed to clean up persisted signals: %s", e)
+
+    def mark_artifact_ref(self, signal_ids: List[str], artifact_ref: str) -> int:
+        """Update the given signal entries in the store with the artifact_ref.
+
+        Returns the number of entries updated.
+        """
+        if not self._signal_store_path.exists():
+            return 0
+
+        updated = 0
+        with self._lock:
+            lines = self._signal_store_path.read_text().splitlines()
+            out: list[str] = []
+            for line in lines:
+                if not line.strip():
+                    continue
+                try:
+                    entry = json.loads(line)
+                except json.JSONDecodeError:
+                    out.append(line)
+                    continue
+                if entry.get("id") in signal_ids:
+                    entry["artifact_ref"] = artifact_ref
+                    updated += 1
+                out.append(json.dumps(entry))
+            self._signal_store_path.write_text("".join(l + "\n" for l in out))
+
+            # Also update in-memory history so the dispatcher sees the change
+            for history in self._signal_history.values():
+                for sig in history:
+                    if sig.id in signal_ids:
+                        sig.artifact_ref = artifact_ref
+
+        return updated
 
     # ── Signal detectors ──────────────────────────────────────────────
 
