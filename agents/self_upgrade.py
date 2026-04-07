@@ -91,6 +91,43 @@ IMMUTABLE_PATHS = frozenset({
     "agents/intent_classifier.py",
 })
 
+# Module-level directory prefixes (match if rel_path startswith any)
+IMMUTABLE_DIR_PREFIXES = (
+    "agents/storage/",
+    "agents/sandbox/",
+    "vibe/backends/",
+)
+
+# Module-level filename patterns (match if rel_path startswith any)
+IMMUTABLE_FILE_PREFIXES = (
+    "agents/skill_registry",
+)
+
+# Additional explicit files added since the original IMMUTABLE_PATHS was defined
+_ADDITIONAL_IMMUTABLES = frozenset({
+    "agents/lesson_store.py",       # M1 — cannot modify lesson persistence
+    "agents/self_upgrade/tier0_builder.py",   # M1
+    "agents/self_upgrade/tier3_builder.py",   # M1
+    "agents/self_upgrade/tier1a_builder.py",  # M2
+    "agents/self_upgrade/tier1b_builder.py",  # M3
+    "agents/self_upgrade/tier2_builder.py",   # M4
+    "agents/self_upgrade/ast_verifier.py",    # M4
+})
+
+
+def is_path_immutable(rel_path: str) -> bool:
+    """Return True if rel_path is forbidden for any self-upgrade operation."""
+    if rel_path in IMMUTABLE_PATHS:
+        return True
+    if rel_path in _ADDITIONAL_IMMUTABLES:
+        return True
+    if any(rel_path.startswith(p) for p in IMMUTABLE_DIR_PREFIXES):
+        return True
+    if any(rel_path.startswith(p) for p in IMMUTABLE_FILE_PREFIXES):
+        return True
+    return False
+
+
 # Lock file for serialising git operations across concurrent workers
 _GIT_LOCK_PATH = Path(tempfile.gettempdir()) / "vibe_self_upgrade.lock"
 
