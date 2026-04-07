@@ -98,12 +98,22 @@ IMMUTABLE_DIR_PREFIXES = (
     "vibe/backends/",
 )
 
-# Module-level filename patterns (match if rel_path startswith any)
+# Literal str.startswith() prefixes on the full relative path (NOT filename
+# globs). Use these when several files share a name prefix (e.g.
+# skill_registry.py, skill_registry_index.py) and exact-listing each one would
+# be noisy. Be careful: "agents/skill_registry" also matches a hypothetical
+# "agents/skill_registry_ATTACK.py", which is the intended behavior — anything
+# in this family is forbidden.
 IMMUTABLE_FILE_PREFIXES = (
     "agents/skill_registry",
 )
 
-# Additional explicit files added since the original IMMUTABLE_PATHS was defined
+# Overflow set for explicit immutable files added after IMMUTABLE_PATHS
+# was frozen. The full immutable file list is the union
+# (IMMUTABLE_PATHS | _ADDITIONAL_IMMUTABLES). Kept separate so the
+# original 47-entry IMMUTABLE_PATHS frozenset stays stable for diff
+# review across the M0-M4 plan, and so M1+ can pre-register builder
+# files that don't exist yet without polluting the original list.
 _ADDITIONAL_IMMUTABLES = frozenset({
     "agents/lesson_store.py",       # M1 — cannot modify lesson persistence
     "agents/self_upgrade/tier0_builder.py",   # M1
@@ -116,7 +126,14 @@ _ADDITIONAL_IMMUTABLES = frozenset({
 
 
 def is_path_immutable(rel_path: str) -> bool:
-    """Return True if rel_path is forbidden for any self-upgrade operation."""
+    """Return True if rel_path is forbidden for any self-upgrade operation.
+
+    Args:
+        rel_path: POSIX relative path from the project root, with forward
+                  slashes and no leading ``./``. The function does NOT
+                  normalize input — callers must pass canonical paths or the
+                  prefix checks may silently miss matches.
+    """
     if rel_path in IMMUTABLE_PATHS:
         return True
     if rel_path in _ADDITIONAL_IMMUTABLES:
