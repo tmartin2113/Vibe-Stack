@@ -5,7 +5,7 @@ All evaluation/critic methods extracted from the AgentNodes monolith.
 These are mixed into AgentNodes via CriticNodesMixin.
 """
 
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 import re
 import logging
 
@@ -36,6 +36,18 @@ def _get_skill_criteria(state: AgentState, task_type: str) -> str:
                 f"{lines}\n"
             )
     return ""
+
+
+def _compute_lesson_eligible(score: int, feedback: Optional[str]) -> bool:
+    """Return True if this run should emit a memory note (per spec §Tier 0 Write path).
+
+    Gating: score < 85 AND feedback non-empty after stripping.
+    """
+    if score >= 85:
+        return False
+    if feedback is None:
+        return False
+    return bool(feedback.strip())
 
 
 class CriticNodesMixin:
@@ -230,6 +242,12 @@ REASONING:
         state["adapters_used"] = state.get("adapters_used", []) + ["critic"]
 
         logger.info(f"Output Critic scores: Overall={scores.get('overall', 0)}/100")
+
+        # Flag for the memory_note_node downstream (Tier 0 memory notes)
+        state["lesson_eligible"] = _compute_lesson_eligible(
+            score=state.get("output_critic_score", 0),
+            feedback=state.get("output_critic_feedback", ""),
+        )
 
         return state
 
