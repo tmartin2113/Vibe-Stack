@@ -59,3 +59,37 @@ def test_list_by_scope_respects_status_filter(tmp_path):
 
     assert store.list_by_scope(role="r", task_type="t", status="active") == []
     assert len(store.list_by_scope(role="r", task_type="t", status="decayed")) == 1
+
+
+def test_record_use_and_compute_outcome_delta(tmp_path):
+    store = LessonStore(db_path=str(tmp_path / "lessons.db"))
+
+    lesson_id = store.add(role="r", task_type="t", tag="",
+                          lesson="lesson", author_agent_id="", author_run_id="")
+
+    # Record 3 runs that used this lesson with scores 80, 85, 90 (avg 85)
+    store.record_use(lesson_id, run_id="run_1", run_score=80)
+    store.record_use(lesson_id, run_id="run_2", run_score=85)
+    store.record_use(lesson_id, run_id="run_3", run_score=90)
+
+    # Baseline is passed explicitly in M1 (M2+ may compute lazily)
+    delta = store.recompute_outcome_delta(lesson_id, baseline_score=70.0)
+
+    # avg(80, 85, 90) = 85, baseline 70 → delta 15
+    assert delta == 15.0
+
+    lessons = store.list_by_scope(role="r", task_type="t")
+    assert lessons[0].uses == 3
+    assert lessons[0].outcome_delta == 15.0
+
+
+def test_record_use_is_idempotent_per_run(tmp_path):
+    store = LessonStore(db_path=str(tmp_path / "lessons.db"))
+    lesson_id = store.add(role="r", task_type="t", tag="",
+                          lesson="lesson", author_agent_id="", author_run_id="")
+
+    store.record_use(lesson_id, run_id="run_1", run_score=80)
+    store.record_use(lesson_id, run_id="run_1", run_score=80)  # duplicate
+
+    lessons = store.list_by_scope(role="r", task_type="t")
+    assert lessons[0].uses == 1

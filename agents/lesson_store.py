@@ -150,6 +150,56 @@ class LessonStore:
                 (status, lesson_id),
             )
 
+    def record_use(self, lesson_id: str, run_id: str, run_score: int) -> None:
+        """Record that a run used this lesson, with the run's final score.
+
+        Idempotent per (lesson_id, run_id) — duplicate calls have no effect.
+        """
+        now = datetime.utcnow().isoformat() + "Z"
+        with self._lock, self._connect() as conn:
+            try:
+                conn.execute(
+                    "INSERT INTO lesson_uses (lesson_id, run_id, run_score, used_at) "
+                    "VALUES (?, ?, ?, ?)",
+                    (lesson_id, run_id, run_score, now),
+                )
+            except sqlite3.IntegrityError:
+                # Duplicate (lesson_id, run_id) — idempotent no-op
+                return
+
+            # Update denormalized uses count + last_used_at
+            conn.execute(
+                "UPDATE lessons SET uses = (SELECT COUNT(*) FROM lesson_uses "
+                "WHERE lesson_id = ?), last_used_at = ? WHERE lesson_id = ?",
+                (lesson_id, now, lesson_id),
+            )
+
+    def recompute_outcome_delta(
+        self, lesson_id: str, baseline_score: float,
+    ) -> Optional[float]:
+        """Recompute and persist outcome_delta for a lesson.
+
+        outcome_delta = avg(run_scores for uses of this lesson) - baseline_score
+
+        Returns the new delta, or None if the lesson has no uses yet.
+        """
+        with self._lock, self._connect() as conn:
+            row = conn.execute(
+                "SELECT AVG(run_score) AS avg_score, COUNT(*) AS n "
+                "FROM lesson_uses WHERE lesson_id = ?",
+                (lesson_id,),
+            ).fetchone()
+
+            if row is None or row["n"] == 0:
+                return None
+
+            delta = float(row["avg_score"]) - float(baseline_score)
+            conn.execute(
+                "UPDATE lessons SET outcome_delta = ? WHERE lesson_id = ?",
+                (delta, lesson_id),
+            )
+            return delta
+
     def _row_to_lesson(self, row: sqlite3.Row) -> Lesson:
         return Lesson(
             lesson_id=row["lesson_id"],
