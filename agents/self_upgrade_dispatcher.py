@@ -64,7 +64,10 @@ class DispatchResult:
         reason: str
         signal_refs: List[str]
 
-    Union = Union[
+    #: Type alias for any DispatchResult variant. Use only for type annotations;
+    #: runtime checks must use isinstance against a concrete nested class
+    #: (e.g. `isinstance(result, DispatchResult.Tier0Written)`).
+    AnyResult = Union[
         "DispatchResult.Tier0Written",
         "DispatchResult.Tier1aQueued",
         "DispatchResult.Tier1bCommitted",
@@ -112,7 +115,7 @@ class SelfUpgradeDispatcher:
         # Fallback: Tier 3 report
         return Tier.THREE
 
-    def dispatch(self, signals: List[UpgradeSignal]) -> "DispatchResult.Union":
+    def dispatch(self, signals: List[UpgradeSignal]) -> "DispatchResult.AnyResult":
         """Classify the signals and route to the appropriate builder.
 
         M0: every tier is a stub and returns Rejected("stub not implemented").
