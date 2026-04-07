@@ -372,6 +372,22 @@ def create_node_wrappers(
             logger.debug("memory_note_wrapper: skipped (%s)", e)
             return state
 
+    # ===== RECORD LESSON USES (Tier 0 outcome scoring) =====
+    def record_lesson_uses_wrapper(state: AgentState) -> AgentState:
+        """Record each injected lesson's use with the run's final score.
+
+        Runs after memory_note so that any newly-written lesson from this run
+        is NOT counted as a use (a lesson can't apply to the run that authored
+        it). Safe pass-through — state is unchanged except for the side effect
+        on lesson_store.
+        """
+        from .memory_note_node import record_lesson_uses_node
+        try:
+            return record_lesson_uses_node(state, lesson_store=shared_lesson_store)
+        except Exception as e:
+            logger.debug("record_lesson_uses_wrapper: skipped (%s)", e)
+            return state
+
     # ===== RETURN ALL WRAPPERS =====
     return {
         "router": router_wrapper,
@@ -389,4 +405,5 @@ def create_node_wrappers(
         "skill_cleanup": skill_cleanup_wrapper,
         "persist_memory": persist_memory_wrapper,
         "memory_note": memory_note_wrapper,
+        "record_lesson_uses": record_lesson_uses_wrapper,
     }

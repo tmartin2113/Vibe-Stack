@@ -58,3 +58,31 @@ def memory_note_node(
     logger.info("memory_note_node: wrote lesson %s", lesson_id)
     state["lesson_written_id"] = lesson_id
     return state
+
+
+def record_lesson_uses_node(
+    state: Dict[str, Any],
+    *,
+    lesson_store: LessonStore,
+) -> Dict[str, Any]:
+    """Record that this run used each of the injected lessons, with final score.
+
+    Writes one `lesson_uses` row per injected lesson_id in state. Idempotent
+    per (lesson_id, run_id) — the LessonStore handles duplicates.
+
+    Passes state through unchanged.
+    """
+    injected = state.get("injected_lesson_ids", [])
+    if not injected:
+        return state
+
+    run_id = state.get("run_id", "")
+    score = int(state.get("output_critic_score", 0))
+
+    for lesson_id in injected:
+        try:
+            lesson_store.record_use(lesson_id, run_id=run_id, run_score=score)
+        except Exception as e:
+            logger.debug("record_lesson_uses_node: skipping %s (%s)", lesson_id, e)
+
+    return state

@@ -285,6 +285,7 @@ def create_agent_graph(adapter_registry: AdapterRegistry, tool_registry: Optiona
     workflow.add_node("skill_cleanup", wrappers["skill_cleanup"])
     workflow.add_node("persist_memory", wrappers["persist_memory"])
     workflow.add_node("memory_note", wrappers["memory_note"])
+    workflow.add_node("record_lesson_uses", wrappers["record_lesson_uses"])
 
     # Stage 3: Output Formatting
     workflow.add_node("format", nodes.format_for_mattermost)
@@ -373,12 +374,15 @@ def create_agent_graph(adapter_registry: AdapterRegistry, tool_registry: Optiona
     )
 
     # Quality Gate 2: Output Approval (LLM critic, reached only when heuristic fails)
-    # Critic -> memory_note (pass-through that writes a lesson if eligible)
+    # Critic -> memory_note (writes a lesson if eligible)
     workflow.add_edge("critic_output", "memory_note")
 
-    # memory_note -> downstream based on critic's approval decision
+    # memory_note -> record_lesson_uses (records uses of any injected lessons)
+    workflow.add_edge("memory_note", "record_lesson_uses")
+
+    # record_lesson_uses -> downstream based on critic's approval decision
     workflow.add_conditional_edges(
-        "memory_note",
+        "record_lesson_uses",
         should_approve_output,
         {
             "approved": "format",
