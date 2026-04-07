@@ -15,8 +15,49 @@ from .router import route_to_specialist
 from .aggregator import aggregate_outputs
 from .artifact_store import ArtifactStore
 from .parallel_subtasks import execute_parallel_subtasks
+from .self_upgrade_dispatcher import DispatchResult, SelfUpgradeDispatcher
 
 logger = logging.getLogger(__name__)
+
+
+def _run_self_upgrade_dispatch(
+    trigger: "SelfUpgradeTrigger",
+    task_type: str,
+) -> "DispatchResult.AnyResult":
+    """End-of-run hook: invoke the dispatcher with any undispatched signals.
+
+    Logs the result. On success tiers, marks the contributing signals with
+    the artifact_ref so they aren't re-dispatched.
+    """
+    signals = trigger.get_accumulated_signals(task_type)
+    if not signals:
+        logger.debug("Self-upgrade dispatch: no accumulated signals")
+        return DispatchResult.Rejected(reason="no signals", signal_refs=[])
+
+    dispatcher = SelfUpgradeDispatcher()
+    result = dispatcher.dispatch(signals)
+
+    logger.info(
+        "Self-upgrade dispatch result: %s",
+        type(result).__name__,
+    )
+
+    # Mark signals as dispatched when the result carries an artifact_ref.
+    # M0: only Tier0Written and Tier3Filed actually emit refs; Tier1a/1b/2
+    # branches will be wired in later milestones.
+    artifact_ref: Optional[str] = None
+    if isinstance(result, DispatchResult.Tier0Written):
+        artifact_ref = result.lesson_id
+    elif isinstance(result, DispatchResult.Tier3Filed):
+        artifact_ref = result.issue_id
+
+    if artifact_ref:
+        trigger.mark_artifact_ref(
+            [s.id for s in signals],
+            artifact_ref,
+        )
+
+    return result
 
 
 def create_node_wrappers(
@@ -264,9 +305,10 @@ def create_node_wrappers(
                 )
                 result["cache_entry_stored"] = stored
 
-        # Self-upgrade dispatch — wired up in Task 7 of the M0 plan.
-        # For now, the analyse step still runs to populate signals,
-        # but no proposal generation or pipeline execution happens.
+        # Self-upgrade end-of-run hook: accumulate signals via the trigger,
+        # then invoke the dispatcher to route to the appropriate tier builder.
+        # In M0 every dispatch returns Rejected("stub"); real tier routing
+        # comes online in M1+.
         try:
             from .self_upgrade_trigger import analyse_for_upgrade
             from .self_upgrade import is_self_upgrade_enabled
@@ -280,11 +322,14 @@ def create_node_wrappers(
                         {"category": s.category, "detail": s.detail}
                         for s in trigger_result.signals
                     ]
-                # NOTE: dispatcher invocation will be added in Task 7 of the
-                # self-upgrade-m0-m1 branch (M0 plan). Until then, signals
-                # accumulate on disk but no tier builder runs.
+
+                task_type = result.get("routed_task_type", "general")
+                dispatch_result = _run_self_upgrade_dispatch(
+                    shared_upgrade_trigger, task_type,
+                )
+                result["upgrade_dispatch_result"] = type(dispatch_result).__name__
         except Exception as e:
-            logger.debug("Self-upgrade analysis skipped: %s", e)
+            logger.debug("Self-upgrade dispatch skipped: %s", e)
 
         return result
 

@@ -169,6 +169,11 @@ class SelfUpgradeTrigger:
         """Return number of accumulated signals for a task type."""
         return len(self._signal_history.get(task_type, []))
 
+    def get_accumulated_signals(self, task_type: str) -> List[UpgradeSignal]:
+        """Return all undispatched (artifact_ref is None) signals for a task type."""
+        history = self._signal_history.get(task_type, [])
+        return [s for s in history if s.artifact_ref is None]
+
     # ── Persistence ───────────────────────────────────────────────────
 
     def _persist_signals(self, signals: List[UpgradeSignal], task_type: str) -> None:
