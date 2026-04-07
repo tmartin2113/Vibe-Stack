@@ -33,7 +33,10 @@ class DesignTool(Tool):
             ),
             category=ToolCategory.EXTERNAL_SERVICE,
         )
-        self._api_url = (api_url or os.environ.get("PENPOT_API_URL", "")).rstrip("/")
+        # Only fall back to env when caller didn't pass anything. Empty string is
+        # an explicit "no URL" — preserves it so the missing-URL error path fires.
+        resolved = api_url if api_url is not None else os.environ.get("PENPOT_API_URL", "")
+        self._api_url = resolved.rstrip("/")
 
     def _get_parameters_schema(self) -> Dict[str, Any]:
         return {

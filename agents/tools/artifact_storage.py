@@ -43,7 +43,10 @@ class ArtifactStorageTool(Tool):
             ),
             category=ToolCategory.EXTERNAL_SERVICE,
         )
-        self._base_url = (base_url or os.environ.get("MINIO_URL", "")).rstrip("/")
+        # Only fall back to env when caller didn't pass anything. Empty string is
+        # an explicit "no URL" — preserves it so the missing-URL error path fires.
+        resolved = base_url if base_url is not None else os.environ.get("MINIO_URL", "")
+        self._base_url = resolved.rstrip("/")
 
     def _get_parameters_schema(self) -> Dict[str, Any]:
         return {
@@ -103,7 +106,7 @@ class ArtifactStorageTool(Tool):
                 error="MINIO_URL not set. Configure the MinIO service URL.",
             )
 
-        bucket = bucket or self._DEFAULT_BUCKET
+        bucket = bucket or _DEFAULT_BUCKET
         valid_actions = {"put", "get", "list", "delete", "presign"}
         if action not in valid_actions:
             return ToolResult(
