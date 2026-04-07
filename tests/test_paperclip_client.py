@@ -146,6 +146,12 @@ class TestConstructor:
     def test_missing_api_key_raises(self, monkeypatch):
         monkeypatch.setenv("PAPERCLIP_API_URL", "http://localhost:3100")
         monkeypatch.delenv("PAPERCLIP_API_KEY", raising=False)
+        # Also clear the JWT auto-generation inputs — otherwise the constructor
+        # will silently mint a JWT instead of raising. This test specifically
+        # exercises the "no key, no fallback" path.
+        monkeypatch.delenv("PAPERCLIP_AGENT_JWT_SECRET", raising=False)
+        monkeypatch.delenv("PAPERCLIP_AGENT_ID", raising=False)
+        monkeypatch.delenv("PAPERCLIP_COMPANY_ID", raising=False)
         with pytest.raises(ValueError, match="PAPERCLIP_API_KEY"):
             PaperclipClient()
 
