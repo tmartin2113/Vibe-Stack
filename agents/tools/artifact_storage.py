@@ -15,6 +15,12 @@ from .registry import Tool, ToolCategory, ToolResult
 
 logger = logging.getLogger(__name__)
 
+# Default MinIO bucket used when callers don't specify one. Module-level so it's
+# in scope inside class methods that build the parameter schema (referencing it
+# as a bare name from inside _get_parameters_schema previously caused a
+# NameError that cascaded into every tool-registry schema build).
+_DEFAULT_BUCKET = "vibe-artifacts"
+
 
 class ArtifactStorageTool(Tool):
     """Store and retrieve artifacts using a self-hosted MinIO instance.
@@ -26,8 +32,6 @@ class ArtifactStorageTool(Tool):
     Requires ``MINIO_URL`` environment variable pointing to the MinIO
     instance (e.g. ``http://minio:9000``).
     """
-
-    _DEFAULT_BUCKET = "vibe-artifacts"
 
     def __init__(self, base_url: Optional[str] = None):
         super().__init__(
