@@ -382,9 +382,19 @@ else
 fi
 
 # ══════════════════════════════════════════════════════════════
-# 5b. vLLM — GPU-aware model selection + systemd service
+# 5b. vLLM — GPU-aware model + context auto-tuning
 # ══════════════════════════════════════════════════════════════
-step "vLLM model selection"
+# Detects GPU VRAM and writes hardware-appropriate VLLM_* values to .env.
+# vLLM itself runs as the `vllm` service in docker-compose.gpu.yml — those
+# defaults are safe baselines, .env overrides them with per-host tuning.
+#
+# Tier values are tuned for stable multi-turn agentic tool use. Agents need
+# enough context to read several files plus accumulate a long tool history
+# without blowing the window. The 22 GB tier in particular is the sweet
+# spot for 3090 / 3090 Ti / 4080 — verified live on 2026-04-07 with the
+# 9B AWQ model at 65 K context and max_num_seqs 4.
+
+step "vLLM model selection (auto-tuned to GPU VRAM)"
 
 VLLM_SKIP=false
 GPU_VRAM_MB=0
@@ -396,7 +406,7 @@ if command -v nvidia-smi &>/dev/null; then
         VLLM_SKIP=true
     else
         GPU_VRAM_GB=$(( GPU_VRAM_MB / 1024 ))
-        info "Detected GPU VRAM: ${GPU_VRAM_MB}MB (~${GPU_VRAM_GB}GB)"
+        info "Detected GPU VRAM: ${GPU_VRAM_MB} MiB (~${GPU_VRAM_GB} GB)"
     fi
 else
     warn "nvidia-smi not found — skipping vLLM"
@@ -404,94 +414,72 @@ else
 fi
 
 if [[ "$VLLM_SKIP" == "false" ]]; then
-    # Select model + params based on VRAM tier
-    if (( GPU_VRAM_MB >= 49152 )); then
-        # >= 48GB — full 27B FP16
+    # Pick model + KV cache budget by VRAM tier.
+    #
+    # Total KV cache budget is roughly (GPU mem - model weights - activations).
+    # Doubling max_model_len at constant max_num_seqs doubles the per-sequence
+    # cache. We deliberately keep max_num_seqs low (2-4) for the smaller
+    # tiers because realistic agent workloads are 1-2 concurrent sessions.
+    if (( GPU_VRAM_MB >= 40960 )); then
+        # ≥ 40 GB (A6000, L40, etc.) — full 27B FP16, generous context.
         VLLM_MODEL="Qwen/Qwen3.5-27B"
-        VLLM_MODEL_SHORT="Qwen3.5-27B"
-        MAX_MODEL_LEN=65536
-        GPU_MEM_UTIL=0.92
-        MAX_NUM_SEQS=8
-        EXTRA_ARGS=""
-    elif (( GPU_VRAM_MB >= 24576 )); then
-        # >= 24GB (e.g. A5000/L4/4090) — 27B GPTQ-Int4 (~14GB weights)
-        # Cards reporting < 24576 MiB (e.g. 3090 Ti ~23028 MiB) fall to 9B tier
-        VLLM_MODEL="Qwen/Qwen3.5-27B-GPTQ-Int4"
-        VLLM_MODEL_SHORT="Qwen3.5-27B-GPTQ-Int4"
-        MAX_MODEL_LEN=16384
-        GPU_MEM_UTIL=0.85
-        MAX_NUM_SEQS=4
-        EXTRA_ARGS="--enforce-eager"
-    elif (( GPU_VRAM_MB >= 12288 )); then
-        # >= 12GB — 9B AWQ-Int4 (weights ~5GB, leaves ~16GB+ for KV cache)
-        # AWQ quantization preserves ~97% of FP16 quality while enabling
-        # large context windows and multi-turn agentic tool use.
+        VLLM_MAX_MODEL_LEN=65536
+        VLLM_MAX_NUM_SEQS=8
+        VLLM_GPU_MEM_UTIL=0.92
+        VLLM_QUANTIZATION=""
+    elif (( GPU_VRAM_MB >= 20480 )); then
+        # ≥ 20 GB (3090, 3090 Ti, 4080, 4090, A5000, L4) — 9B AWQ at 65 K.
+        # Verified on 3090 Ti (~22 GB reported as 23028 MiB). Halving
+        # max_num_seqs from 8 to 4 keeps total KV cache footprint constant
+        # while doubling per-sequence context.
         VLLM_MODEL="QuantTrio/Qwen3.5-9B-AWQ"
-        VLLM_MODEL_SHORT="Qwen3.5-9B-AWQ"
-        MAX_MODEL_LEN=32768
-        GPU_MEM_UTIL=0.92
-        MAX_NUM_SEQS=8
-        EXTRA_ARGS="--quantization awq"
+        VLLM_MAX_MODEL_LEN=65536
+        VLLM_MAX_NUM_SEQS=4
+        VLLM_GPU_MEM_UTIL=0.92
+        VLLM_QUANTIZATION="awq"
+    elif (( GPU_VRAM_MB >= 12288 )); then
+        # 12-19 GB (3060 12 GB, 4070, etc.) — 9B AWQ at 32 K.
+        # Same model as the 20 GB tier but smaller context to fit smaller
+        # KV cache. Multi-file investigation tasks may still hit the limit
+        # — agents are taught to read partial files via prompt guidance.
+        VLLM_MODEL="QuantTrio/Qwen3.5-9B-AWQ"
+        VLLM_MAX_MODEL_LEN=32768
+        VLLM_MAX_NUM_SEQS=4
+        VLLM_GPU_MEM_UTIL=0.92
+        VLLM_QUANTIZATION="awq"
     elif (( GPU_VRAM_MB >= 8192 )); then
-        # >= 8GB — 4B FP16
-        VLLM_MODEL="Qwen/Qwen3.5-4B"
-        VLLM_MODEL_SHORT="Qwen3.5-4B"
-        MAX_MODEL_LEN=8192
-        GPU_MEM_UTIL=0.88
-        MAX_NUM_SEQS=2
-        EXTRA_ARGS="--enforce-eager"
+        # 8-11 GB (3060 8 GB, 4060) — 4B model with small context.
+        VLLM_MODEL="Qwen/Qwen3.5-4B-Instruct"
+        VLLM_MAX_MODEL_LEN=16384
+        VLLM_MAX_NUM_SEQS=2
+        VLLM_GPU_MEM_UTIL=0.88
+        VLLM_QUANTIZATION=""
     else
-        warn "GPU VRAM (${GPU_VRAM_MB}MB) too low for vLLM — skipping"
+        warn "GPU VRAM (${GPU_VRAM_MB} MiB) too low for vLLM — skipping"
         VLLM_SKIP=true
     fi
 fi
 
 if [[ "$VLLM_SKIP" == "false" ]]; then
-    # Normalize short name to lowercase (DeerFlow config.yaml uses it as model key)
-    VLLM_MODEL_SHORT="$(echo "$VLLM_MODEL_SHORT" | tr '[:upper:]' '[:lower:]')"
-
-    # Select tool-call and reasoning parsers based on model family.
-    # Different model families need different parsers in vLLM.
+    # Tool-call parser MUST match the model family. Wrong parser → vLLM
+    # silently swallows tool calls and DeerFlow agents produce empty
+    # responses. See vibe-stack-vllm-migration memory for the post-mortem.
     case "$VLLM_MODEL" in
-        Qwen/Qwen3*|qwen/Qwen3*|*Qwen3.5*|*qwen3.5*)
-            TOOL_CALL_PARSER="qwen3_xml"
-            OPTIONAL_ARGS="--reasoning-parser qwen3"
+        Qwen/Qwen3*|qwen/Qwen3*|*Qwen3.5*|*qwen3.5*|*qwen3-*)
+            VLLM_TOOL_CALL_PARSER="qwen3_xml"
             ;;
         *)
-            # Default: hermes is the most widely supported parser
-            TOOL_CALL_PARSER="hermes"
-            OPTIONAL_ARGS=""
+            VLLM_TOOL_CALL_PARSER="hermes"
             ;;
     esac
 
-    # Append tier-specific flags
-    if [[ -n "$EXTRA_ARGS" ]]; then
-        OPTIONAL_ARGS="${OPTIONAL_ARGS:+$OPTIONAL_ARGS }$EXTRA_ARGS"
-    fi
-
-    success "Selected vLLM model: $VLLM_MODEL (context=$MAX_MODEL_LEN, mem=$GPU_MEM_UTIL, parser=$TOOL_CALL_PARSER)"
-
-    # Install systemd service from template
-    HF_CACHE="${SUDO_USER:+$(eval echo "~${SUDO_USER}")}/.cache/huggingface"
-    HF_CACHE="${HF_CACHE:-/root/.cache/huggingface}"
-    mkdir -p "$HF_CACHE"
-
-    sed -e "s|__VLLM_MODEL__|${VLLM_MODEL}|g" \
-        -e "s|__VLLM_MODEL_SHORT__|${VLLM_MODEL_SHORT}|g" \
-        -e "s|__MAX_MODEL_LEN__|${MAX_MODEL_LEN}|g" \
-        -e "s|__GPU_MEM_UTIL__|${GPU_MEM_UTIL}|g" \
-        -e "s|__MAX_NUM_SEQS__|${MAX_NUM_SEQS}|g" \
-        -e "s|__HF_CACHE__|${HF_CACHE}|g" \
-        -e "s|__TOOL_CALL_PARSER__|${TOOL_CALL_PARSER}|g" \
-        -e "s|__OPTIONAL_ARGS__|${OPTIONAL_ARGS}|g" \
-        vllm.service > /etc/systemd/system/vllm.service
-
-    # Remove trailing whitespace from empty __EXTRA_ARGS__ substitution
-    sed -i 's/[[:space:]]*$//' /etc/systemd/system/vllm.service
-
-    systemctl daemon-reload
-    systemctl enable vllm
-    success "vLLM systemd service installed and enabled"
+    success "Selected vLLM tuning:"
+    success "  model              = ${VLLM_MODEL}"
+    success "  max_model_len      = ${VLLM_MAX_MODEL_LEN} tokens"
+    success "  max_num_seqs       = ${VLLM_MAX_NUM_SEQS}"
+    success "  gpu_memory_util    = ${VLLM_GPU_MEM_UTIL}"
+    success "  quantization       = ${VLLM_QUANTIZATION:-none}"
+    success "  tool_call_parser   = ${VLLM_TOOL_CALL_PARSER}"
 
     # Pre-pull the vLLM container image (skip if already present)
     if docker image inspect vllm/vllm-openai:latest &>/dev/null; then
@@ -502,12 +490,21 @@ if [[ "$VLLM_SKIP" == "false" ]]; then
         success "vLLM Docker image pulled"
     fi
 
-    # Persist model selection to .env
+    # Persist all VLLM_* values to .env so docker-compose.gpu.yml picks
+    # them up at startup. Defaults in docker-compose.gpu.yml are safe
+    # baselines (32 K context, 8 seqs); these env values override them
+    # with hardware-specific tuning.
     _update_env_var "VLLM_MODEL" "${VLLM_MODEL}"
-    _update_env_var "VLLM_MODEL_SHORT" "${VLLM_MODEL_SHORT}"
-    success "VLLM_MODEL=${VLLM_MODEL} written to .env"
+    _update_env_var "VLLM_MAX_MODEL_LEN" "${VLLM_MAX_MODEL_LEN}"
+    _update_env_var "VLLM_MAX_NUM_SEQS" "${VLLM_MAX_NUM_SEQS}"
+    _update_env_var "VLLM_GPU_MEM_UTIL" "${VLLM_GPU_MEM_UTIL}"
+    _update_env_var "VLLM_TOOL_CALL_PARSER" "${VLLM_TOOL_CALL_PARSER}"
+    if [[ -n "${VLLM_QUANTIZATION:-}" ]]; then
+        _update_env_var "VLLM_QUANTIZATION" "${VLLM_QUANTIZATION}"
+    fi
+    success "vLLM tuning written to .env"
 
-    # Wire MiroFish to use the same model as the main pipeline (user can override via MIROFISH_LLM_MODEL)
+    # Wire MiroFish to use the same model as the main pipeline
     if [ -z "${MIROFISH_LLM_MODEL:-}" ]; then
         _update_env_var "MIROFISH_LLM_MODEL" "${VLLM_MODEL}"
         success "MIROFISH_LLM_MODEL=${VLLM_MODEL} (follows VLLM_MODEL)"
