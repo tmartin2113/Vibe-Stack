@@ -59,7 +59,6 @@ IMMUTABLE_PATHS = frozenset({
     "agents/memory_store.py",
     "agents/artifact_store.py",
     "agents/spending_tracker.py",
-    "agents/session_store.py",
     "agents/embedder.py",
     # Heartbeat
     "agents/heartbeat.py",
@@ -178,7 +177,12 @@ class Tier2Pipeline:
 
     # Dormant — see Tier2Pipeline docstring
     def _run_tests(self, proposal: Any) -> Tuple[bool, str]:
-        """Run pytest against a temporary copy with the proposed changes."""
+        """Run pytest against a temporary copy with the proposed changes.
+
+        **M4 TODO:** body still accesses ``proposal.files`` from the deleted
+        ``UpgradeProposal`` dataclass. Update attribute access to match
+        ``TypedEdit`` before re-enabling.
+        """
         with tempfile.TemporaryDirectory(prefix="vibe_upgrade_") as tmpdir:
             tmp_path = Path(tmpdir)
 
@@ -219,7 +223,12 @@ class Tier2Pipeline:
 
     # Dormant — see Tier2Pipeline docstring
     def _run_bandit(self, proposal: Any) -> Tuple[bool, str]:
-        """Run bandit security scan on the proposed files."""
+        """Run bandit security scan on the proposed files.
+
+        **M4 TODO:** body still accesses ``proposal.files`` from the deleted
+        ``UpgradeProposal`` dataclass. Update attribute access to match
+        ``TypedEdit`` before re-enabling.
+        """
         with tempfile.TemporaryDirectory(prefix="vibe_bandit_") as tmpdir:
             tmp_path = Path(tmpdir)
 
@@ -257,7 +266,12 @@ class Tier2Pipeline:
 
     # Dormant — see Tier2Pipeline docstring
     def _generate_diff_text(self, proposal: Any) -> str:
-        """Generate a human-readable diff summary for critic review."""
+        """Generate a human-readable diff summary for critic review.
+
+        **M4 TODO:** body still accesses ``proposal.description`` / ``proposal.files`` /
+        ``proposal.rationale`` from the deleted ``UpgradeProposal`` dataclass. Update
+        attribute access to match ``TypedEdit`` before re-enabling.
+        """
         parts = [f"## Self-Upgrade Proposal: {proposal.description}\n"]
 
         for rel_path, new_content in proposal.files.items():
@@ -284,6 +298,11 @@ class Tier2Pipeline:
 
         Uses a file lock to prevent concurrent git operations from
         multiple daemon workers.
+
+        **M4 TODO:** body still accesses ``proposal.description`` / ``proposal.files`` /
+        ``proposal.author`` / ``proposal.rationale`` from the deleted
+        ``UpgradeProposal`` dataclass. Update attribute access to match
+        ``TypedEdit`` before re-enabling.
 
         Returns:
             (branch_name, commit_hash)
