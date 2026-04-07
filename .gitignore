@@ -68,3 +68,6 @@ training/data/
 # llama.cpp
 llama.cpp/
 
+# Git worktrees
+.worktrees/
+
