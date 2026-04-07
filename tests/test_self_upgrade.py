@@ -103,6 +103,20 @@ class TestSelfUpgradeConfig:
             config = SystemConfig.from_env()
             assert config.self_upgrade.max_diff_lines == 200
 
+    def test_human_triage_user_id_read_from_env(self, monkeypatch):
+        """VIBE_HUMAN_TRIAGE_USER_ID env var populates SelfUpgradeConfig.human_triage_user_id."""
+        from agents.config import SystemConfig
+        monkeypatch.setenv("VIBE_HUMAN_TRIAGE_USER_ID", "user_prime_123")
+        cfg = SystemConfig.from_env()
+        assert cfg.self_upgrade.human_triage_user_id == "user_prime_123"
+
+    def test_human_triage_user_id_defaults_to_empty(self, monkeypatch):
+        """Unset env var leaves human_triage_user_id as empty string."""
+        from agents.config import SystemConfig
+        monkeypatch.delenv("VIBE_HUMAN_TRIAGE_USER_ID", raising=False)
+        cfg = SystemConfig.from_env()
+        assert cfg.self_upgrade.human_triage_user_id == ""
+
 
 # ── Task type registry integration ───────────────────────────────────
 
