@@ -124,7 +124,7 @@ const ORG = [
     capabilities: "Pre-flight research for backend: API docs, library examples, error investigation, best practices.",
     icon: "search",
     envKey: "PAPERCLIP_AGENT_ID_BACKEND_ASSISTANT",
-    managerRef: "CTO",
+    managerRef: "Sr. Backend Engineer",
   },
   // 5. Sr. Frontend Engineer
   {
@@ -154,7 +154,7 @@ const ORG = [
     capabilities: "Pre-flight research for frontend: component libraries, CSS patterns, framework docs, accessibility.",
     icon: "search",
     envKey: "PAPERCLIP_AGENT_ID_FRONTEND_ASSISTANT",
-    managerRef: "CTO",
+    managerRef: "Sr. Frontend Engineer",
   },
   // 7. Sr. QA Engineer
   {
@@ -184,7 +184,7 @@ const ORG = [
     capabilities: "Pre-flight research for QA: testing strategies, security checklists, vulnerability databases, coverage tools.",
     icon: "search",
     envKey: "PAPERCLIP_AGENT_ID_QA_ASSISTANT",
-    managerRef: "CTO",
+    managerRef: "Sr. QA Engineer",
   },
   // 9. Sr. DevOps Engineer
   {
@@ -214,7 +214,7 @@ const ORG = [
     capabilities: "Pre-flight research for DevOps: Docker best practices, CI/CD patterns, infrastructure docs.",
     icon: "search",
     envKey: "PAPERCLIP_AGENT_ID_DEVOPS_ASSISTANT",
-    managerRef: "CTO",
+    managerRef: "Sr. DevOps Engineer",
   },
 ];
 
