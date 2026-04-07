@@ -500,9 +500,17 @@ class TestCreateBackendFromConfig:
 class TestResponseTiming:
 
     @patch("vibe.backends.vllm.requests.post")
-    def test_vllm_truncates_oversized_context(self, mock_post):
+    def test_vllm_truncates_oversized_context(self, mock_post, monkeypatch):
         """generate_chat should truncate messages when they exceed max_model_len."""
+        from vibe.backends import vllm as vllm_module
         from vibe.backends.vllm import estimate_tokens
+
+        # Pin _MAX_MODEL_LEN to a known value for deterministic truncation —
+        # the env-var-derived default may be higher on hosts with larger GPUs
+        # (the recent vLLM context-tier rewrite bumped 32K → 65K on 20+ GB
+        # cards), which would cause this test to mis-identify whether
+        # truncation fired.
+        monkeypatch.setattr(vllm_module, "_MAX_MODEL_LEN", 32768)
 
         backend = VLLMBackend(host="localhost", port=8000, model="test")
 
