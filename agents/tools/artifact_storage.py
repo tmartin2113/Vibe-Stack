@@ -15,6 +15,12 @@ from .registry import Tool, ToolCategory, ToolResult
 
 logger = logging.getLogger(__name__)
 
+# Default MinIO bucket used when callers don't specify one. Module-level so it's
+# in scope inside class methods that build the parameter schema (referencing it
+# as a bare name from inside _get_parameters_schema previously caused a
+# NameError that cascaded into every tool-registry schema build).
+_DEFAULT_BUCKET = "vibe-artifacts"
+
 
 class ArtifactStorageTool(Tool):
     """Store and retrieve artifacts using a self-hosted MinIO instance.
@@ -27,8 +33,6 @@ class ArtifactStorageTool(Tool):
     instance (e.g. ``http://minio:9000``).
     """
 
-    _DEFAULT_BUCKET = "vibe-artifacts"
-
     def __init__(self, base_url: Optional[str] = None):
         super().__init__(
             name="artifact_storage",
@@ -39,7 +43,10 @@ class ArtifactStorageTool(Tool):
             ),
             category=ToolCategory.EXTERNAL_SERVICE,
         )
-        self._base_url = (base_url or os.environ.get("MINIO_URL", "")).rstrip("/")
+        # Only fall back to env when caller didn't pass anything. Empty string is
+        # an explicit "no URL" — preserves it so the missing-URL error path fires.
+        resolved = base_url if base_url is not None else os.environ.get("MINIO_URL", "")
+        self._base_url = resolved.rstrip("/")
 
     def _get_parameters_schema(self) -> Dict[str, Any]:
         return {
@@ -99,7 +106,7 @@ class ArtifactStorageTool(Tool):
                 error="MINIO_URL not set. Configure the MinIO service URL.",
             )
 
-        bucket = bucket or self._DEFAULT_BUCKET
+        bucket = bucket or _DEFAULT_BUCKET
         valid_actions = {"put", "get", "list", "delete", "presign"}
         if action not in valid_actions:
             return ToolResult(

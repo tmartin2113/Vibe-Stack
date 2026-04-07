@@ -34,7 +34,9 @@ class WebScrapeTool(Tool):
             ),
             category=ToolCategory.WEB_API,
         )
-        self._ws_url = ws_url or os.environ.get("PLAYWRIGHT_WS_URL", "")
+        # Only fall back to env when caller didn't pass anything. Empty string is
+        # an explicit "no URL" — preserves it so the missing-URL error path fires.
+        self._ws_url = ws_url if ws_url is not None else os.environ.get("PLAYWRIGHT_WS_URL", "")
 
     def _get_parameters_schema(self) -> Dict[str, Any]:
         return {

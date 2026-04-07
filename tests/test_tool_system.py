@@ -609,39 +609,37 @@ class TestToolRegistry:
 
 
 class TestDefaultRegistry:
+    # Update this set when tools are intentionally added/removed from the
+    # default registry. Membership is the strong assertion; the count check
+    # below uses the size of this set so it stays in sync automatically.
+    _EXPECTED_DEFAULT_TOOLS = frozenset({
+        "python_executor", "pytest_runner", "bandit", "shell_executor",
+        "web_search", "quick_lookup", "web_scrape", "browser_automation",
+        "design", "git_forge", "artifact_storage",
+        "MiroFishSimulation", "OCRTool",
+        "memory_store", "memory_recall",
+        "file_reader", "file_writer",
+        "dependency_scanner", "container_inspect",
+        "lighthouse_seo", "page_analyzer", "seo_checklist",
+        "static_code_analyzer", "codebase_search", "git_operations",
+        "data_parser",
+    })
+
     def test_default_tools_registered(self):
         reg = create_default_tool_registry(sandbox_pool=MagicMock())
-        tools = reg.list_tools()
-        # Core tools
-        assert "python_executor" in tools
-        assert "pytest_runner" in tools
-        assert "bandit" in tools
-        assert "file_reader" in tools
-        assert "file_writer" in tools
-        # New tools
-        assert "shell_executor" in tools
-        assert "static_code_analyzer" in tools
-        assert "codebase_search" in tools
-        assert "git_operations" in tools
-        assert "data_parser" in tools
-        assert "dependency_scanner" in tools
-        assert "container_inspect" in tools
-        assert "lighthouse_seo" in tools
-        assert "page_analyzer" in tools
-        assert "seo_checklist" in tools
-        assert len(tools) == 17
+        tools = set(reg.list_tools())
+        missing = self._EXPECTED_DEFAULT_TOOLS - tools
+        extra = tools - self._EXPECTED_DEFAULT_TOOLS
+        assert not missing, f"Missing expected tools: {missing}"
+        assert not extra, f"Unexpected extra tools: {extra}"
+        assert len(tools) == len(self._EXPECTED_DEFAULT_TOOLS)
 
     def test_default_tools_have_schemas(self):
         reg = create_default_tool_registry(sandbox_pool=MagicMock())
         schemas = reg.get_all_schemas()
-        assert len(schemas) == 17
+        assert len(schemas) == len(self._EXPECTED_DEFAULT_TOOLS)
         names = {s["name"] for s in schemas}
-        assert "python_executor" in names
-        assert "shell_executor" in names
-        assert "static_code_analyzer" in names
-        assert "codebase_search" in names
-        assert "git_operations" in names
-        assert "data_parser" in names
+        assert names == self._EXPECTED_DEFAULT_TOOLS
 
 
 # ============================================================
@@ -1438,11 +1436,17 @@ class TestWebFetchRegistryGating:
 
     def test_tool_count_without_egress(self):
         reg = create_default_tool_registry(sandbox_pool=MagicMock())
-        assert len(reg.list_tools()) == 17
+        # Without egress, web_fetch is excluded
+        tools = set(reg.list_tools())
+        assert "web_fetch" not in tools
+        assert len(tools) == len(TestDefaultRegistry._EXPECTED_DEFAULT_TOOLS)
 
     def test_tool_count_with_egress(self):
         reg = create_default_tool_registry(sandbox_pool=MagicMock(), network_egress=True)
-        assert len(reg.list_tools()) == 18
+        # With egress, web_fetch is added on top of the default set
+        tools = set(reg.list_tools())
+        assert "web_fetch" in tools
+        assert len(tools) == len(TestDefaultRegistry._EXPECTED_DEFAULT_TOOLS) + 1
 
     def test_sandboxed_web_fetch_when_pool_and_egress(self):
         from agents.sandbox.tools import SandboxedWebFetchTool

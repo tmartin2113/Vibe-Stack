@@ -34,7 +34,10 @@ class WebSearchTool(Tool):
             ),
             category=ToolCategory.WEB_API,
         )
-        self._base_url = (base_url or os.environ.get("SEARXNG_URL", "")).rstrip("/")
+        # Only fall back to env when caller didn't pass anything. Empty string is
+        # an explicit "no URL" — preserves it so the missing-URL error path fires.
+        resolved = base_url if base_url is not None else os.environ.get("SEARXNG_URL", "")
+        self._base_url = resolved.rstrip("/")
 
     def _get_parameters_schema(self) -> Dict[str, Any]:
         return {
