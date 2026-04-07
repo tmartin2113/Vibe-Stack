@@ -1,15 +1,7 @@
 """
 Self-upgrade safety pipeline for Vibe agents.
 
-Enables agents to propose, validate, and apply modifications to their own
-source code through a gated pipeline:
-
-    1. Propose a diff (change set)
-    2. Apply to a temporary working copy
-    3. Run pytest on the modified copy
-    4. Run bandit security scan
-    5. Validate via the Critic (score >= threshold)
-    6. If all gates pass, apply the change and commit on a feature branch
+Tier 2 (typed code edit) pipeline — dormant until M4.
 
 The pipeline is **opt-in** — it only activates when the
 ``VIBE_SELF_UPGRADE_ENABLED`` env var is set to ``true``.
@@ -42,12 +34,62 @@ DEFAULT_MIN_SCORE = 90
 
 # Files/directories that are never modifiable (even with self-upgrade enabled)
 IMMUTABLE_PATHS = frozenset({
-    "agents/self_upgrade.py",           # This module (prevent recursive bypass)
-    "agents/self_upgrade_trigger.py",   # Trigger module (prevent signal manipulation)
-    "agents/skill_security.py",         # Security layer
-    "agents/config.py",                 # Core config
+    # Current immutables
+    "agents/self_upgrade.py",
+    "agents/self_upgrade_trigger.py",
+    "agents/self_upgrade_dispatcher.py",
+    "agents/skill_security.py",
+    "agents/config.py",
     ".env",
     ".env.example",
+    # Workflow core
+    "agents/graph.py",
+    "agents/graph_engine.py",
+    "agents/graph_runners.py",
+    "agents/graph_nodes.py",
+    "agents/nodes.py",
+    "agents/state.py",
+    "agents/specialist_nodes.py",
+    "agents/output_nodes.py",
+    # LLM plumbing (llm_retry.py intentionally absent — threshold_tweak allowlist)
+    "agents/llm_backend.py",
+    "agents/backend_pool.py",
+    # Storage
+    "agents/message_store.py",
+    "agents/memory_store.py",
+    "agents/artifact_store.py",
+    "agents/spending_tracker.py",
+    "agents/session_store.py",
+    "agents/embedder.py",
+    # Heartbeat
+    "agents/heartbeat.py",
+    "agents/heartbeat_context.py",
+    "agents/heartbeat_progress.py",
+    "agents/heartbeat_signals.py",
+    "agents/heartbeat_spending.py",
+    "agents/heartbeat_formatting.py",
+    "agents/workflow_factory.py",
+    # Skill subsystem plumbing
+    "agents/skill_loader.py",
+    "agents/skill_generator.py",
+    "agents/skill_outcome_store.py",
+    "agents/skill_cleanup.py",
+    "agents/skill_search.py",
+    "agents/skill_remote.py",
+    # External clients
+    "agents/paperclip_client.py",
+    "agents/ws_client.py",
+    "agents/messenger_client.py",
+    "agents/api_key_manager.py",
+    # Resource layer
+    "agents/resource_discovery.py",
+    "agents/resource_allocator.py",
+    # Orchestrator + main
+    "agents/main.py",
+    "agents/orchestrator.py",
+    "agents/daemon.py",
+    "agents/cancellation.py",
+    "agents/intent_classifier.py",
 })
 
 # Lock file for serialising git operations across concurrent workers
@@ -72,52 +114,11 @@ def get_project_root() -> Path:
 
 
 @dataclass
-class UpgradeProposal:
-    """A proposed self-upgrade change set."""
-
-    description: str
-    files: Dict[str, str]  # {relative_path: new_content}
-    rationale: str = ""
-    author: str = "vibe-self-upgrade"
-
-    def validate_paths(self) -> List[str]:
-        """Return list of validation errors for proposed file paths."""
-        errors = []
-        project_root = get_project_root()
-
-        for rel_path in self.files:
-            # Block immutable paths
-            if rel_path in IMMUTABLE_PATHS:
-                errors.append(
-                    f"Cannot modify immutable path: {rel_path}"
-                )
-                continue
-
-            # Must stay within project root
-            full_path = (project_root / rel_path).resolve()
-            try:
-                full_path.relative_to(project_root)
-            except ValueError:
-                errors.append(
-                    f"Path escapes project root: {rel_path}"
-                )
-                continue
-
-            # Must be within agents/ directory (no modifying Docker, CI, etc.)
-            if not rel_path.startswith("agents/"):
-                errors.append(
-                    f"Self-upgrade limited to agents/ directory: {rel_path}"
-                )
-
-        return errors
-
-
-@dataclass
 class UpgradeResult:
     """Result of a self-upgrade attempt."""
 
     success: bool
-    proposal: UpgradeProposal
+    typed_edit: Optional[Any] = None
     test_passed: bool = False
     test_output: str = ""
     bandit_passed: bool = False
@@ -129,16 +130,15 @@ class UpgradeResult:
     errors: List[str] = field(default_factory=list)
 
 
-class SelfUpgradePipeline:
-    """Gated pipeline for applying self-modifications safely.
+class Tier2Pipeline:
+    """Tier 2 (typed code edit) pipeline — dormant until M4.
 
-    Each upgrade proposal goes through:
-    1. Path validation (immutable files, directory constraints)
-    2. Diff size check
-    3. pytest on a temporary copy of the modified source
-    4. bandit security scan on changed files
-    5. (Optional) Critic scoring via the workflow's critic adapter
-    6. Git commit on a feature branch
+    Gated pipeline for applying typed edits via the AST verifier. Currently a
+    skeleton: __init__ and execute() exist but execute() returns Rejected for
+    every input until M4 ships TypedEdit and the AST verifier.
+
+    Private helpers (_run_tests, _run_bandit, _apply_and_commit, _generate_diff_text)
+    are kept intact for M4's per-edit-type gates.
     """
 
     def __init__(
@@ -151,111 +151,33 @@ class SelfUpgradePipeline:
         self.min_critic_score = min_critic_score
         self.max_diff_lines = max_diff_lines
 
-    def execute(
-        self,
-        proposal: UpgradeProposal,
-        critic_fn=None,
-    ) -> UpgradeResult:
-        """Run the full upgrade pipeline.
+    def execute(self, typed_edit: Optional[Any] = None) -> UpgradeResult:
+        """Execute a typed edit through the safety pipeline.
 
-        Args:
-            proposal: The proposed changes.
-            critic_fn: Optional callable(description, diff_text) -> (score, feedback).
-                       If None, critic gate is skipped.
-
-        Returns:
-            UpgradeResult with pass/fail details for each gate.
+        Dormant until M4. Currently:
+        - Returns Rejected if VIBE_SELF_UPGRADE_ENABLED is false
+        - Returns Rejected for any non-None typed_edit (TypedEdit doesn't exist yet)
+        - Returns Rejected for None typed_edit ("no edit provided")
         """
         if not is_self_upgrade_enabled():
             return UpgradeResult(
                 success=False,
-                proposal=proposal,
-                errors=["Self-upgrade is not enabled (set VIBE_SELF_UPGRADE_ENABLED=true)"],
+                errors=["Self-upgrade not enabled (VIBE_SELF_UPGRADE_ENABLED=false)"],
             )
 
-        result = UpgradeResult(success=False, proposal=proposal)
+        if typed_edit is None:
+            return UpgradeResult(
+                success=False,
+                errors=["Tier2Pipeline dormant until M4: no typed_edit provided"],
+            )
 
-        # Gate 1: Path validation
-        path_errors = proposal.validate_paths()
-        if path_errors:
-            result.errors = path_errors
-            logger.warning("Self-upgrade blocked by path validation: %s", path_errors)
-            return result
-
-        # Gate 2: Diff size check
-        total_lines = sum(
-            content.count("\n") + 1 for content in proposal.files.values()
+        return UpgradeResult(
+            success=False,
+            errors=["Tier2Pipeline dormant until M4: TypedEdit handling not implemented"],
         )
-        if total_lines > self.max_diff_lines:
-            result.errors = [
-                f"Diff too large: {total_lines} lines (max {self.max_diff_lines})"
-            ]
-            logger.warning("Self-upgrade blocked by diff size: %d lines", total_lines)
-            return result
 
-        # Gate 3 & 4: Run tests and bandit in a temporary copy
-        try:
-            test_passed, test_output = self._run_tests(proposal)
-            result.test_passed = test_passed
-            result.test_output = test_output
-
-            if not test_passed:
-                result.errors.append("pytest failed on proposed changes")
-                logger.warning("Self-upgrade blocked: tests failed")
-                return result
-
-            bandit_passed, bandit_output = self._run_bandit(proposal)
-            result.bandit_passed = bandit_passed
-            result.bandit_output = bandit_output
-
-            if not bandit_passed:
-                result.errors.append("bandit found security issues in proposed changes")
-                logger.warning("Self-upgrade blocked: bandit scan failed")
-                return result
-        except Exception as e:
-            result.errors.append(f"Validation error: {e}")
-            logger.exception("Self-upgrade validation error")
-            return result
-
-        # Gate 5: Critic scoring (optional)
-        if critic_fn is not None:
-            try:
-                diff_text = self._generate_diff_text(proposal)
-                score, feedback = critic_fn(proposal.description, diff_text)
-                result.critic_score = score
-                result.critic_feedback = feedback
-
-                if score < self.min_critic_score:
-                    result.errors.append(
-                        f"Critic score {score} below threshold {self.min_critic_score}"
-                    )
-                    logger.warning(
-                        "Self-upgrade blocked: critic score %d < %d",
-                        score, self.min_critic_score,
-                    )
-                    return result
-            except Exception as e:
-                result.errors.append(f"Critic evaluation error: {e}")
-                logger.exception("Self-upgrade critic error")
-                return result
-
-        # All gates passed — apply changes and commit
-        try:
-            branch_name, commit_hash = self._apply_and_commit(proposal)
-            result.branch_name = branch_name
-            result.commit_hash = commit_hash
-            result.success = True
-            logger.info(
-                "Self-upgrade applied: branch=%s commit=%s",
-                branch_name, commit_hash,
-            )
-        except Exception as e:
-            result.errors.append(f"Failed to apply changes: {e}")
-            logger.exception("Self-upgrade apply error")
-
-        return result
-
-    def _run_tests(self, proposal: UpgradeProposal) -> Tuple[bool, str]:
+    # Dormant — see Tier2Pipeline docstring
+    def _run_tests(self, proposal: Any) -> Tuple[bool, str]:
         """Run pytest against a temporary copy with the proposed changes."""
         with tempfile.TemporaryDirectory(prefix="vibe_upgrade_") as tmpdir:
             tmp_path = Path(tmpdir)
@@ -295,7 +217,8 @@ class SelfUpgradePipeline:
             except FileNotFoundError:
                 return False, "pytest not found"
 
-    def _run_bandit(self, proposal: UpgradeProposal) -> Tuple[bool, str]:
+    # Dormant — see Tier2Pipeline docstring
+    def _run_bandit(self, proposal: Any) -> Tuple[bool, str]:
         """Run bandit security scan on the proposed files."""
         with tempfile.TemporaryDirectory(prefix="vibe_bandit_") as tmpdir:
             tmp_path = Path(tmpdir)
@@ -332,7 +255,8 @@ class SelfUpgradePipeline:
                 logger.warning("bandit not installed, skipping security scan")
                 return True, "bandit not installed (skipped)"
 
-    def _generate_diff_text(self, proposal: UpgradeProposal) -> str:
+    # Dormant — see Tier2Pipeline docstring
+    def _generate_diff_text(self, proposal: Any) -> str:
         """Generate a human-readable diff summary for critic review."""
         parts = [f"## Self-Upgrade Proposal: {proposal.description}\n"]
 
@@ -352,8 +276,9 @@ class SelfUpgradePipeline:
 
         return "\n".join(parts)
 
+    # Dormant — see Tier2Pipeline docstring
     def _apply_and_commit(
-        self, proposal: UpgradeProposal
+        self, proposal: Any
     ) -> Tuple[str, str]:
         """Apply changes to a feature branch, commit, and push.
 
@@ -467,160 +392,5 @@ class SelfUpgradePipeline:
             lock_fd.close()
 
 
-# ── LLM-driven code generation ───────────────────────────────────────
-
-
-def generate_upgrade_proposal(
-    description: str,
-    rationale: str,
-    target_files: List[str],
-    base_model: Any,
-    project_root: Optional[Path] = None,
-    state: Optional[Dict[str, Any]] = None,
-) -> Optional[UpgradeProposal]:
-    """Use the LLM to generate an UpgradeProposal from trigger analysis.
-
-    Reads the target files, asks the LLM to propose improvements based on
-    the accumulated signal rationale, and returns a structured proposal.
-
-    Args:
-        description:  What should be improved (from TriggerAnalysis).
-        rationale:    Why (accumulated signal details).
-        target_files: Which files to read and potentially modify.
-        base_model:   The LLM backend instance.
-        state:        Optional workflow state dict — if provided, self-upgrade
-                      token usage is added to total_input/output_tokens.
-        project_root: Project root directory.
-
-    Returns:
-        UpgradeProposal with modified file contents, or None if the LLM
-        declines to propose changes.
-    """
-    if project_root is None:
-        project_root = get_project_root()
-
-    # Read current contents of target files
-    file_contents = {}
-    for rel_path in target_files:
-        full_path = project_root / rel_path
-        if full_path.exists() and full_path.is_file():
-            try:
-                file_contents[rel_path] = full_path.read_text()
-            except OSError:
-                continue
-
-    if not file_contents:
-        logger.warning("No readable target files for self-upgrade proposal")
-        return None
-
-    # Build the LLM prompt
-    file_sections = []
-    for rel_path, content in file_contents.items():
-        # Truncate very large files to avoid context overflow
-        truncated = content[:8000] if len(content) > 8000 else content
-        file_sections.append(
-            f"### {rel_path}\n```python\n{truncated}\n```"
-        )
-
-    prompt = f"""You are proposing a targeted improvement to the Vibe agent codebase.
-
-## Improvement Goal
-{description}
-
-## Evidence (from accumulated workflow signals)
-{rationale}
-
-## Current Source Files
-{chr(10).join(file_sections)}
-
-## Instructions
-1. Analyse the evidence and source files above
-2. Identify ONE specific, minimal change that addresses the dominant issue
-3. Output the COMPLETE modified file content for each file you change
-4. If no change is warranted, respond with exactly: NO_CHANGE
-
-## Output Format
-For each file you modify, output:
-FILE: <relative_path>
-```python
-<complete file content>
-```
-
-Only output files you actually changed. Keep changes minimal and backward-compatible.
-Do NOT modify function signatures unless absolutely necessary.
-Do NOT add new dependencies.
-"""
-
-    messages = [
-        {"role": "system", "content": (
-            "You are a senior software engineer performing a controlled "
-            "self-upgrade on the Vibe agent codebase. Output only the "
-            "requested format — no commentary."
-        )},
-        {"role": "user", "content": prompt},
-    ]
-
-    try:
-        response = base_model.generate(
-            messages, temperature=0.3, max_tokens=4000,
-        )
-    except Exception as e:
-        logger.error("LLM call failed during self-upgrade generation: %s", e)
-        return None
-
-    # Best-effort token tracking — estimate from prompt/response length
-    # and add to workflow state so heartbeat reports them to Paperclip.
-    if state is not None:
-        prompt_chars = sum(len(m["content"]) for m in messages)
-        response_chars = len(response) if response else 0
-        # Rough estimate: ~4 chars per token (conservative)
-        est_input = prompt_chars // 4
-        est_output = response_chars // 4
-        state["total_input_tokens"] = state.get("total_input_tokens", 0) + est_input
-        state["total_output_tokens"] = state.get("total_output_tokens", 0) + est_output
-
-    if not response or "NO_CHANGE" in response:
-        logger.info("LLM declined to propose changes for: %s", description)
-        return None
-
-    # Parse the response into file contents
-    modified_files = _parse_llm_file_output(response, file_contents)
-    if not modified_files:
-        logger.warning("Failed to parse LLM output for self-upgrade proposal")
-        return None
-
-    return UpgradeProposal(
-        description=description,
-        files=modified_files,
-        rationale=rationale,
-        author="vibe-self-upgrade",
-    )
-
-
-def _parse_llm_file_output(
-    response: str, original_files: Dict[str, str]
-) -> Dict[str, str]:
-    """Parse LLM output into {rel_path: content} dict.
-
-    Expected format:
-        FILE: agents/foo.py
-        ```python
-        <content>
-        ```
-    """
-    import re
-
-    files: Dict[str, str] = {}
-    # Match FILE: <path> followed by a fenced code block
-    pattern = r"FILE:\s*(\S+)\s*\n```(?:python)?\n(.*?)```"
-    matches = re.findall(pattern, response, re.DOTALL)
-
-    for rel_path, content in matches:
-        rel_path = rel_path.strip()
-        # Only accept files that were in our target list
-        if rel_path in original_files:
-            # Sanity: content shouldn't be empty or identical
-            if content.strip() and content.strip() != original_files[rel_path].strip():
-                files[rel_path] = content
-
-    return files
+# Backward-compat alias — remove after M4 ships and all callers move to Tier2Pipeline.
+SelfUpgradePipeline = Tier2Pipeline

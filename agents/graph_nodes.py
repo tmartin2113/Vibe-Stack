@@ -264,15 +264,12 @@ def create_node_wrappers(
                 )
                 result["cache_entry_stored"] = stored
 
-        # Analyse workflow outcome for self-upgrade signals and execute
-        # the full pipeline if enough evidence has accumulated.
+        # Self-upgrade dispatch — wired up in Task 7 of the M0 plan.
+        # For now, the analyse step still runs to populate signals,
+        # but no proposal generation or pipeline execution happens.
         try:
             from .self_upgrade_trigger import analyse_for_upgrade
-            from .self_upgrade import (
-                SelfUpgradePipeline,
-                generate_upgrade_proposal,
-                is_self_upgrade_enabled,
-            )
+            from .self_upgrade import is_self_upgrade_enabled
 
             if is_self_upgrade_enabled():
                 trigger_result = analyse_for_upgrade(
@@ -283,54 +280,9 @@ def create_node_wrappers(
                         {"category": s.category, "detail": s.detail}
                         for s in trigger_result.signals
                     ]
-                if trigger_result.should_propose and base_model is not None:
-                    result["upgrade_proposal_ready"] = True
-                    result["upgrade_proposal_description"] = (
-                        trigger_result.proposal_description
-                    )
-                    logger.info(
-                        "Self-upgrade proposal ready: %s — generating code",
-                        trigger_result.proposal_description,
-                    )
-
-                    # LLM generates the actual code changes
-                    proposal = generate_upgrade_proposal(
-                        description=trigger_result.proposal_description,
-                        rationale=trigger_result.proposal_rationale,
-                        target_files=trigger_result.target_files,
-                        base_model=base_model,
-                        state=result,
-                    )
-
-                    if proposal is not None:
-                        # Run through the safety pipeline
-                        pipeline = SelfUpgradePipeline()
-                        upgrade_result = pipeline.execute(proposal)
-
-                        result["upgrade_applied"] = upgrade_result.success
-                        result["upgrade_branch"] = upgrade_result.branch_name
-                        result["upgrade_commit"] = upgrade_result.commit_hash
-                        result["upgrade_errors"] = upgrade_result.errors
-
-                        if upgrade_result.success:
-                            # Clear accumulated signals for this task type
-                            task_type = result.get("routed_task_type", "general")
-                            shared_upgrade_trigger.clear_signals(task_type)
-                            logger.info(
-                                "Self-upgrade applied: branch=%s commit=%s",
-                                upgrade_result.branch_name,
-                                upgrade_result.commit_hash,
-                            )
-                        else:
-                            logger.info(
-                                "Self-upgrade proposal rejected: %s",
-                                upgrade_result.errors,
-                            )
-                    else:
-                        result["upgrade_applied"] = False
-                        result["upgrade_errors"] = [
-                            "LLM declined to propose changes"
-                        ]
+                # NOTE: dispatcher invocation will be added in Task 7 of the
+                # self-upgrade-m0-m1 branch (M0 plan). Until then, signals
+                # accumulate on disk but no tier builder runs.
         except Exception as e:
             logger.debug("Self-upgrade analysis skipped: %s", e)
 
