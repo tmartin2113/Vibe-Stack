@@ -82,6 +82,12 @@ class Tier1aBuilder:
 
         signal_refs = [s.id for s in signals]
 
+        if not signals:
+            # The dispatcher's classifier guarantees a non-empty cluster,
+            # but defending against an empty input here turns a confusing
+            # IndexError into a clear contract violation.
+            raise ValueError("Tier1aBuilder.build requires at least one signal")
+
         # Step 1: task_type from the first signal (classifier guarantees
         # all cluster members share a task_type).
         task_type = signals[0].task_type
@@ -118,12 +124,17 @@ class Tier1aBuilder:
             )
 
         # Step 5: draft the refined content
-        original_content = (skill_path / "SKILL.md").read_text(
-            encoding="utf-8", errors="replace"
-        )
+        try:
+            original_content = (skill_path / "SKILL.md").read_text(
+                encoding="utf-8", errors="replace"
+            )
+        except OSError as exc:
+            return Tier1aResult.LowConfidence(
+                reason=f"could not read SKILL.md: {exc}",
+                signal_refs=signal_refs,
+            )
         aggregated_feedback = self._aggregate_feedback(signals, base_outcomes)
-        worst_score = min((s.score for s in signals if s.score is not None),
-                          default=50)
+        worst_score = min(s.score for s in signals)
 
         refined = self._skill_generator.draft_refined_content(
             task_type=task_type,

@@ -133,6 +133,54 @@ class TestTier1aBuilderLowConfidence:
         assert isinstance(result, Tier1aResult.LowConfidence)
         assert result.reason == "A/B in progress"
 
+    def test_empty_signals_raises_value_error(self, tmp_path):
+        builder = Tier1aBuilder(
+            skill_generator=MagicMock(),
+            skill_registry=MagicMock(),
+            outcome_store=MagicMock(),
+            skills_root=tmp_path,
+        )
+
+        with pytest.raises(ValueError, match="at least one signal"):
+            builder.build([])
+
+    def test_unreadable_skill_md_returns_low_confidence(self, tmp_path):
+        # Setup: skill_path points to a directory whose SKILL.md
+        # cannot be read (we'll simulate by making it a directory).
+        base_dir = tmp_path / "myCodeSkill"
+        base_dir.mkdir()
+        # Make SKILL.md a directory instead of a file — read_text raises
+        # IsADirectoryError (which is a subclass of OSError)
+        (base_dir / "SKILL.md").mkdir()
+
+        registry = MagicMock()
+        registry.find_skill = MagicMock(
+            return_value=("temp", "myCodeSkill", base_dir)
+        )
+
+        outcome_store = MagicMock()
+        outcome_store._read_all = MagicMock(return_value=[
+            {"skill_name": "myCodeSkill", "score": 60, "is_positive": False,
+             "feedback": "bad", "task_type": "code_generation"},
+        ])
+
+        builder = Tier1aBuilder(
+            skill_generator=MagicMock(),
+            skill_registry=registry,
+            outcome_store=outcome_store,
+            skills_root=tmp_path,
+        )
+
+        signals = [
+            _make_signal(detail="a"),
+            _make_signal(detail="b"),
+            _make_signal(detail="c"),
+        ]
+        result = builder.build(signals)
+
+        assert isinstance(result, Tier1aResult.LowConfidence)
+        assert "could not read SKILL.md" in result.reason
+
     def test_empty_draft_returns_low_confidence(self, tmp_path):
         base_dir = tmp_path / "myCodeSkill"
         base_dir.mkdir()
