@@ -10,6 +10,7 @@ active versions), and skill_cleanup (to promote winners and archive losers).
 
 from __future__ import annotations
 
+import hashlib
 import re
 from pathlib import Path
 from typing import List, Optional, TYPE_CHECKING
@@ -85,3 +86,44 @@ def list_versions_for(base: str, *, skills_root: Path) -> List[Path]:
 
     matches.sort(key=lambda pair: pair[0])
     return [path for _version, path in matches]
+
+
+def bucket_for_run(run_input: str, num_buckets: int = 2) -> int:
+    """Return a deterministic bucket index for a run input.
+
+    Formula: ``sha256(run_input).digest()[0] % num_buckets``.
+
+    Deliberately does NOT use Python's built-in ``hash()`` — PEP 456
+    process-level randomization would break cross-process determinism.
+    Empty ``run_input`` returns 0 (stable fallback).
+    """
+    digest = hashlib.sha256(run_input.encode("utf-8")).digest()
+    return digest[0] % num_buckets
+
+
+def pick_active_version(
+    candidates: List[Path],
+    *,
+    run_input: str,
+) -> Path:
+    """Pick one version directory from a candidate list, deterministically.
+
+    Invariant: same ``run_input`` + same candidate list → same result, always.
+    Called by the skill loader during workflow execution. Never mutates the
+    filesystem.
+
+    Args:
+        candidates: Version directories from ``list_versions_for``, in the
+            order returned by that function (ascending by version).
+        run_input: The bucketing input — typically ``state["session_id"]``.
+            If empty, returns ``candidates[0]`` as a stable fallback.
+
+    Raises:
+        ValueError: If ``candidates`` is empty.
+    """
+    if not candidates:
+        raise ValueError("pick_active_version requires at least one candidate")
+    if len(candidates) == 1 or not run_input:
+        return candidates[0]
+    bucket = bucket_for_run(run_input, num_buckets=len(candidates))
+    return candidates[bucket]
