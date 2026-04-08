@@ -481,8 +481,21 @@ class PaperclipClient:
         description: str = "",
         priority: str = "medium",
         labels: Optional[List[str]] = None,
+        assignee_user_id: Optional[str] = None,
     ) -> Issue:
-        """POST /api/companies/{companyId}/issues — create a top-level issue."""
+        """POST /api/companies/{companyId}/issues — create a top-level issue.
+
+        Args:
+            title: Issue title.
+            description: Issue body (markdown).
+            priority: low/medium/high.
+            labels: List of label names to attach.
+            assignee_user_id: If set, assigns the issue to a human user rather
+                than an agent. Used for self-upgrade Tier 3 reports so they
+                land in the human Improvements tab and don't get auto-picked
+                up by the agent heartbeat. Server-side support for the
+                `assigneeUserId` field is required.
+        """
         body: Dict[str, Any] = {
             "title": title,
             "description": description,
@@ -490,6 +503,8 @@ class PaperclipClient:
         }
         if labels:
             body["labels"] = labels
+        if assignee_user_id:
+            body["assigneeUserId"] = assignee_user_id
         data = self._request(
             "POST",
             f"/api/companies/{self.company_id}/issues",

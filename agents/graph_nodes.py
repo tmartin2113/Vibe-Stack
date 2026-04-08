@@ -15,8 +15,51 @@ from .router import route_to_specialist
 from .aggregator import aggregate_outputs
 from .artifact_store import ArtifactStore
 from .parallel_subtasks import execute_parallel_subtasks
+from .self_upgrade_dispatcher import DispatchResult, SelfUpgradeDispatcher
 
 logger = logging.getLogger(__name__)
+
+
+def _run_self_upgrade_dispatch(
+    trigger: "SelfUpgradeTrigger",
+    task_type: str,
+) -> "DispatchResult.AnyResult":
+    """End-of-run hook: invoke the dispatcher with any undispatched signals.
+
+    Logs the result. On success tiers, marks the contributing signals with
+    the artifact_ref so they aren't re-dispatched.
+    """
+    signals = trigger.get_accumulated_signals(task_type)
+    if not signals:
+        logger.debug("Self-upgrade dispatch: no accumulated signals")
+        return DispatchResult.Rejected(reason="no signals", signal_refs=[])
+
+    dispatcher = SelfUpgradeDispatcher()
+    result = dispatcher.dispatch(signals)
+
+    logger.info(
+        "Self-upgrade dispatch result: %s",
+        type(result).__name__,
+    )
+
+    # Mark signals as dispatched when the result carries an artifact_ref.
+    # M0: only Tier0Written and Tier3Filed actually emit refs; Tier1a/1b/2
+    # branches will be wired in later milestones.
+    artifact_ref: Optional[str] = None
+    if isinstance(result, DispatchResult.Tier0Written):
+        artifact_ref = result.lesson_id
+    elif isinstance(result, DispatchResult.Tier3Filed):
+        artifact_ref = result.issue_id
+
+    if artifact_ref:
+        # Use result.signal_refs (which the dispatcher computed for this
+        # specific tier) rather than the full accumulated signals list. In
+        # M0 these sets are identical, but in M1+ a classifier may select
+        # only a subset, and marking the wrong superset would prevent the
+        # remaining signals from being re-dispatched on the next run.
+        trigger.mark_artifact_ref(result.signal_refs, artifact_ref)
+
+    return result
 
 
 def create_node_wrappers(
@@ -25,6 +68,7 @@ def create_node_wrappers(
     shared_outcome_store,
     shared_artifact_store: Optional[ArtifactStore],
     shared_upgrade_trigger,
+    shared_lesson_store,
     base_model,
     config,
     adapter_registry,
@@ -264,15 +308,13 @@ def create_node_wrappers(
                 )
                 result["cache_entry_stored"] = stored
 
-        # Analyse workflow outcome for self-upgrade signals and execute
-        # the full pipeline if enough evidence has accumulated.
+        # Self-upgrade end-of-run hook: accumulate signals via the trigger,
+        # then invoke the dispatcher to route to the appropriate tier builder.
+        # In M0 every dispatch returns Rejected("stub"); real tier routing
+        # comes online in M1+.
         try:
             from .self_upgrade_trigger import analyse_for_upgrade
-            from .self_upgrade import (
-                SelfUpgradePipeline,
-                generate_upgrade_proposal,
-                is_self_upgrade_enabled,
-            )
+            from .self_upgrade import is_self_upgrade_enabled
 
             if is_self_upgrade_enabled():
                 trigger_result = analyse_for_upgrade(
@@ -283,56 +325,14 @@ def create_node_wrappers(
                         {"category": s.category, "detail": s.detail}
                         for s in trigger_result.signals
                     ]
-                if trigger_result.should_propose and base_model is not None:
-                    result["upgrade_proposal_ready"] = True
-                    result["upgrade_proposal_description"] = (
-                        trigger_result.proposal_description
-                    )
-                    logger.info(
-                        "Self-upgrade proposal ready: %s — generating code",
-                        trigger_result.proposal_description,
-                    )
 
-                    # LLM generates the actual code changes
-                    proposal = generate_upgrade_proposal(
-                        description=trigger_result.proposal_description,
-                        rationale=trigger_result.proposal_rationale,
-                        target_files=trigger_result.target_files,
-                        base_model=base_model,
-                        state=result,
-                    )
-
-                    if proposal is not None:
-                        # Run through the safety pipeline
-                        pipeline = SelfUpgradePipeline()
-                        upgrade_result = pipeline.execute(proposal)
-
-                        result["upgrade_applied"] = upgrade_result.success
-                        result["upgrade_branch"] = upgrade_result.branch_name
-                        result["upgrade_commit"] = upgrade_result.commit_hash
-                        result["upgrade_errors"] = upgrade_result.errors
-
-                        if upgrade_result.success:
-                            # Clear accumulated signals for this task type
-                            task_type = result.get("routed_task_type", "general")
-                            shared_upgrade_trigger.clear_signals(task_type)
-                            logger.info(
-                                "Self-upgrade applied: branch=%s commit=%s",
-                                upgrade_result.branch_name,
-                                upgrade_result.commit_hash,
-                            )
-                        else:
-                            logger.info(
-                                "Self-upgrade proposal rejected: %s",
-                                upgrade_result.errors,
-                            )
-                    else:
-                        result["upgrade_applied"] = False
-                        result["upgrade_errors"] = [
-                            "LLM declined to propose changes"
-                        ]
+                task_type = result.get("routed_task_type", "general")
+                dispatch_result = _run_self_upgrade_dispatch(
+                    shared_upgrade_trigger, task_type,
+                )
+                result["upgrade_dispatch_result"] = type(dispatch_result).__name__
         except Exception as e:
-            logger.debug("Self-upgrade analysis skipped: %s", e)
+            logger.warning("Self-upgrade dispatch skipped: %s", e)
 
         return result
 
@@ -347,6 +347,45 @@ def create_node_wrappers(
             return persist_memory_node(state)
         except Exception as e:
             logger.debug("persist_memory_wrapper: skipped (%s)", e)
+            return state
+
+    # ===== MEMORY NOTE (Tier 0 lesson writer) =====
+    def memory_note_wrapper(state: AgentState) -> AgentState:
+        """Write a Tier 0 lesson when the critic flagged lesson_eligible.
+
+        Lazy-imports Tier0Builder to avoid circular imports, and constructs
+        it per-call with the shared base_model so the builder reuses the same
+        LLM backend as the rest of the workflow. The builder is stateless so
+        re-creation per call is cheap.
+        """
+        from .memory_note_node import memory_note_node
+        from .self_upgrade.tier0_builder import Tier0Builder
+
+        try:
+            builder = Tier0Builder(llm=base_model)
+            return memory_note_node(
+                state,
+                lesson_store=shared_lesson_store,
+                tier0_builder=builder,
+            )
+        except Exception as e:
+            logger.debug("memory_note_wrapper: skipped (%s)", e)
+            return state
+
+    # ===== RECORD LESSON USES (Tier 0 outcome scoring) =====
+    def record_lesson_uses_wrapper(state: AgentState) -> AgentState:
+        """Record each injected lesson's use with the run's final score.
+
+        Runs after memory_note so that any newly-written lesson from this run
+        is NOT counted as a use (a lesson can't apply to the run that authored
+        it). Safe pass-through — state is unchanged except for the side effect
+        on lesson_store.
+        """
+        from .memory_note_node import record_lesson_uses_node
+        try:
+            return record_lesson_uses_node(state, lesson_store=shared_lesson_store)
+        except Exception as e:
+            logger.debug("record_lesson_uses_wrapper: skipped (%s)", e)
             return state
 
     # ===== RETURN ALL WRAPPERS =====
@@ -365,4 +404,6 @@ def create_node_wrappers(
         "final_critic": final_critic_wrapper,
         "skill_cleanup": skill_cleanup_wrapper,
         "persist_memory": persist_memory_wrapper,
+        "memory_note": memory_note_wrapper,
+        "record_lesson_uses": record_lesson_uses_wrapper,
     }

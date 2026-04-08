@@ -322,6 +322,7 @@ class SelfUpgradeConfig:
     min_critic_score: int = 90        # Minimum critic score to accept a change
     max_diff_lines: int = 500         # Maximum diff size (lines)
     branch_prefix: str = "vibe/self-upgrade"  # Git branch prefix
+    human_triage_user_id: str = ""    # Paperclip user_id for Tier 3 reports
 
 
 @dataclass
@@ -399,6 +400,9 @@ class SystemConfig:
             val = os.getenv(env_key)
             if val:
                 setattr(config.self_upgrade, attr, int(val))
+        triage_user_id = os.getenv("VIBE_HUMAN_TRIAGE_USER_ID")
+        if triage_user_id is not None:
+            config.self_upgrade.human_triage_user_id = triage_user_id
 
         # MessageStore env overrides
         msg_db = os.getenv("MESSAGE_STORE_PATH")

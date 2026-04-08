@@ -163,6 +163,9 @@ class UpgradeState(TypedDict, total=False):
     upgrade_branch: str  # Git branch name of the upgrade
     upgrade_commit: str  # Git commit hash of the upgrade
     upgrade_errors: List[str]  # Errors from pipeline execution
+    lesson_eligible: bool  # Critic flag: run scored <85 with non-empty feedback
+    lesson_written_id: Optional[str]  # Set by memory_note_node when a lesson is stored
+    injected_lesson_ids: List[str]  # Lessons injected into this run's context
 
 
 class SimulationState(TypedDict, total=False):
