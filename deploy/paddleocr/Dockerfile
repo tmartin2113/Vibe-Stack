@@ -23,8 +23,18 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY server.py .
 
-# Pre-download OCR + structure models into /root/.paddleocr/whl so first
-# request doesn't pay the download latency.
+# Create a non-root user and switch to it before downloading models so the
+# model cache lives under the non-root user's $HOME and the runtime process
+# never executes as root (Trivy DS-0002).
+RUN useradd --create-home --uid 10001 ocr \
+    && chown -R ocr:ocr /app
+
+USER ocr
+ENV HOME=/home/ocr
+
+# Pre-download OCR + structure models into /home/ocr/.paddleocr/whl so first
+# request doesn't pay the download latency. Runs as the ocr user so the cache
+# lands in the correct $HOME and is owned by the runtime user.
 RUN python3 -c "from paddleocr import PaddleOCR, PPStructure; \
     PaddleOCR(use_angle_cls=True, lang='en', show_log=False); \
     PPStructure(show_log=False, layout=True)"

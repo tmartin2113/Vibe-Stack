@@ -1,0 +1,90 @@
+name: PR Checks
+
+# Fast verification checks for pull requests. Mirrors the `test` and `scan`
+# jobs from docker-publish.yml so PRs can gate on them before merging. The
+# image build/publish pipeline lives in docker-publish.yml and continues to
+# run only on push-to-main and version tags.
+#
+# Security note: this workflow does NOT use any github.event.* fields in run
+# commands. The only expression used is github.ref in a concurrency group,
+# which is not shell-interpolated.
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: pr-checks-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ── Python test suite ────────────────────────────────────────────
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_DB: vibe_test
+          POSTGRES_USER: vibe
+          POSTGRES_PASSWORD: test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      VIBE_DATABASE_URL: postgresql://vibe:test@localhost:5432/vibe_test
+      VIBE_REDIS_URL: redis://localhost:6379/0
+      # Dummy URLs for env-gated tools so they register at import time. The
+      # test suite only enumerates the registry; it never actually calls
+      # these endpoints, so unreachable hosts are fine.
+      SEARXNG_URL: http://searxng.test/
+      PLAYWRIGHT_WS_URL: ws://playwright.test/
+      PENPOT_API_URL: http://penpot.test/
+      # NOTE: COMFYUI_URL is deliberately NOT set. The test_tool_system
+      # expected set does not include image_generation; setting COMFYUI_URL
+      # would register it as an extra tool and fail the count assertion.
+      GITEA_URL: http://gitea.test/
+      MINIO_URL: http://minio.test/
+      MIROFISH_URL: http://mirofish.test/
+      PADDLEOCR_URL: http://paddleocr.test/
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: "pip"
+      - name: Install dependencies
+        run: pip install -e ".[agents,tools,dev]" psycopg2-binary redis
+      - name: Run tests
+        run: python -m pytest tests/ -q --tb=short
+
+  # ── Security scan on all Dockerfiles ─────────────────────────────
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Scan Dockerfiles with Trivy (misconfig)
+        uses: aquasecurity/trivy-action@v0.35.0
+        with:
+          scan-type: fs
+          scanners: misconfig
+          scan-ref: .
+          severity: HIGH,CRITICAL
+          exit-code: 1
