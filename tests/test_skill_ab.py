@@ -652,3 +652,89 @@ class TestMaybePromoteWinners:
 
         # Should produce exactly one promotion, not three
         assert len(results) == 1
+
+    def test_winner_meta_missing_skips_rename_with_warning(self, tmp_path, caplog):
+        # Defensive: if v2 wins but is somehow not in the registry index,
+        # the loser is still archived but the rename is skipped with a
+        # warning so manual recovery is possible.
+        self._setup_two_versions(tmp_path)
+        store = self._make_outcome_store_with_outcomes(
+            tmp_path,
+            {
+                "myCodeSkill": [70] * 10,
+                "myCodeSkill__v2": [85] * 10,
+            },
+        )
+        registry = MagicMock()
+        registry.unregister_skill = MagicMock()
+        registry.register_skill = MagicMock()
+        # v2 deliberately absent from the index — only v1 registered
+        registry.index = {
+            "tiers": {
+                "temp": {"skills": {
+                    "myCodeSkill": {"description": "v1", "task_types": ["code_generation"]},
+                }},
+                "local": {"skills": {}},
+                "official": {"skills": {}},
+            }
+        }
+
+        import logging
+        with caplog.at_level(logging.WARNING, logger="agents.skill_ab"):
+            results = skill_ab.maybe_promote_winners(
+                skill_names_in_run=["myCodeSkill"],
+                outcome_store=store,
+                skills_root=tmp_path,
+                skill_registry=registry,
+                K_per_version=10,
+            )
+
+        # Promotion still recorded so caller knows something happened
+        assert len(results) == 1
+        assert results[0].winner_version == 2
+        # Loser archived
+        assert not (tmp_path / "myCodeSkill").exists() or (tmp_path / "myCodeSkill__v2").exists()
+        # Warning was logged
+        assert any(
+            "not found in registry" in rec.message and "skipping rename" in rec.message
+            for rec in caplog.records
+        )
+
+    def test_three_versions_raises_assertion_error(self, tmp_path):
+        # Tier1aBuilder enforces "no v3 if v2 exists" but maybe_promote_winners
+        # also asserts the invariant directly so a violation upstream surfaces
+        # immediately rather than silently archiving only one of two losers.
+        for name in ("myCodeSkill", "myCodeSkill__v2", "myCodeSkill__v3"):
+            d = tmp_path / name
+            d.mkdir()
+            (d / "SKILL.md").write_text(f"# {name}")
+
+        store = self._make_outcome_store_with_outcomes(
+            tmp_path,
+            {
+                "myCodeSkill": [70] * 10,
+                "myCodeSkill__v2": [85] * 10,
+                "myCodeSkill__v3": [90] * 10,
+            },
+        )
+        registry = MagicMock()
+        registry.index = {
+            "tiers": {
+                "temp": {"skills": {
+                    "myCodeSkill": {"description": "v1", "task_types": ["code_generation"]},
+                    "myCodeSkill__v2": {"description": "v2", "task_types": ["code_generation"]},
+                    "myCodeSkill__v3": {"description": "v3", "task_types": ["code_generation"]},
+                }},
+                "local": {"skills": {}},
+                "official": {"skills": {}},
+            }
+        }
+
+        with pytest.raises(AssertionError, match="expected exactly 2 versions"):
+            skill_ab.maybe_promote_winners(
+                skill_names_in_run=["myCodeSkill"],
+                outcome_store=store,
+                skills_root=tmp_path,
+                skill_registry=registry,
+                K_per_version=10,
+            )

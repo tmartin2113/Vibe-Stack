@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import datetime
 import hashlib
+import logging
 import re
 import shutil
 from dataclasses import dataclass
@@ -21,6 +22,8 @@ from typing import List, Optional, TYPE_CHECKING
 if TYPE_CHECKING:
     from .skill_outcome_store import SkillOutcomeStore
     from .skill_registry import SkillRegistry
+
+logger = logging.getLogger(__name__)
 
 
 VERSION_SUFFIX_RE = re.compile(r"^(?P<base>.+?)__v(?P<version>\d+)$")
@@ -412,6 +415,15 @@ def maybe_promote_winners(
         # Pick winner (highest avg, ties → earliest version number)
         avgs = {v: sum(s) / len(s) for v, s in per_version_scores.items()}
         sorted_versions = sorted(avgs.keys())
+        # Tier1aBuilder enforces "no v3 if v2 exists" so any base name we
+        # see here should have exactly two versions on disk. Assert it
+        # explicitly so an invariant violation surfaces immediately
+        # rather than silently archiving only one of three losers below.
+        assert len(sorted_versions) == 2, (
+            f"maybe_promote_winners: expected exactly 2 versions for {base!r}, "
+            f"got {sorted_versions}. Only 2-version A/B is supported."
+        )
+        # ties: -v means lower version number wins (prefer the incumbent)
         winner_version = max(sorted_versions, key=lambda v: (avgs[v], -v))
         loser_version = next(v for v in sorted_versions if v != winner_version)
 
@@ -438,14 +450,23 @@ def maybe_promote_winners(
         )
 
         # Rename winner to base if it's a versioned directory
-        if winner_version > 1 and winner_meta is not None:
-            rename_winner_to_base(
-                winner_dir,
-                description=winner_meta["description"],
-                task_types=winner_meta["task_types"],
-                tier=winner_meta["tier"],
-                skill_registry=skill_registry,
-            )
+        if winner_version > 1:
+            if winner_meta is None:
+                logger.warning(
+                    "maybe_promote_winners: winner %r (v%d) not found in "
+                    "registry; skipping rename. The directory remains at %s; "
+                    "manual recovery is needed to re-register it under the "
+                    "base name %r.",
+                    winner_dir.name, winner_version, winner_dir, base,
+                )
+            else:
+                rename_winner_to_base(
+                    winner_dir,
+                    description=winner_meta["description"],
+                    task_types=winner_meta["task_types"],
+                    tier=winner_meta["tier"],
+                    skill_registry=skill_registry,
+                )
 
         results.append(PromotionResult(
             base_name=base,
