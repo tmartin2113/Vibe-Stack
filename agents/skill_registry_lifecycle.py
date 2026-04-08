@@ -144,6 +144,23 @@ class SkillRegistryLifecycleMixin:
 
         return metadata
 
+    def unregister_skill(self, name: str) -> None:
+        """Remove a skill from the registry index.
+
+        Searches all tiers for the skill and deletes its entry from the
+        first match. Idempotent: silently no-ops if the skill is not
+        registered. Persists the change to the index file immediately.
+
+        Does NOT delete the skill's directory from disk — that is the
+        caller's responsibility. Used by skill_ab.archive_loser after the
+        directory has already been moved to the archive.
+        """
+        for tier in ("official", "local", "temp"):
+            if name in self.index["tiers"][tier]["skills"]:
+                del self.index["tiers"][tier]["skills"][name]
+                self._save_index()
+                return
+
     def track_usage(self, skill_name: str, quality_score: int):
         """
         Track skill usage and update metrics.
