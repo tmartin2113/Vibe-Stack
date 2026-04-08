@@ -329,7 +329,11 @@ class TestSelfRefinement:
 
 
 class TestCleanupOutcomeRecording:
-    """Test that skill_cleanup records outcomes and triggers refinement."""
+    """Test that skill_cleanup records outcomes in the outcome store.
+
+    Refinement is no longer triggered here — that path moved to the
+    self-upgrade dispatcher (Tier 1a) in a separate task.
+    """
 
     def _make_state(
         self,

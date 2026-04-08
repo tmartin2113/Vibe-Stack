@@ -82,7 +82,9 @@ class SkillCleanupNode:
                 state, skills_in_use, subtask_scores, fallback_score
             )
 
-            # Record outcomes and trigger refinement (reinforcement loop)
+            # Record outcomes (reinforcement loop). Refinement now runs
+            # via the self-upgrade dispatcher (Tier 1a); promotion of
+            # A/B winners is wired in a follow-up task.
             self._record_outcomes_and_refine(
                 state, skills_in_use, subtask_scores, subtask_feedback,
                 fallback_score, fallback_feedback,
