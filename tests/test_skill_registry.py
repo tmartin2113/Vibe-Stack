@@ -1017,3 +1017,32 @@ class TestUnregisterSkill:
         # New registry instance reads from disk — should not see the skill
         fresh = SkillRegistry(str(tmp_path))
         assert "my-temp-skill" not in fresh.index["tiers"]["temp"]["skills"]
+
+    def test_unregister_clears_integrity_hash_and_cache(self, tmp_path):
+        from agents.skill_registry import SkillRegistry
+
+        registry = SkillRegistry(str(tmp_path))
+        skill_dir = registry.temp_dir / "my-temp-skill"
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "SKILL.md").write_text(
+            "---\nname: my-temp-skill\n---\n\n# Test"
+        )
+        registry.register_skill(
+            name="my-temp-skill",
+            description="test",
+            tier="temp",
+            task_types=["general"],
+            skill_path=skill_dir,
+        )
+
+        # Mock both cleanup paths so we can verify they were called
+        registry.security.remove_integrity_hash = MagicMock()
+        mock_cache = MagicMock()
+        registry._get_embedding_cache = MagicMock(return_value=mock_cache)
+
+        registry.unregister_skill("my-temp-skill")
+
+        registry.security.remove_integrity_hash.assert_called_once_with(
+            "my-temp-skill"
+        )
+        mock_cache.invalidate.assert_called_once_with("my-temp-skill")
