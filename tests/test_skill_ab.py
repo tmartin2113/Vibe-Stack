@@ -1,6 +1,7 @@
 """Tests for agents/skill_ab.py — A/B versioning logic for skill refinements."""
 
 import hashlib
+from unittest.mock import MagicMock
 
 import pytest
 from pathlib import Path
@@ -179,3 +180,83 @@ class TestPickActiveVersion:
     def test_empty_candidates_raises(self, tmp_path):
         with pytest.raises(ValueError, match="at least one candidate"):
             skill_ab.pick_active_version([], run_input="run_1")
+
+
+class TestWriteCandidate:
+    def test_creates_versioned_directory_with_skill_md(self, tmp_path):
+        registry = MagicMock()
+        registry.register_skill = MagicMock()
+
+        result = skill_ab.write_candidate(
+            base="myCodeSkill",
+            version=2,
+            content="# myCodeSkill v2\n\nrefined content",
+            description="v2 refined",
+            task_types=["code_generation"],
+            tier="temp",
+            parent_dir=tmp_path,
+            skill_registry=registry,
+        )
+
+        expected = tmp_path / "myCodeSkill__v2"
+        assert result == expected
+        assert expected.is_dir()
+        assert (expected / "SKILL.md").read_text() == "# myCodeSkill v2\n\nrefined content"
+
+    def test_calls_register_skill_with_versioned_name(self, tmp_path):
+        registry = MagicMock()
+        registry.register_skill = MagicMock()
+
+        skill_ab.write_candidate(
+            base="myCodeSkill",
+            version=2,
+            content="# v2",
+            description="v2 refined",
+            task_types=["code_generation"],
+            tier="temp",
+            parent_dir=tmp_path,
+            skill_registry=registry,
+        )
+
+        registry.register_skill.assert_called_once()
+        kwargs = registry.register_skill.call_args.kwargs
+        assert kwargs["name"] == "myCodeSkill__v2"
+        assert kwargs["description"] == "v2 refined"
+        assert kwargs["tier"] == "temp"
+        assert kwargs["task_types"] == ["code_generation"]
+        assert kwargs["skill_path"] == tmp_path / "myCodeSkill__v2"
+
+    def test_raises_if_target_already_exists(self, tmp_path):
+        registry = MagicMock()
+        existing = tmp_path / "myCodeSkill__v2"
+        existing.mkdir()
+
+        with pytest.raises(FileExistsError, match="already exists"):
+            skill_ab.write_candidate(
+                base="myCodeSkill",
+                version=2,
+                content="# v2",
+                description="v2",
+                task_types=["code_generation"],
+                tier="temp",
+                parent_dir=tmp_path,
+                skill_registry=registry,
+            )
+
+    def test_does_not_call_register_if_target_exists(self, tmp_path):
+        registry = MagicMock()
+        registry.register_skill = MagicMock()
+        (tmp_path / "myCodeSkill__v2").mkdir()
+
+        with pytest.raises(FileExistsError):
+            skill_ab.write_candidate(
+                base="myCodeSkill",
+                version=2,
+                content="# v2",
+                description="v2",
+                task_types=["code_generation"],
+                tier="temp",
+                parent_dir=tmp_path,
+                skill_registry=registry,
+            )
+        registry.register_skill.assert_not_called()

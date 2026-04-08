@@ -127,3 +127,58 @@ def pick_active_version(
         return candidates[0]
     bucket = bucket_for_run(run_input, num_buckets=len(candidates))
     return candidates[bucket]
+
+
+def write_candidate(
+    base: str,
+    *,
+    version: int,
+    content: str,
+    description: str,
+    task_types: List[str],
+    tier: str,
+    parent_dir: Path,
+    skill_registry: "SkillRegistry",
+) -> Path:
+    """Write a new ``__v{N}`` sibling directory and register it.
+
+    Writes ``SKILL.md`` to ``parent_dir/<base>__v<version>/`` and then calls
+    ``skill_registry.register_skill`` which handles validation, integrity
+    hash storage, and index updates.
+
+    Args:
+        base: Base skill name (no version suffix).
+        version: Integer version number (typically 2).
+        content: Full SKILL.md content for the candidate.
+        description: Skill description (passed through to register_skill).
+        task_types: Task types this skill handles (passed through).
+        tier: Skill tier — one of "temp", "local", "official".
+        parent_dir: Directory that will contain the new sibling.
+        skill_registry: SkillRegistry instance to register with.
+
+    Returns:
+        Absolute path to the new version directory.
+
+    Raises:
+        FileExistsError: If the target directory already exists. The caller
+            is responsible for checking via ``list_versions_for`` before
+            calling this function.
+    """
+    target_dir = parent_dir / versioned_name(base, version)
+    if target_dir.exists():
+        raise FileExistsError(
+            f"Cannot write candidate: {target_dir} already exists"
+        )
+
+    target_dir.mkdir(parents=True)
+    (target_dir / "SKILL.md").write_text(content, encoding="utf-8")
+
+    skill_registry.register_skill(
+        name=versioned_name(base, version),
+        description=description,
+        tier=tier,
+        task_types=task_types,
+        skill_path=target_dir,
+    )
+
+    return target_dir
