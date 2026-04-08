@@ -139,9 +139,38 @@ class Tier1aBuilder:
                 signal_refs=signal_refs,
             )
 
-        # Step 6 happens in Task 12 — for now, placeholder
-        return Tier1aResult.LowConfidence(
-            reason="write path not yet implemented",
+        # Step 6: persist the candidate
+        # Look up metadata for the v2 entry (inherits from v1)
+        skill_meta = self._skill_registry.index["tiers"][tier]["skills"].get(
+            skill_name, {}
+        )
+        description = skill_meta.get("description", f"Refined v2 of {skill_name}")
+        task_types_list = skill_meta.get("task_types", [task_type])
+
+        try:
+            v2_path = skill_ab.write_candidate(
+                base=skill_name,
+                version=2,
+                content=refined,
+                description=description,
+                task_types=task_types_list,
+                tier=tier,
+                parent_dir=parent_dir,
+                skill_registry=self._skill_registry,
+            )
+        except FileExistsError:
+            return Tier1aResult.LowConfidence(
+                reason="A/B in progress",
+                signal_refs=signal_refs,
+            )
+
+        logger.info(
+            "Tier1a: wrote v2 candidate for %s at %s (author=%s, run=%s)",
+            skill_name, v2_path, author_agent_id, author_run_id,
+        )
+        return Tier1aResult.CandidateWritten(
+            skill_name=skill_name,
+            v2_path=v2_path,
             signal_refs=signal_refs,
         )
 
