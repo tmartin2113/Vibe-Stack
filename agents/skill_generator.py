@@ -27,9 +27,6 @@ from .skill_outcome_store import SkillOutcomeStore
 
 logger = logging.getLogger(__name__)
 
-# Score below which a skill is eligible for self-refinement
-REFINEMENT_THRESHOLD = 70
-
 # System prompt for LLM-driven skill generation
 _SKILL_DESIGNER_SYSTEM_PROMPT = """\
 You are a skill designer. You create workflow instructions that guide \
@@ -561,71 +558,6 @@ the local tier for permanent storage.
             excerpt = excerpt[:500] + "..."
         return excerpt
 
-    # ------------------------------------------------------------------
-    # Layer 3: Self-Refinement
-    # ------------------------------------------------------------------
-
-    def refine_skill(
-        self,
-        skill_name: str,
-        task_type: str,
-        original_content: str,
-        score: int,
-        feedback: str,
-        specification: str,
-    ) -> Optional[str]:
-        """
-        Refine a low-scoring skill using critic feedback.
-
-        Called by skill_cleanup when a skill scores below REFINEMENT_THRESHOLD.
-        Regenerates the SKILL.md incorporating the critic's specific feedback
-        about what went wrong.
-
-        Args:
-            skill_name:       Name of the skill to refine
-            task_type:        Task type classification
-            original_content: The SKILL.md content that scored poorly
-            score:            The critic score (0-100)
-            feedback:         The critic's feedback text
-            specification:    The original specification
-
-        Returns:
-            The refined SKILL.md content, or None if refinement not possible.
-        """
-        if score >= REFINEMENT_THRESHOLD:
-            return None
-
-        logger.info(
-            f"🔄 Refining skill {skill_name} "
-            f"(score={score}, below threshold={REFINEMENT_THRESHOLD})"
-        )
-
-        # Build a refinement-aware skill content
-        refined = self.draft_refined_content(
-            task_type=task_type,
-            specification=specification,
-            original_content=original_content,
-            feedback=feedback,
-            score=score,
-        )
-
-        # Write the refined SKILL.md
-        skill_path = self._find_skill_path(skill_name)
-        if skill_path is None:
-            logger.warning(f"Cannot refine {skill_name}: not found in registry")
-            return None
-
-        skill_file = skill_path / "SKILL.md"
-        with open(skill_file, "w", encoding="utf-8") as f:
-            f.write(refined)
-
-        # Update integrity hash
-        self.skill_registry.security.store_integrity_hash(skill_name, refined)
-        self.skill_registry._save_index()
-
-        logger.info(f"✅ Refined skill {skill_name} with critic feedback")
-        return refined
-
     def draft_refined_content(
         self,
         task_type: str,
@@ -672,16 +604,6 @@ these specific issues that MUST be addressed:
             base += refinement_section
 
         return base
-
-    def _find_skill_path(self, skill_name: str) -> Optional[Path]:
-        """Look up the filesystem path for a skill from the registry."""
-        for tier in ["temp", "local", "official"]:
-            skill_data = self.skill_registry.index["tiers"][tier]["skills"].get(
-                skill_name
-            )
-            if skill_data:
-                return Path(skill_data["path"])
-        return None
 
     # ------------------------------------------------------------------
     # Template helpers
