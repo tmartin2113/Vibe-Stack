@@ -1,5 +1,7 @@
 """Tests for agents/skill_ab.py — A/B versioning logic for skill refinements."""
 
+import hashlib
+
 import pytest
 from pathlib import Path
 
@@ -100,9 +102,6 @@ class TestListVersionsFor:
             (d / "SKILL.md").write_text("# test")
         result = skill_ab.list_versions_for("foo", skills_root=tmp_path)
         assert result == [canonical]
-
-
-import hashlib
 
 
 class TestBucketForRun:
