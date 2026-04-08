@@ -88,3 +88,15 @@ class TestListVersionsFor:
             (d / "SKILL.md").write_text("# test")
         result = skill_ab.list_versions_for("foo", skills_root=tmp_path)
         assert result == [foo]
+
+    def test_list_versions_rejects_leading_zero_version(self, tmp_path):
+        # foo__v02 parses to version 2 but is not the canonical form
+        # produced by versioned_name(). Reject it to keep ordering
+        # deterministic and prevent silent misfires in promotion logic.
+        canonical = tmp_path / "foo__v2"
+        leading_zero = tmp_path / "foo__v02"
+        for d in (canonical, leading_zero):
+            d.mkdir()
+            (d / "SKILL.md").write_text("# test")
+        result = skill_ab.list_versions_for("foo", skills_root=tmp_path)
+        assert result == [canonical]

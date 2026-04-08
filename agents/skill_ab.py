@@ -75,7 +75,13 @@ def list_versions_for(base: str, *, skills_root: Path) -> List[Path]:
 
         m = VERSION_SUFFIX_RE.match(entry.name)
         if m and m.group("base") == base:
-            matches.append((int(m.group("version")), entry))
+            v = int(m.group("version"))
+            # Reject non-canonical names like "foo__v02" — they parse to
+            # version 2 but are not produced by versioned_name(), so
+            # including them makes ordering non-deterministic when both
+            # forms exist. Only canonical names contribute to versioning.
+            if entry.name == versioned_name(base, v):
+                matches.append((v, entry))
 
     matches.sort(key=lambda pair: pair[0])
     return [path for _version, path in matches]
