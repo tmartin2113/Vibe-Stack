@@ -601,7 +601,7 @@ the local tier for permanent storage.
         )
 
         # Build a refinement-aware skill content
-        refined = self._create_refined_skill_content(
+        refined = self.draft_refined_content(
             task_type=task_type,
             specification=specification,
             original_content=original_content,
@@ -626,7 +626,7 @@ the local tier for permanent storage.
         logger.info(f"✅ Refined skill {skill_name} with critic feedback")
         return refined
 
-    def _create_refined_skill_content(
+    def draft_refined_content(
         self,
         task_type: str,
         specification: str,
@@ -634,12 +634,16 @@ the local tier for permanent storage.
         feedback: str,
         score: int,
     ) -> str:
-        """
-        Create a refined SKILL.md that incorporates critic feedback.
+        """Compute refined SKILL.md content incorporating critic feedback.
 
-        Takes the base template + learned patterns and adds a
-        "Refinement Directives" section that encodes the critic's
-        specific complaints as hard requirements.
+        Pure function — no file I/O, no registry writes. Callers are
+        responsible for persisting the result (see
+        ``agents.self_upgrade.tier1a_builder.Tier1aBuilder``) or discarding
+        it if the refinement is not worth keeping.
+
+        Inserts a "Refinement Directives" section before "## Context" in the
+        newly-generated base skill content, encoding the critic's complaints
+        as hard requirements the refined skill must address.
         """
         # Start from a fresh generation (with RAG patterns)
         base = self._create_skill_content(task_type, specification)
