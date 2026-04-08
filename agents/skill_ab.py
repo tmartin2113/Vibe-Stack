@@ -214,6 +214,13 @@ def archive_loser(
         OSError: If the move fails for any reason (filesystem error,
             permission, etc.). The registry is only unregistered after a
             successful move.
+
+    Partial-failure contract: if ``unregister_skill`` raises *after* the
+    move has succeeded, the directory is already in the archive but the
+    registry still holds the stale path. The caller (typically
+    ``maybe_promote_winners``) is re-runnable: a second invocation will
+    notice the source is gone and the no-op idempotency of
+    ``unregister_skill`` will clean up the registry on the retry.
     """
     archive_root.mkdir(parents=True, exist_ok=True)
 
@@ -259,6 +266,15 @@ def rename_winner_to_base(
     Raises:
         ValueError: If ``winner_dir`` is not a versioned directory.
         FileExistsError: If the base-name target already exists on disk.
+
+    Partial-failure contract: this function touches three independent
+    state stores in sequence (filesystem rename, registry unregister,
+    registry register). If a failure happens between steps, the directory
+    has been renamed but the registry entry is missing. The caller
+    (``maybe_promote_winners``) must be re-runnable to recover: a retry
+    will see the renamed directory at the base path, fail the
+    ``is_versioned_name`` guard at the top, and skip cleanly. Manual
+    recovery is also possible via ``register_skill`` directly.
     """
     if not is_versioned_name(winner_dir.name):
         raise ValueError(

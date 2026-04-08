@@ -1,5 +1,6 @@
 """Tests for agents/skill_ab.py — A/B versioning logic for skill refinements."""
 
+import datetime
 import hashlib
 from unittest.mock import MagicMock
 
@@ -285,7 +286,6 @@ class TestArchiveLoser:
         assert (result / "SKILL.md").read_text() == "# v1"
 
     def test_uses_yyyymmdd_suffix(self, tmp_path):
-        import datetime
         registry = MagicMock()
         registry.unregister_skill = MagicMock()
         loser_dir = tmp_path / "myCodeSkill"
@@ -337,7 +337,6 @@ class TestArchiveLoser:
         assert archive_root.is_dir()
 
     def test_archive_collision_uses_counter_suffix(self, tmp_path):
-        import datetime
         registry = MagicMock()
         registry.unregister_skill = MagicMock()
         today = datetime.date.today().strftime("%Y%m%d")
