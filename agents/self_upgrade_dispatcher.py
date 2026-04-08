@@ -133,7 +133,13 @@ class SelfUpgradeDispatcher:
         if len(details) == 1 and len(task_types) == 1 and len(non_empty) >= 3:
             return Tier.ONE_B
 
-        # TODO (M2+): skill-cluster rule for Tier 1a
+        # Rule: varied-detail cluster on same task_type with ≥3 signals
+        # → Tier 1a refinement of the matching skill. Evaluated AFTER the
+        # Tier 1b same-detail rule so that same-detail clusters still route
+        # to the cheaper prompt-append fix (Tier 1b).
+        if len(task_types) == 1 and len(non_empty) >= 3:
+            return Tier.ONE_A
+
         # TODO (M4): threshold / registry / tool-failure rules for Tier 2
 
         # Fallback: Tier 3 report
