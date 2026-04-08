@@ -10,8 +10,10 @@ active versions), and skill_cleanup (to promote winners and archive losers).
 
 from __future__ import annotations
 
+import datetime
 import hashlib
 import re
+import shutil
 from pathlib import Path
 from typing import List, Optional, TYPE_CHECKING
 
@@ -182,3 +184,102 @@ def write_candidate(
     )
 
     return target_dir
+
+
+def archive_loser(
+    loser_dir: Path,
+    *,
+    superseded_by: str,
+    archive_root: Path,
+    skill_registry: "SkillRegistry",
+) -> Path:
+    """Move the losing version directory into the archive and unregister it.
+
+    Archive path format: ``archive_root/<loser_name>__superseded_YYYYMMDD/``.
+    If that path already exists (multiple archivals of the same name on the
+    same day), appends ``_1``, ``_2``, ... as a counter suffix.
+
+    Args:
+        loser_dir: Current location of the losing version directory.
+        superseded_by: Name of the winner, included in logs but not
+            currently used in the archive path. Reserved for future
+            metadata capture.
+        archive_root: Root directory for archives. Created if missing.
+        skill_registry: Registry to unregister the loser from.
+
+    Returns:
+        Final path of the archived directory.
+
+    Raises:
+        OSError: If the move fails for any reason (filesystem error,
+            permission, etc.). The registry is only unregistered after a
+            successful move.
+    """
+    archive_root.mkdir(parents=True, exist_ok=True)
+
+    loser_name = loser_dir.name
+    today = datetime.date.today().strftime("%Y%m%d")
+    target = archive_root / f"{loser_name}__superseded_{today}"
+
+    counter = 1
+    while target.exists():
+        target = archive_root / f"{loser_name}__superseded_{today}_{counter}"
+        counter += 1
+
+    shutil.move(str(loser_dir), str(target))
+    skill_registry.unregister_skill(loser_name)
+    return target
+
+
+def rename_winner_to_base(
+    winner_dir: Path,
+    *,
+    description: str,
+    task_types: List[str],
+    tier: str,
+    skill_registry: "SkillRegistry",
+) -> Path:
+    """Rename a ``__v{N}`` winner directory to its base name.
+
+    Only called when the winner is a versioned directory (i.e. v2 won and
+    v1 has already been archived). Uses unregister + re-register rather
+    than attempting to mutate the registry index in place, because
+    ``register_skill`` handles integrity hashes and validation.
+
+    Args:
+        winner_dir: Path to the winning ``__v{N}`` directory.
+        description: Description to carry to the re-registered skill.
+        task_types: Task types to carry to the re-registered skill.
+        tier: Tier to re-register under ("temp", "local", "official").
+        skill_registry: Registry to update.
+
+    Returns:
+        New path (the base-named directory).
+
+    Raises:
+        ValueError: If ``winner_dir`` is not a versioned directory.
+        FileExistsError: If the base-name target already exists on disk.
+    """
+    if not is_versioned_name(winner_dir.name):
+        raise ValueError(
+            f"rename_winner_to_base: {winner_dir.name} is not a versioned name"
+        )
+
+    base = base_name(winner_dir.name)
+    target = winner_dir.parent / base
+    if target.exists():
+        raise FileExistsError(
+            f"Cannot rename winner: {target} already exists"
+        )
+
+    old_name = winner_dir.name
+    winner_dir.rename(target)
+    skill_registry.unregister_skill(old_name)
+    skill_registry.register_skill(
+        name=base,
+        description=description,
+        tier=tier,
+        task_types=task_types,
+        skill_path=target,
+    )
+    return target

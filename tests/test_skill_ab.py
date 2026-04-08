@@ -260,3 +260,163 @@ class TestWriteCandidate:
                 skill_registry=registry,
             )
         registry.register_skill.assert_not_called()
+
+
+class TestArchiveLoser:
+    def test_moves_loser_to_dated_archive_path(self, tmp_path):
+        registry = MagicMock()
+        registry.unregister_skill = MagicMock()
+        loser_dir = tmp_path / "myCodeSkill"
+        loser_dir.mkdir()
+        (loser_dir / "SKILL.md").write_text("# v1")
+        archive_root = tmp_path / "archive"
+
+        result = skill_ab.archive_loser(
+            loser_dir,
+            superseded_by="myCodeSkill__v2",
+            archive_root=archive_root,
+            skill_registry=registry,
+        )
+
+        assert not loser_dir.exists()
+        assert result.exists()
+        assert result.parent == archive_root
+        assert result.name.startswith("myCodeSkill__superseded_")
+        assert (result / "SKILL.md").read_text() == "# v1"
+
+    def test_uses_yyyymmdd_suffix(self, tmp_path):
+        import datetime
+        registry = MagicMock()
+        registry.unregister_skill = MagicMock()
+        loser_dir = tmp_path / "myCodeSkill"
+        loser_dir.mkdir()
+        (loser_dir / "SKILL.md").write_text("# v1")
+
+        result = skill_ab.archive_loser(
+            loser_dir,
+            superseded_by="myCodeSkill__v2",
+            archive_root=tmp_path / "archive",
+            skill_registry=registry,
+        )
+
+        today = datetime.date.today().strftime("%Y%m%d")
+        assert result.name == f"myCodeSkill__superseded_{today}"
+
+    def test_calls_unregister_with_loser_name(self, tmp_path):
+        registry = MagicMock()
+        registry.unregister_skill = MagicMock()
+        loser_dir = tmp_path / "myCodeSkill__v2"
+        loser_dir.mkdir()
+        (loser_dir / "SKILL.md").write_text("# v2")
+
+        skill_ab.archive_loser(
+            loser_dir,
+            superseded_by="myCodeSkill",
+            archive_root=tmp_path / "archive",
+            skill_registry=registry,
+        )
+
+        registry.unregister_skill.assert_called_once_with("myCodeSkill__v2")
+
+    def test_creates_archive_root_if_missing(self, tmp_path):
+        registry = MagicMock()
+        registry.unregister_skill = MagicMock()
+        loser_dir = tmp_path / "myCodeSkill"
+        loser_dir.mkdir()
+        (loser_dir / "SKILL.md").write_text("# v1")
+        archive_root = tmp_path / "archive"
+        assert not archive_root.exists()
+
+        skill_ab.archive_loser(
+            loser_dir,
+            superseded_by="myCodeSkill__v2",
+            archive_root=archive_root,
+            skill_registry=registry,
+        )
+
+        assert archive_root.is_dir()
+
+    def test_archive_collision_uses_counter_suffix(self, tmp_path):
+        import datetime
+        registry = MagicMock()
+        registry.unregister_skill = MagicMock()
+        today = datetime.date.today().strftime("%Y%m%d")
+        archive_root = tmp_path / "archive"
+        archive_root.mkdir()
+        # Pre-create the normal-suffix target so the fallback path runs
+        (archive_root / f"myCodeSkill__superseded_{today}").mkdir()
+
+        loser_dir = tmp_path / "myCodeSkill"
+        loser_dir.mkdir()
+        (loser_dir / "SKILL.md").write_text("# v1")
+
+        result = skill_ab.archive_loser(
+            loser_dir,
+            superseded_by="myCodeSkill__v2",
+            archive_root=archive_root,
+            skill_registry=registry,
+        )
+
+        assert result.name == f"myCodeSkill__superseded_{today}_1"
+
+
+class TestRenameWinnerToBase:
+    def test_renames_v2_to_base_and_updates_registry(self, tmp_path):
+        registry = MagicMock()
+        registry.unregister_skill = MagicMock()
+        registry.register_skill = MagicMock()
+        v2_dir = tmp_path / "myCodeSkill__v2"
+        v2_dir.mkdir()
+        (v2_dir / "SKILL.md").write_text("# v2 content")
+        (v2_dir / "metadata.json").write_text('{"description": "v2"}')
+
+        result = skill_ab.rename_winner_to_base(
+            v2_dir,
+            description="promoted v2",
+            task_types=["code_generation"],
+            tier="temp",
+            skill_registry=registry,
+        )
+
+        assert result == tmp_path / "myCodeSkill"
+        assert result.is_dir()
+        assert not v2_dir.exists()
+        assert (result / "SKILL.md").read_text() == "# v2 content"
+
+        registry.unregister_skill.assert_called_once_with("myCodeSkill__v2")
+        registry.register_skill.assert_called_once()
+        assert registry.register_skill.call_args.kwargs["name"] == "myCodeSkill"
+        assert registry.register_skill.call_args.kwargs["skill_path"] == result
+
+    def test_raises_if_base_name_already_exists(self, tmp_path):
+        registry = MagicMock()
+        v2_dir = tmp_path / "myCodeSkill__v2"
+        v2_dir.mkdir()
+        (v2_dir / "SKILL.md").write_text("# v2")
+        conflict = tmp_path / "myCodeSkill"
+        conflict.mkdir()
+        (conflict / "SKILL.md").write_text("# conflict")
+
+        with pytest.raises(FileExistsError, match="already exists"):
+            skill_ab.rename_winner_to_base(
+                v2_dir,
+                description="v2",
+                task_types=["code_generation"],
+                tier="temp",
+                skill_registry=registry,
+            )
+
+    def test_raises_if_source_not_versioned(self, tmp_path):
+        registry = MagicMock()
+        base_dir = tmp_path / "myCodeSkill"
+        base_dir.mkdir()
+        (base_dir / "SKILL.md").write_text("# base")
+
+        with pytest.raises(ValueError, match="not a versioned"):
+            skill_ab.rename_winner_to_base(
+                base_dir,
+                description="base",
+                task_types=["code_generation"],
+                tier="temp",
+                skill_registry=registry,
+            )
