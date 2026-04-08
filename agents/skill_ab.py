@@ -160,9 +160,9 @@ def write_candidate(
         Absolute path to the new version directory.
 
     Raises:
-        FileExistsError: If the target directory already exists. The caller
-            is responsible for checking via ``list_versions_for`` before
-            calling this function.
+        FileExistsError: If anything (file or directory) already exists at
+            the target path. The caller is responsible for checking via
+            ``list_versions_for`` before calling this function.
     """
     target_dir = parent_dir / versioned_name(base, version)
     if target_dir.exists():
@@ -170,7 +170,7 @@ def write_candidate(
             f"Cannot write candidate: {target_dir} already exists"
         )
 
-    target_dir.mkdir(parents=True)
+    target_dir.mkdir()
     (target_dir / "SKILL.md").write_text(content, encoding="utf-8")
 
     skill_registry.register_skill(
