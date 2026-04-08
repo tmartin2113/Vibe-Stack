@@ -571,12 +571,18 @@ if len(versions) > 1:
 - The `loaded_skills[i]["name"]` field must be `skill_path.name` *after*
   this block. This is what makes outcome recording naturally version-aware
   — no separate plumbing, no new state fields, no changes to `AgentState`.
-- The `discovered_skills` state entry (populated earlier in the loader)
-  must carry the **same versioned name** as `loaded_skills`. Otherwise
-  `skill_cleanup._build_skill_to_task_type_map` will build a map keyed by
-  base name but try to look up entries by versioned name (or vice versa),
-  silently returning the `"general"` fallback task_type. Both state fields
-  must agree on which name they record for any given skill in the run.
+- The `discovered_skills` state entry (populated upstream by the router via
+  `skill_registry.find_skill`) must carry the **same versioned name** as
+  `loaded_skills`. Otherwise `skill_cleanup._build_skill_to_task_type_map`
+  will build a map keyed by base name but try to look up entries by
+  versioned name (or vice versa), silently returning the `"general"`
+  fallback task_type. The cleanest place to enforce this invariant is in
+  the skill_loader itself: when it detects a versioned sibling exists, it
+  mutates the `skill_info` dict in place (updating both `skill_name` and
+  `skill_path` to the versioned values) *before* loading content. The
+  updated dict is still the same object in `state["discovered_skills"]`,
+  so the router's upstream write and the loader's per-skill mutation stay
+  consistent.
 
 **Backwards compatibility:** skills with only one version (`list_versions_for`
 returns 1 entry) skip the bucketing block entirely and behave exactly as
