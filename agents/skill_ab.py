@@ -14,6 +14,7 @@ import datetime
 import hashlib
 import re
 import shutil
+from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional, TYPE_CHECKING
 
@@ -299,3 +300,160 @@ def rename_winner_to_base(
         skill_path=target,
     )
     return target
+
+
+@dataclass
+class PromotionResult:
+    """Outcome of a single A/B promotion decision."""
+
+    base_name: str
+    winner_version: int
+    loser_version: int
+    winner_avg: float
+    loser_avg: float
+    archived_to: Path
+
+
+def _read_outcomes_for(
+    outcome_store: "SkillOutcomeStore",
+    name: str,
+) -> List[int]:
+    """Return all recorded scores for a skill name from the raw store."""
+    entries = outcome_store._read_all()
+    return [e["score"] for e in entries if e.get("skill_name") == name]
+
+
+def _lookup_skill_metadata(
+    skill_registry: "SkillRegistry",
+    name: str,
+) -> Optional[dict]:
+    """Return {description, task_types, tier} for a registered skill, or None."""
+    for tier in ("official", "local", "temp"):
+        entry = skill_registry.index["tiers"][tier]["skills"].get(name)
+        if entry is not None:
+            return {
+                "description": entry.get("description", ""),
+                "task_types": entry.get("task_types", []),
+                "tier": tier,
+            }
+    return None
+
+
+def maybe_promote_winners(
+    skill_names_in_run: List[str],
+    outcome_store: "SkillOutcomeStore",
+    *,
+    skills_root: Path,
+    skill_registry: "SkillRegistry",
+    K_per_version: int = 10,
+    archive_root: Optional[Path] = None,
+) -> List[PromotionResult]:
+    """Promote A/B winners for any base skill that has hit the outcome quota.
+
+    For each base name derived from ``skill_names_in_run``:
+    1. Discover its versions on disk via ``list_versions_for``.
+    2. If fewer than 2 versions exist, skip (no A/B in progress).
+    3. If any version has fewer than ``K_per_version`` recorded outcomes
+       in the ``outcome_store``, skip (not enough data yet).
+    4. Pick the winner (highest avg score; ties → earliest version).
+    5. Archive all losers via ``archive_loser``.
+    6. If the winner is a versioned directory, rename it to the base name
+       via ``rename_winner_to_base``.
+    7. Append a ``PromotionResult`` to the return list.
+
+    Args:
+        skill_names_in_run: Names (possibly already versioned) of skills
+            used in the just-finished run. Duplicates and cross-version
+            entries are deduped internally via ``base_name``.
+        outcome_store: Outcome store to count per-version scores against.
+        skills_root: Parent directory containing version directories.
+        skill_registry: Registry for unregister/register operations.
+        K_per_version: Minimum outcomes required per version before a
+            promotion can fire. Default 10.
+        archive_root: Archive location. Defaults to ``skills_root/archive``.
+
+    Returns:
+        List of PromotionResult, one per skill promoted in this call.
+    """
+    if archive_root is None:
+        archive_root = skills_root / "archive"
+
+    results: List[PromotionResult] = []
+    seen_bases: set = set()
+
+    for raw_name in skill_names_in_run:
+        base = base_name(raw_name)
+        if base in seen_bases:
+            continue
+        seen_bases.add(base)
+
+        versions = list_versions_for(base, skills_root=skills_root)
+        if len(versions) < 2:
+            continue
+
+        # Collect per-version scores by parsing the version number from
+        # each directory name.
+        per_version_scores: dict = {}
+        for version_dir in versions:
+            if version_dir.name == base:
+                version_num = 1
+                store_name = base
+            else:
+                m = VERSION_SUFFIX_RE.match(version_dir.name)
+                version_num = int(m.group("version"))
+                store_name = version_dir.name
+            scores = _read_outcomes_for(outcome_store, store_name)
+            per_version_scores[version_num] = scores
+
+        # Quota check
+        if any(len(s) < K_per_version for s in per_version_scores.values()):
+            continue
+
+        # Pick winner (highest avg, ties → earliest version number)
+        avgs = {v: sum(s) / len(s) for v, s in per_version_scores.items()}
+        sorted_versions = sorted(avgs.keys())
+        winner_version = max(sorted_versions, key=lambda v: (avgs[v], -v))
+        loser_version = next(v for v in sorted_versions if v != winner_version)
+
+        winner_dir = next(
+            v for v in versions
+            if (winner_version == 1 and v.name == base)
+            or (winner_version > 1 and v.name == versioned_name(base, winner_version))
+        )
+        loser_dir = next(
+            v for v in versions
+            if (loser_version == 1 and v.name == base)
+            or (loser_version > 1 and v.name == versioned_name(base, loser_version))
+        )
+
+        # Capture winner metadata before any registry mutation
+        winner_meta = _lookup_skill_metadata(skill_registry, winner_dir.name)
+
+        # Archive loser first (must succeed before we touch winner)
+        archived = archive_loser(
+            loser_dir,
+            superseded_by=winner_dir.name,
+            archive_root=archive_root,
+            skill_registry=skill_registry,
+        )
+
+        # Rename winner to base if it's a versioned directory
+        if winner_version > 1 and winner_meta is not None:
+            rename_winner_to_base(
+                winner_dir,
+                description=winner_meta["description"],
+                task_types=winner_meta["task_types"],
+                tier=winner_meta["tier"],
+                skill_registry=skill_registry,
+            )
+
+        results.append(PromotionResult(
+            base_name=base,
+            winner_version=winner_version,
+            loser_version=loser_version,
+            winner_avg=avgs[winner_version],
+            loser_avg=avgs[loser_version],
+            archived_to=archived,
+        ))
+
+    return results

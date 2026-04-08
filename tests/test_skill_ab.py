@@ -419,3 +419,236 @@ class TestRenameWinnerToBase:
                 tier="temp",
                 skill_registry=registry,
             )
+
+
+class TestMaybePromoteWinners:
+    def _setup_two_versions(self, tmp_path):
+        """Create v1 and v2 directories with metadata for a test skill."""
+        for name in ("myCodeSkill", "myCodeSkill__v2"):
+            d = tmp_path / name
+            d.mkdir()
+            (d / "SKILL.md").write_text(f"# {name}")
+        return tmp_path
+
+    def _make_outcome_store_with_outcomes(self, tmp_path, outcomes_by_name):
+        from agents.skill_outcome_store import SkillOutcomeStore
+
+        store_path = tmp_path / "outcomes.jsonl"
+        store = SkillOutcomeStore(store_path=str(store_path))
+
+        # SkillOutcomeStore dedups on (skill_name, is_positive) band. To
+        # simulate N distinct outcomes per skill we monkey-patch _read_all to
+        # return raw records without going through the dedup logic.
+        flat_entries = []
+        for name, scores in outcomes_by_name.items():
+            for score in scores:
+                flat_entries.append({
+                    "skill_name": name,
+                    "task_type": "code_generation",
+                    "specification_summary": "",
+                    "skill_content": "# stub",
+                    "score": score,
+                    "feedback": "",
+                    "is_positive": score >= 70,
+                    "timestamp": "2026-04-08T00:00:00Z",
+                })
+        store._read_all = lambda: list(flat_entries)
+        return store
+
+    def test_not_enough_outcomes_noop(self, tmp_path):
+        self._setup_two_versions(tmp_path)
+        store = self._make_outcome_store_with_outcomes(
+            tmp_path,
+            {
+                "myCodeSkill": [75, 80, 72],          # only 3 outcomes
+                "myCodeSkill__v2": [85, 88, 80],      # only 3 outcomes
+            },
+        )
+        registry = MagicMock()
+
+        result = skill_ab.maybe_promote_winners(
+            skill_names_in_run=["myCodeSkill", "myCodeSkill__v2"],
+            outcome_store=store,
+            skills_root=tmp_path,
+            skill_registry=registry,
+            K_per_version=10,
+        )
+
+        assert result == []
+        assert (tmp_path / "myCodeSkill").exists()
+        assert (tmp_path / "myCodeSkill__v2").exists()
+
+    def test_v2_wins_archives_v1_and_renames_v2(self, tmp_path):
+        self._setup_two_versions(tmp_path)
+        store = self._make_outcome_store_with_outcomes(
+            tmp_path,
+            {
+                "myCodeSkill": [70] * 10,
+                "myCodeSkill__v2": [85] * 10,
+            },
+        )
+        registry = MagicMock()
+        registry.unregister_skill = MagicMock()
+        registry.register_skill = MagicMock()
+        registry.index = {
+            "tiers": {
+                "temp": {"skills": {
+                    "myCodeSkill": {"description": "v1", "task_types": ["code_generation"]},
+                    "myCodeSkill__v2": {"description": "v2", "task_types": ["code_generation"]},
+                }},
+                "local": {"skills": {}},
+                "official": {"skills": {}},
+            }
+        }
+
+        results = skill_ab.maybe_promote_winners(
+            skill_names_in_run=["myCodeSkill", "myCodeSkill__v2"],
+            outcome_store=store,
+            skills_root=tmp_path,
+            skill_registry=registry,
+            K_per_version=10,
+        )
+
+        assert len(results) == 1
+        r = results[0]
+        assert r.base_name == "myCodeSkill"
+        assert r.winner_version == 2
+        assert r.loser_version == 1
+        assert r.winner_avg == 85.0
+        assert r.loser_avg == 70.0
+
+        # v2 dir moved to base name; old base dir gone (archived)
+        assert (tmp_path / "myCodeSkill").exists()
+        assert not (tmp_path / "myCodeSkill__v2").exists()
+        assert (tmp_path / "archive").is_dir()
+
+    def test_v1_wins_archives_v2_no_rename(self, tmp_path):
+        self._setup_two_versions(tmp_path)
+        store = self._make_outcome_store_with_outcomes(
+            tmp_path,
+            {
+                "myCodeSkill": [90] * 10,
+                "myCodeSkill__v2": [60] * 10,
+            },
+        )
+        registry = MagicMock()
+        registry.unregister_skill = MagicMock()
+        registry.register_skill = MagicMock()
+        registry.index = {
+            "tiers": {
+                "temp": {"skills": {
+                    "myCodeSkill": {"description": "v1", "task_types": ["code_generation"]},
+                    "myCodeSkill__v2": {"description": "v2", "task_types": ["code_generation"]},
+                }},
+                "local": {"skills": {}},
+                "official": {"skills": {}},
+            }
+        }
+
+        results = skill_ab.maybe_promote_winners(
+            skill_names_in_run=["myCodeSkill"],
+            outcome_store=store,
+            skills_root=tmp_path,
+            skill_registry=registry,
+            K_per_version=10,
+        )
+
+        assert len(results) == 1
+        assert results[0].winner_version == 1
+        assert results[0].loser_version == 2
+        assert (tmp_path / "myCodeSkill").exists()
+        assert not (tmp_path / "myCodeSkill__v2").exists()
+
+    def test_tie_v1_wins(self, tmp_path):
+        self._setup_two_versions(tmp_path)
+        store = self._make_outcome_store_with_outcomes(
+            tmp_path,
+            {
+                "myCodeSkill": [80] * 10,
+                "myCodeSkill__v2": [80] * 10,
+            },
+        )
+        registry = MagicMock()
+        registry.unregister_skill = MagicMock()
+        registry.register_skill = MagicMock()
+        registry.index = {
+            "tiers": {
+                "temp": {"skills": {
+                    "myCodeSkill": {"description": "v1", "task_types": ["code_generation"]},
+                    "myCodeSkill__v2": {"description": "v2", "task_types": ["code_generation"]},
+                }},
+                "local": {"skills": {}},
+                "official": {"skills": {}},
+            }
+        }
+
+        results = skill_ab.maybe_promote_winners(
+            skill_names_in_run=["myCodeSkill"],
+            outcome_store=store,
+            skills_root=tmp_path,
+            skill_registry=registry,
+            K_per_version=10,
+        )
+
+        assert results[0].winner_version == 1
+        assert results[0].loser_version == 2
+
+    def test_single_version_noop(self, tmp_path):
+        # Only v1 exists
+        d = tmp_path / "myCodeSkill"
+        d.mkdir()
+        (d / "SKILL.md").write_text("# v1")
+
+        store = self._make_outcome_store_with_outcomes(
+            tmp_path,
+            {"myCodeSkill": [80] * 20},
+        )
+        registry = MagicMock()
+
+        result = skill_ab.maybe_promote_winners(
+            skill_names_in_run=["myCodeSkill"],
+            outcome_store=store,
+            skills_root=tmp_path,
+            skill_registry=registry,
+            K_per_version=10,
+        )
+
+        assert result == []
+        assert (tmp_path / "myCodeSkill").exists()
+
+    def test_deduplicates_base_names_in_input(self, tmp_path):
+        # If both "myCodeSkill" and "myCodeSkill__v2" appear in the input
+        # list (possible when both versions were used in the same run),
+        # the promotion check should run exactly once for the base.
+        self._setup_two_versions(tmp_path)
+        store = self._make_outcome_store_with_outcomes(
+            tmp_path,
+            {
+                "myCodeSkill": [70] * 10,
+                "myCodeSkill__v2": [85] * 10,
+            },
+        )
+        registry = MagicMock()
+        registry.unregister_skill = MagicMock()
+        registry.register_skill = MagicMock()
+        registry.index = {
+            "tiers": {
+                "temp": {"skills": {
+                    "myCodeSkill": {"description": "v1", "task_types": ["code_generation"]},
+                    "myCodeSkill__v2": {"description": "v2", "task_types": ["code_generation"]},
+                }},
+                "local": {"skills": {}},
+                "official": {"skills": {}},
+            }
+        }
+
+        results = skill_ab.maybe_promote_winners(
+            skill_names_in_run=["myCodeSkill", "myCodeSkill__v2", "myCodeSkill"],
+            outcome_store=store,
+            skills_root=tmp_path,
+            skill_registry=registry,
+            K_per_version=10,
+        )
+
+        # Should produce exactly one promotion, not three
+        assert len(results) == 1
