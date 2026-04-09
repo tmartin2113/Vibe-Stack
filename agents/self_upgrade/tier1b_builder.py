@@ -196,9 +196,46 @@ class Tier1bBuilder:
                 signal_refs=sig_refs,
             )
 
-        # Still stubs beyond fixture availability
+        # Gate 4: draft the override (deterministic) and validate
+        detail = signals[0].detail
+        append_text = self._draft_append(task_type, detail)
+
+        override_id = self._new_override_id()
+        from datetime import datetime, timezone
+        created_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+        # Gate 5: schema
+        schema_err = self._validate_schema_for_draft(
+            override_id=override_id,
+            task_type=task_type,
+            append=append_text,
+            signal_refs=sig_refs,
+            author_agent_id=author_agent_id,
+            author_run_id=author_run_id,
+            created_at=created_at,
+        )
+        if schema_err is not None:
+            return Tier1bResult.GateFailed(
+                gate="schema",
+                detail=schema_err,
+                signal_refs=sig_refs,
+            )
+
+        # Gate 6: safety-clause regex blocklist
+        matched = _matches_safety_blocklist(append_text)
+        if matched is not None:
+            return Tier1bResult.GateFailed(
+                gate="safety_regex",
+                detail=f"matched blocklist pattern: {matched}",
+                signal_refs=sig_refs,
+            )
+
+        # Still stubs beyond safety regex
         return Tier1bResult.LowConfidence(
-            reason=f"stub (gates beyond fixture_availability not wired): adapter={adapter}",
+            reason=(
+                f"stub (gates beyond safety_regex not wired): "
+                f"adapter={adapter} id={override_id}"
+            ),
             signal_refs=sig_refs,
         )
 
@@ -239,3 +276,67 @@ class Tier1bBuilder:
             if f.is_file() and f.suffix == ".json" and f.name != "baseline.json":
                 count += 1
         return count >= MIN_FIXTURES_PER_ADAPTER
+
+    _TASK_ANCHOR_PREFIX = "When handling {task_type} tasks"
+
+    def _draft_append(self, task_type: str, detail: str) -> str:
+        """Produce a deterministic override append from cluster detail.
+
+        Format: "When handling {task_type} tasks: {detail}."
+
+        The detail is trimmed; a trailing period is added if absent.
+        The result is hard-capped at APPEND_MAX_LEN characters (truncated
+        at a word boundary where possible).
+        """
+        detail_clean = (detail or "").strip().rstrip(".")
+        if not detail_clean:
+            return ""
+        anchor = self._TASK_ANCHOR_PREFIX.format(task_type=task_type)
+        draft = f"{anchor}: {detail_clean}."
+        if len(draft) <= APPEND_MAX_LEN:
+            return draft
+        # Truncate at a word boundary, leaving room for trailing ellipsis + period
+        cutoff = APPEND_MAX_LEN - 4
+        truncated = draft[:cutoff]
+        last_space = truncated.rfind(" ")
+        if last_space > 0:
+            truncated = truncated[:last_space]
+        return truncated + "...."
+
+    def _validate_schema_for_draft(
+        self,
+        *,
+        override_id: str,
+        task_type: str,
+        append: str,
+        signal_refs: List[str],
+        author_agent_id: str,
+        author_run_id: str,
+        created_at: str,
+    ) -> Optional[str]:
+        """Run validate_override_dict on an in-memory candidate.
+
+        Returns None on success or the violation detail on failure.
+        """
+        candidate = {
+            "id": override_id,
+            "task_type": task_type,
+            "append": append,
+            "signal_refs": signal_refs,
+            "author_agent_id": author_agent_id,
+            "author_run_id": author_run_id,
+            "created_at": created_at,
+        }
+        try:
+            from agents.prompt_library import validate_override_dict
+            validate_override_dict(candidate, filename=f"{override_id}.yaml")
+        except Exception as exc:
+            return str(exc)
+        return None
+
+    def _new_override_id(self) -> str:
+        """Return a unique override id suitable for the schema regex."""
+        import secrets
+        alphabet = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
+        body = "".join(alphabet[secrets.randbelow(32)] for _ in range(26))
+        return f"ovr_{body}"
