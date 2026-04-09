@@ -62,3 +62,108 @@ def _redact(text: str) -> str:
                 f"matched redaction pattern {name!r}; refusing to capture"
             )
     return text
+
+
+import json
+import secrets
+from datetime import datetime, timezone
+from pathlib import Path
+
+
+# Crockford base32 alphabet used by ULIDs (no I, L, O, U)
+_CROCKFORD_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
+
+# Simple stopword set for keyword extraction (intentionally small —
+# the keyword check is a weak signal in the smoke test; the primary
+# score comes from the critic).
+_STOPWORDS = frozenset({
+    "the", "and", "of", "a", "to", "in", "that", "it", "is", "was",
+    "for", "on", "with", "as", "at", "by", "this", "be", "are", "or",
+    "an", "but", "not", "from", "if", "then", "so", "do", "you", "your",
+    "has", "have", "had", "will", "can", "may", "use", "using",
+})
+
+# Exponential moving average smoothing factor for baseline.json updates.
+# alpha=0.3 weights new scores moderately — stable enough to resist
+# single-run noise, responsive enough to track gradual drift.
+_BASELINE_EMA_ALPHA = 0.3
+
+
+def _new_ulid() -> str:
+    """Return a canonical-fixture ID: 'can_' + 26 random Crockford base32 chars.
+
+    Not a true ULID (no timestamp prefix) — just a stable-format unique id.
+    """
+    body = "".join(
+        _CROCKFORD_ALPHABET[secrets.randbelow(32)] for _ in range(26)
+    )
+    return f"can_{body}"
+
+
+def _count_fixtures(directory: Path) -> int:
+    """Count *.json files in a directory, excluding baseline.json.
+
+    Returns 0 if the directory does not exist.
+    """
+    if not directory.exists() or not directory.is_dir():
+        return 0
+    count = 0
+    for f in directory.iterdir():
+        if f.is_file() and f.suffix == ".json" and f.name != "baseline.json":
+            count += 1
+    return count
+
+
+def _extract_keywords(text: str, *, top_n: int = 20) -> List[str]:
+    """Return up to top_n content-bearing lowercase tokens from text.
+
+    Dumb on purpose: filter stopwords, lowercase, dedupe while preserving
+    order of first occurrence. Used as a weak recall signal in the smoke
+    test — the critic's score is the primary metric.
+    """
+    if not text:
+        return []
+    tokens = re.findall(r"[A-Za-z_][A-Za-z_0-9]*", text)
+    seen: List[str] = []
+    seen_set: set = set()
+    for tok in tokens:
+        low = tok.lower()
+        if low in _STOPWORDS or len(low) < 3:
+            continue
+        if low in seen_set:
+            continue
+        seen.append(tok)
+        seen_set.add(low)
+        if len(seen) >= top_n:
+            break
+    return seen
+
+
+def _update_baseline(directory: Path, *, fixture_id: str, score: float) -> None:
+    """Update baseline.json for the adapter's fixture directory.
+
+    Creates the file if it doesn't exist. Applies exponential moving
+    average (alpha=0.3) for existing fixture ids, preserves others
+    verbatim, adds new ids at the observed score.
+    """
+    baseline_path = directory / "baseline.json"
+    if baseline_path.exists():
+        try:
+            current = json.loads(baseline_path.read_text())
+        except (OSError, json.JSONDecodeError):
+            current = {}
+    else:
+        current = {}
+    if fixture_id in current:
+        prev = float(current[fixture_id])
+        current[fixture_id] = (
+            _BASELINE_EMA_ALPHA * float(score) + (1.0 - _BASELINE_EMA_ALPHA) * prev
+        )
+    else:
+        current[fixture_id] = float(score)
+    baseline_path.write_text(json.dumps(current, indent=2, sort_keys=True))
+
+
+def _utcnow_iso() -> str:
+    """Return current UTC time as ISO 8601 with trailing Z."""
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
