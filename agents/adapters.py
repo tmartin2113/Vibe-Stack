@@ -41,12 +41,14 @@ class PromptAdapter:
         name: str,
         system_prompt: str,
         base_model: Any,  # The LLM instance
-        config: Optional[Dict[str, Any]] = None
+        config: Optional[Dict[str, Any]] = None,
+        override_loader: Any = None,  # Optional PromptOverrideLoader
     ):
         self.name = name
         self.system_prompt = system_prompt
         self.base_model = base_model
         self.config = config or {}
+        self._override_loader = override_loader
 
     def generate(self, prompt: str, **kwargs: Unpack[GenerateKwargs]) -> str:
         """
@@ -63,6 +65,15 @@ class PromptAdapter:
         history = kwargs.pop("history", None)
         # Allow callers to override the system prompt (e.g., aggregator)
         system_prompt = kwargs.pop("system_prompt", self.system_prompt)
+        # Tier 1b: optional task_type — append matching prompt overrides
+        task_type = kwargs.pop("task_type", None)
+        if task_type and self._override_loader is not None:
+            try:
+                appends = self._override_loader.get_appends_for(task_type)
+            except Exception:  # never crash generate() over override lookup
+                appends = []
+            if appends:
+                system_prompt = system_prompt + "\n\n" + "\n\n".join(appends)
 
         # Merge default config with kwargs
         gen_config = {**self.config, **kwargs}
