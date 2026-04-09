@@ -229,9 +229,11 @@ class TestFixtureAvailabilityGate:
         b = self._builder_with_adapter_mapping(tmp_path)
         signals = [_make_signal() for _ in range(3)]
         result = b.build(signals, author_agent_id="x", author_run_id="y")
-        # Still stubbed beyond fixture gate — should no longer complain about fixtures
-        assert isinstance(result, Tier1bResult.LowConfidence)
-        assert "no fixtures" not in result.reason.lower()
+        # The fixture availability gate passed — downstream gates may still
+        # fail (e.g. smoke_test missing baseline), but the result must NOT
+        # be a "no fixtures" LowConfidence.
+        if isinstance(result, Tier1bResult.LowConfidence):
+            assert "no fixtures" not in result.reason.lower()
 
     def test_baseline_json_not_counted_as_fixture(self, tmp_path):
         fixtures_dir = tmp_path / "canonical" / "vibe"
@@ -240,11 +242,14 @@ class TestFixtureAvailabilityGate:
         (fixtures_dir / "can_1.json").write_text("{}")
         (fixtures_dir / "can_2.json").write_text("{}")
         (fixtures_dir / "can_3.json").write_text("{}")
-        # 3 fixtures + baseline.json → should pass (baseline not counted)
+        # 3 fixtures + baseline.json → should pass the fixture availability
+        # gate (baseline not counted toward fixture count). Downstream
+        # gates may still fail; the assertion is only about the fixture gate.
         b = self._builder_with_adapter_mapping(tmp_path)
         signals = [_make_signal() for _ in range(3)]
         result = b.build(signals, author_agent_id="x", author_run_id="y")
-        assert "no fixtures" not in (result.reason if hasattr(result, "reason") else "").lower()
+        if isinstance(result, Tier1bResult.LowConfidence):
+            assert "no fixtures" not in result.reason.lower()
 
 
 from agents.self_upgrade.tier1b_builder import _matches_safety_blocklist
@@ -334,3 +339,111 @@ class TestDraftAndSchemaGate:
         # schema gate because the drafted append is empty after stripping.
         result = b.build(signals, author_agent_id="x", author_run_id="y")
         assert isinstance(result, (Tier1bResult.GateFailed, Tier1bResult.LowConfidence))
+
+
+import json as _json
+
+
+class _StubSmokeScorer:
+    """Test helper: deterministic per-fixture score."""
+
+    def __init__(self, scores):
+        self._scores = dict(scores)
+        self.calls = []
+
+    def score_fixture(self, fixture_id, augmented_prompt):
+        self.calls.append((fixture_id, augmented_prompt))
+        return self._scores.get(fixture_id, 0)
+
+
+def _seed_fixtures_with_baseline(tmp_path, adapter="vibe", scores=None):
+    d = tmp_path / "canonical" / adapter
+    d.mkdir(parents=True)
+    scores = scores or {"can_01": 90, "can_02": 85, "can_03": 88}
+    for fid in scores:
+        fixture = {
+            "id": fid,
+            "task_type": "code_generation",
+            "prompt": "test prompt for " + fid,
+            "expected_keywords": ["foo", "bar"],
+            "baseline_score": scores[fid],
+            "model_id": "vllm-local",
+            "captured_at": "2026-04-09T12:00:00Z",
+        }
+        (d / f"{fid}.json").write_text(_json.dumps(fixture))
+    (d / "baseline.json").write_text(_json.dumps({k: float(v) for k, v in scores.items()}))
+    return d
+
+
+class TestSmokeTestGate:
+    def _builder(self, tmp_path, scorer):
+        registry = MagicMock()
+        registry.adapter_mapping.return_value = {"code_generation": "vibe"}
+        return Tier1bBuilder(
+            task_type_registry=registry,
+            smoke_scorer=scorer,
+            git_runner=MagicMock(),
+            paperclip_client=MagicMock(),
+            fixtures_root=tmp_path / "canonical",
+            overrides_root=tmp_path / "overrides",
+            allow_publish=False,
+        )
+
+    def test_smoke_gate_passes_when_scores_hold(self, tmp_path):
+        _seed_fixtures_with_baseline(tmp_path)
+        scorer = _StubSmokeScorer({"can_01": 91, "can_02": 86, "can_03": 89})
+        b = self._builder(tmp_path, scorer)
+        signals = [_make_signal() for _ in range(3)]
+        result = b.build(signals, author_agent_id="x", author_run_id="y")
+        # Still stubbed past smoke test — but should not be a smoke_test GateFailed
+        if isinstance(result, Tier1bResult.GateFailed):
+            assert result.gate != "smoke_test"
+
+    def test_smoke_gate_rejects_on_regression(self, tmp_path):
+        _seed_fixtures_with_baseline(tmp_path)
+        # can_02 drops from 85 to 78 → -7, exceeds SMOKE_MAX_DROP_PCT=5
+        scorer = _StubSmokeScorer({"can_01": 91, "can_02": 78, "can_03": 89})
+        b = self._builder(tmp_path, scorer)
+        signals = [_make_signal() for _ in range(3)]
+        result = b.build(signals, author_agent_id="x", author_run_id="y")
+        assert isinstance(result, Tier1bResult.GateFailed)
+        assert result.gate == "smoke_test"
+        assert "can_02" in result.detail
+
+    def test_smoke_gate_allows_drop_at_tolerance(self, tmp_path):
+        _seed_fixtures_with_baseline(tmp_path)
+        # can_02 drops from 85 to 80 → -5, exactly at tolerance
+        scorer = _StubSmokeScorer({"can_01": 91, "can_02": 80, "can_03": 89})
+        b = self._builder(tmp_path, scorer)
+        signals = [_make_signal() for _ in range(3)]
+        result = b.build(signals, author_agent_id="x", author_run_id="y")
+        # At tolerance → pass (strictly greater than triggers reject)
+        if isinstance(result, Tier1bResult.GateFailed):
+            assert result.gate != "smoke_test"
+
+    def test_smoke_gate_handles_missing_baseline_file(self, tmp_path):
+        d = tmp_path / "canonical" / "vibe"
+        d.mkdir(parents=True)
+        for i in range(3):
+            (d / f"can_{i}.json").write_text(_json.dumps({"id": f"can_{i}"}))
+        # No baseline.json
+        scorer = _StubSmokeScorer({"can_0": 90, "can_1": 85, "can_2": 88})
+        b = self._builder(tmp_path, scorer)
+        signals = [_make_signal() for _ in range(3)]
+        result = b.build(signals, author_agent_id="x", author_run_id="y")
+        assert isinstance(result, Tier1bResult.GateFailed)
+        assert result.gate == "smoke_test"
+        assert "baseline" in result.detail.lower()
+
+    def test_smoke_gate_scorer_exception_is_gate_failure(self, tmp_path):
+        _seed_fixtures_with_baseline(tmp_path)
+
+        class _BoomScorer:
+            def score_fixture(self, fixture_id, augmented_prompt):
+                raise RuntimeError("scorer down")
+
+        b = self._builder(tmp_path, _BoomScorer())
+        signals = [_make_signal() for _ in range(3)]
+        result = b.build(signals, author_agent_id="x", author_run_id="y")
+        assert isinstance(result, Tier1bResult.GateFailed)
+        assert result.gate == "smoke_test"

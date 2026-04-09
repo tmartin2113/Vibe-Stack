@@ -230,11 +230,20 @@ class Tier1bBuilder:
                 signal_refs=sig_refs,
             )
 
-        # Still stubs beyond safety regex
+        # Gate 7: canonical smoke test
+        smoke_err = self._smoke_test(adapter=adapter, append_text=append_text)
+        if smoke_err is not None:
+            return Tier1bResult.GateFailed(
+                gate="smoke_test",
+                detail=smoke_err,
+                signal_refs=sig_refs,
+            )
+
+        # Still stubs beyond smoke test (publish path is Tasks 15-16)
         return Tier1bResult.LowConfidence(
             reason=(
-                f"stub (gates beyond safety_regex not wired): "
-                f"adapter={adapter} id={override_id}"
+                f"stub (publish not wired): "
+                f"adapter={adapter} id={override_id} append={append_text!r}"
             ),
             signal_refs=sig_refs,
         )
@@ -340,3 +349,51 @@ class Tier1bBuilder:
         alphabet = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
         body = "".join(alphabet[secrets.randbelow(32)] for _ in range(26))
         return f"ovr_{body}"
+
+    def _smoke_test(
+        self,
+        *,
+        adapter: str,
+        append_text: str,
+    ) -> Optional[str]:
+        """Run the smoke test against fixtures.
+
+        Returns None on pass, or an error string on failure.
+        """
+        import json as _json
+        adapter_dir = self._fixtures_root / adapter
+        baseline_path = adapter_dir / "baseline.json"
+        if not baseline_path.exists():
+            return f"baseline.json missing for adapter {adapter}"
+        try:
+            baseline = _json.loads(baseline_path.read_text())
+        except (OSError, _json.JSONDecodeError) as exc:
+            return f"baseline.json unreadable: {exc}"
+
+        # The augmented prompt is the append text; the scorer is
+        # responsible for composing the actual system prompt.
+        augmented = append_text
+
+        for fixture_path in sorted(adapter_dir.glob("*.json")):
+            if fixture_path.name == "baseline.json":
+                continue
+            fixture_id = fixture_path.stem
+            if fixture_id not in baseline:
+                # Fixture exists but baseline doesn't know it — skip silently
+                continue
+            baseline_score = float(baseline[fixture_id])
+            try:
+                new_score = float(self._smoke_scorer.score_fixture(
+                    fixture_id=fixture_id,
+                    augmented_prompt=augmented,
+                ))
+            except Exception as exc:
+                return f"scorer raised on {fixture_id}: {exc}"
+            drop = baseline_score - new_score
+            if drop > SMOKE_MAX_DROP_PCT:
+                return (
+                    f"fixture {fixture_id} dropped from "
+                    f"{baseline_score:.1f} to {new_score:.1f} "
+                    f"(-{drop:.1f}, exceeds {SMOKE_MAX_DROP_PCT} tolerance)"
+                )
+        return None
