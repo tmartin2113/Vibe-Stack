@@ -387,6 +387,53 @@ class TestCleanupOutcomeRecording:
         # Should not raise
         cleanup.execute(state)
 
+    def test_tier1a_promotion_called_after_recording(self, registry, tmp_store):
+        """After recording outcomes, cleanup fires the Tier 1a promotion check.
+
+        The check iterates all three tier dirs (temp/local/official). It's
+        a no-op when no A/B'd skill has hit K per-version outcomes, so we
+        just verify it was invoked (via a spy on skill_ab.maybe_promote_winners)
+        and didn't crash.
+        """
+        from unittest.mock import patch
+
+        state = self._make_state(score=90)
+        cleanup = SkillCleanupNode(registry, outcome_store=tmp_store)
+
+        with patch(
+            "agents.skill_cleanup.skill_ab.maybe_promote_winners",
+            return_value=[],
+        ) as mock_promote:
+            cleanup.execute(state)
+
+        # Called once per tier (temp, local, official) = 3 times
+        assert mock_promote.call_count == 3
+        # Every call gets the same skill list and config
+        for call in mock_promote.call_args_list:
+            kwargs = call.kwargs
+            assert kwargs["skill_names_in_run"] == ["ephemeral-test-generation"]
+            assert kwargs["outcome_store"] is tmp_store
+            assert kwargs["skill_registry"] is registry
+            assert kwargs["K_per_version"] == 10
+
+    def test_tier1a_promotion_failure_does_not_crash_cleanup(self, registry, tmp_store):
+        """A crash inside maybe_promote_winners is swallowed so cleanup finishes."""
+        from unittest.mock import patch
+
+        state = self._make_state(score=90)
+        cleanup = SkillCleanupNode(registry, outcome_store=tmp_store)
+
+        with patch(
+            "agents.skill_cleanup.skill_ab.maybe_promote_winners",
+            side_effect=RuntimeError("simulated failure"),
+        ):
+            # Should NOT raise
+            cleanup.execute(state)
+
+        # Outcome should still have been recorded (cleanup completed)
+        entries = tmp_store._read_all()
+        assert len(entries) == 1
+
     def test_full_loop_outcome_feeds_generation(self, registry, tmp_store):
         """
         End-to-end: outcome from session 1 appears as a learned pattern

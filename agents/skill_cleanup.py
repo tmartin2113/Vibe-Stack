@@ -17,6 +17,7 @@ from typing import Any, Optional
 from .state import AgentState
 from .skill_registry import SkillRegistry
 from .skill_outcome_store import SkillOutcomeStore
+from . import skill_ab
 
 logger = logging.getLogger(__name__)
 
@@ -82,13 +83,22 @@ class SkillCleanupNode:
                 state, skills_in_use, subtask_scores, fallback_score
             )
 
-            # Record outcomes (reinforcement loop). Refinement now runs
-            # via the self-upgrade dispatcher (Tier 1a); promotion of
-            # A/B winners is wired in a follow-up task.
+            # Record outcomes (reinforcement loop). Refinement runs via
+            # the self-upgrade dispatcher (Tier 1a); this node records
+            # outcomes and then promotes A/B winners below.
             self._record_outcomes_and_refine(
                 state, skills_in_use, subtask_scores, subtask_feedback,
                 fallback_score, fallback_feedback,
             )
+
+            # Tier 1a promotion: check whether any A/B'd skill in this
+            # run has hit K per-version outcomes; promote winners and
+            # archive losers inline. Iterates all three tier dirs since
+            # a skill can live in any of them; list_versions_for returns
+            # empty for tiers that don't contain the skill, so the extra
+            # calls are cheap no-ops.
+            if self.outcome_store is not None:
+                self._promote_ab_winners(skills_in_use)
         else:
             logger.info("No skills were used in this session")
 
@@ -282,6 +292,43 @@ class SkillCleanupNode:
             if name and task_type:
                 mapping[name] = task_type
         return mapping
+
+    def _promote_ab_winners(self, skills_in_use: list) -> None:
+        """Promote Tier 1a A/B winners for any skills that hit K per-version.
+
+        Iterates the three tier directories (temp/local/official) because
+        the skill could live in any of them. maybe_promote_winners returns
+        an empty list for tiers that don't contain the skill, so the extra
+        calls are cheap no-ops.
+
+        Defensive: a promotion failure never crashes cleanup.
+        """
+        tier_dirs = (
+            self.skill_registry.temp_dir,
+            self.skill_registry.local_dir,
+            self.skill_registry.official_dir,
+        )
+        for tier_dir in tier_dirs:
+            try:
+                promotions = skill_ab.maybe_promote_winners(
+                    skill_names_in_run=list(skills_in_use),
+                    outcome_store=self.outcome_store,
+                    skills_root=tier_dir,
+                    skill_registry=self.skill_registry,
+                    K_per_version=10,
+                )
+                for p in promotions:
+                    logger.info(
+                        "🎯 Tier 1a promoted %s: v%d beat v%d "
+                        "(avg %.1f vs %.1f)",
+                        p.base_name, p.winner_version, p.loser_version,
+                        p.winner_avg, p.loser_avg,
+                    )
+            except Exception as e:  # pragma: no cover — defensive
+                logger.warning(
+                    "Tier 1a promotion check failed for %s: %s",
+                    tier_dir, e,
+                )
 
     def _evict_stale_skills(self):
         """
