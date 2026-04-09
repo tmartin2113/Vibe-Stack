@@ -1,9 +1,13 @@
 """Tests for agents/prompt_library — prompt override loader and schema."""
 
+from pathlib import Path
+
 import pytest
 
 from agents.prompt_library import (
+    OverrideEntry,
     OverrideSchemaError,
+    PromptOverrideLoader,
     validate_override_dict,
 )
 
@@ -77,12 +81,6 @@ class TestValidateOverrideDict:
         d = dict(VALID_MINIMAL, id="ovr_01HZK4XF5N2P3Q8R9S0T1V2W3I")
         with pytest.raises(OverrideSchemaError, match="id must match"):
             validate_override_dict(d, filename="ovr_01HZK4XF5N2P3Q8R9S0T1V2W3I.yaml")
-
-
-from pathlib import Path
-import yaml
-
-from agents.prompt_library import OverrideEntry, PromptOverrideLoader
 
 
 VALID_YAML_TEXT = """\
@@ -200,5 +198,28 @@ class TestPromptOverrideLoader:
             author_run_id="y",
             created_at="2026-04-09T17:23:00Z",
         )
-        with pytest.raises(Exception):
+        from dataclasses import FrozenInstanceError
+        with pytest.raises(FrozenInstanceError):
             entry.append = "mutated"  # type: ignore[misc]
+
+    def test_loader_skips_non_utc_created_at(self, tmp_path):
+        """Override with non-UTC offset must be skipped, not silently mislabeled."""
+        task_dir = tmp_path / "overrides" / "code_generation"
+        bad = VALID_YAML_TEXT.replace(
+            "2026-04-09T17:23:00Z",
+            "2026-04-09T17:23:00+05:30",
+        )
+        _write_override(task_dir, "ovr_01HZK4XF5N2P3Q8R9S0T1V2W3X.yaml", bad)
+        loader = PromptOverrideLoader(root=tmp_path / "overrides")
+        assert loader.get_appends_for("code_generation") == []
+
+    def test_loader_skips_naive_datetime_created_at(self, tmp_path):
+        """Override with naive datetime (no Z) must be skipped."""
+        task_dir = tmp_path / "overrides" / "code_generation"
+        bad = VALID_YAML_TEXT.replace(
+            "2026-04-09T17:23:00Z",
+            "2026-04-09T17:23:00",
+        )
+        _write_override(task_dir, "ovr_01HZK4XF5N2P3Q8R9S0T1V2W3X.yaml", bad)
+        loader = PromptOverrideLoader(root=tmp_path / "overrides")
+        assert loader.get_appends_for("code_generation") == []

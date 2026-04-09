@@ -12,10 +12,21 @@ Strict at gate time: validate_override_dict raises on any violation.
 
 from __future__ import annotations
 
+import logging
 import re
+from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Dict, List
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
 
+import yaml
+
+__all__ = [
+    "OverrideEntry",
+    "OverrideSchemaError",
+    "PromptOverrideLoader",
+    "validate_override_dict",
+]
 
 # ULID uses Crockford base32: 0-9, A-H, J, K, M, N, P-T, V-Z (no I, L, O, U)
 _OVERRIDE_ID_RE = re.compile(r"^ovr_[0-9A-HJKMNP-TV-Z]{26}$")
@@ -119,13 +130,6 @@ def validate_override_dict(d: Dict[str, Any], *, filename: str) -> None:
         ) from exc
 
 
-import logging
-from dataclasses import dataclass
-from pathlib import Path
-from typing import Optional, Tuple
-
-import yaml
-
 logger = logging.getLogger(__name__)
 
 
@@ -206,8 +210,15 @@ class PromptOverrideLoader:
         # PyYAML safe_load auto-converts ISO 8601 timestamps to datetime objects.
         # Normalize back to a string so validate_override_dict sees a str.
         if isinstance(parsed, dict) and isinstance(parsed.get("created_at"), datetime):
+            dt_val = parsed["created_at"]
+            if dt_val.tzinfo is None or dt_val.utcoffset().total_seconds() != 0:
+                logger.warning(
+                    "skipping override %s: created_at is not UTC (tzinfo=%s)",
+                    yaml_file, dt_val.tzinfo,
+                )
+                return None
             parsed = dict(parsed)
-            parsed["created_at"] = parsed["created_at"].strftime("%Y-%m-%dT%H:%M:%SZ")
+            parsed["created_at"] = dt_val.strftime("%Y-%m-%dT%H:%M:%SZ")
         try:
             validate_override_dict(parsed, filename=yaml_file.name)
         except OverrideSchemaError as exc:
