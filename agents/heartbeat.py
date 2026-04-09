@@ -116,6 +116,25 @@ class HeartbeatResult:
         return json.dumps(asdict(self), indent=2)
 
 
+def _run_canonical_harvester_hook(
+    state: Any,
+    task_type_registry: Any,
+) -> None:
+    """Post-run hook: capture successful runs as canonical fixtures.
+
+    Swallows every exception — harvester failures must never affect
+    the heartbeat's task result.
+    """
+    try:
+        from agents.canonical_harvester import maybe_capture_canonical
+        maybe_capture_canonical(
+            state=state,
+            task_type_registry=task_type_registry,
+        )
+    except Exception as exc:
+        logger.debug("canonical harvester hook raised (swallowed): %s", exc)
+
+
 def _try_connect_ws(client: PaperclipClient):
     """Best-effort WebSocket connection. Returns PaperclipWSClient or None."""
     try:
@@ -645,6 +664,13 @@ def _execute_checked_out_task(
         result_status = "success"
         issue_status = "done"
         comment_body = _format_success_comment(output, score)
+        # Tier 1b: canonical fixture harvesting (post-success hook).
+        # Failures are fully swallowed inside the helper.
+        try:
+            from agents.task_type_registry import TaskTypeRegistry
+            _run_canonical_harvester_hook(final_state, TaskTypeRegistry())
+        except Exception as exc:
+            logger.debug("canonical harvester hook outer wrap raised: %s", exc)
     else:
         result_status = "blocked"
         issue_status = "blocked"
