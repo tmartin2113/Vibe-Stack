@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     from .lesson_store import LessonStore
     from .paperclip_client import PaperclipClient
     from .self_upgrade.tier0_builder import Tier0Builder
+    from .self_upgrade.tier1a_builder import Tier1aBuilder
     from .self_upgrade.tier3_builder import Tier3Builder
 
 logger = logging.getLogger(__name__)
@@ -97,12 +98,14 @@ class SelfUpgradeDispatcher:
         *,
         lesson_store: "Optional[LessonStore]" = None,
         tier0_builder: "Optional[Tier0Builder]" = None,
+        tier1a_builder: "Optional[Tier1aBuilder]" = None,
         tier3_builder: "Optional[Tier3Builder]" = None,
         paperclip_client: "Optional[PaperclipClient]" = None,
         human_triage_user_id: str = "",
     ) -> None:
         self._lesson_store = lesson_store
         self._tier0 = tier0_builder
+        self._tier1a = tier1a_builder
         self._tier3 = tier3_builder
         self._paperclip = paperclip_client
         self._human_triage_user_id = human_triage_user_id
@@ -168,10 +171,12 @@ class SelfUpgradeDispatcher:
 
         if tier == Tier.ZERO:
             return self._handle_tier0(signals, author_agent_id, author_run_id, role)
+        if tier == Tier.ONE_A:
+            return self._handle_tier1a(signals, author_agent_id, author_run_id, role)
         if tier == Tier.THREE:
             return self._handle_tier3(signals, author_agent_id, role)
 
-        # Tier 1a/1b/2 still stubs in M1
+        # Tier 1b/2 still stubs
         return DispatchResult.Rejected(
             reason=f"tier {tier.value} not implemented yet",
             signal_refs=sig_refs,
@@ -218,6 +223,46 @@ class SelfUpgradeDispatcher:
         )
         return DispatchResult.Tier0Written(
             lesson_id=lesson_id,
+            signal_refs=result.signal_refs,
+        )
+
+    def _handle_tier1a(
+        self,
+        signals: List[UpgradeSignal],
+        author_agent_id: str,
+        author_run_id: str,
+        role: str,
+    ) -> "DispatchResult.AnyResult":
+        """Build a v2 refinement candidate via Tier1aBuilder.
+
+        Falls through to Tier 3 on LowConfidence so signals still produce a
+        human-visible artifact instead of silently disappearing.
+        """
+        if self._tier1a is None:
+            return DispatchResult.Rejected(
+                reason="tier1a dependencies not wired",
+                signal_refs=[s.id for s in signals],
+            )
+
+        # Lazy import to avoid circular imports at module load
+        from .self_upgrade.tier1a_builder import Tier1aResult
+
+        result = self._tier1a.build(
+            signals,
+            author_agent_id=author_agent_id,
+            author_run_id=author_run_id,
+        )
+
+        if isinstance(result, Tier1aResult.LowConfidence):
+            # Fall through to Tier 3 — let the signals surface as a human issue
+            logger.info(
+                "Tier 1a returned low confidence (%s); falling through to Tier 3",
+                result.reason,
+            )
+            return self._handle_tier3(signals, author_agent_id, role)
+
+        return DispatchResult.Tier1aQueued(
+            refinement_id=result.skill_name + "__v2",
             signal_refs=result.signal_refs,
         )
 
