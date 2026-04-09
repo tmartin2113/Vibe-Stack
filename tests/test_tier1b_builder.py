@@ -185,3 +185,63 @@ class TestResolveAdapter:
         # Still stubs beyond this gate → LowConfidence, but NOT for unknown task_type
         assert isinstance(result, Tier1bResult.LowConfidence)
         assert "unknown task_type" not in result.reason.lower()
+
+
+class TestFixtureAvailabilityGate:
+    def _builder_with_adapter_mapping(self, tmp_path):
+        registry = MagicMock()
+        registry.adapter_mapping.return_value = {"code_generation": "vibe"}
+        return Tier1bBuilder(
+            task_type_registry=registry,
+            smoke_scorer=MagicMock(),
+            git_runner=MagicMock(),
+            paperclip_client=MagicMock(),
+            fixtures_root=tmp_path / "canonical",
+            overrides_root=tmp_path / "overrides",
+            allow_publish=False,
+        )
+
+    def test_no_fixtures_dir_is_low_confidence(self, tmp_path):
+        b = self._builder_with_adapter_mapping(tmp_path)
+        signals = [_make_signal() for _ in range(3)]
+        result = b.build(signals, author_agent_id="x", author_run_id="y")
+        assert isinstance(result, Tier1bResult.LowConfidence)
+        assert "no fixtures" in result.reason.lower()
+        assert "vibe" in result.reason
+
+    def test_below_min_fixtures_is_low_confidence(self, tmp_path):
+        fixtures_dir = tmp_path / "canonical" / "vibe"
+        fixtures_dir.mkdir(parents=True)
+        # Only 2 fixtures, need 3
+        (fixtures_dir / "can_1.json").write_text("{}")
+        (fixtures_dir / "can_2.json").write_text("{}")
+        b = self._builder_with_adapter_mapping(tmp_path)
+        signals = [_make_signal() for _ in range(3)]
+        result = b.build(signals, author_agent_id="x", author_run_id="y")
+        assert isinstance(result, Tier1bResult.LowConfidence)
+        assert "no fixtures" in result.reason.lower()
+
+    def test_exactly_min_fixtures_passes_gate(self, tmp_path):
+        fixtures_dir = tmp_path / "canonical" / "vibe"
+        fixtures_dir.mkdir(parents=True)
+        for i in range(3):
+            (fixtures_dir / f"can_{i}.json").write_text("{}")
+        b = self._builder_with_adapter_mapping(tmp_path)
+        signals = [_make_signal() for _ in range(3)]
+        result = b.build(signals, author_agent_id="x", author_run_id="y")
+        # Still stubbed beyond fixture gate — should no longer complain about fixtures
+        assert isinstance(result, Tier1bResult.LowConfidence)
+        assert "no fixtures" not in result.reason.lower()
+
+    def test_baseline_json_not_counted_as_fixture(self, tmp_path):
+        fixtures_dir = tmp_path / "canonical" / "vibe"
+        fixtures_dir.mkdir(parents=True)
+        (fixtures_dir / "baseline.json").write_text("{}")
+        (fixtures_dir / "can_1.json").write_text("{}")
+        (fixtures_dir / "can_2.json").write_text("{}")
+        (fixtures_dir / "can_3.json").write_text("{}")
+        # 3 fixtures + baseline.json → should pass (baseline not counted)
+        b = self._builder_with_adapter_mapping(tmp_path)
+        signals = [_make_signal() for _ in range(3)]
+        result = b.build(signals, author_agent_id="x", author_run_id="y")
+        assert "no fixtures" not in result.reason.lower()

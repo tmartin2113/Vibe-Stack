@@ -189,9 +189,16 @@ class Tier1bBuilder:
                 signal_refs=sig_refs,
             )
 
-        # Still stubs beyond this gate
+        # Gate 3: fixture availability (per-adapter ramp-up gate)
+        if not self._check_fixture_availability(adapter):
+            return Tier1bResult.LowConfidence(
+                reason=f"no fixtures yet for adapter: {adapter}",
+                signal_refs=sig_refs,
+            )
+
+        # Still stubs beyond fixture availability
         return Tier1bResult.LowConfidence(
-            reason=f"stub (gates beyond adapter_resolution not wired): adapter={adapter}",
+            reason=f"stub (gates beyond fixture_availability not wired): adapter={adapter}",
             signal_refs=sig_refs,
         )
 
@@ -221,3 +228,14 @@ class Tier1bBuilder:
             logger.warning("tier1b: adapter_mapping failed: %s", exc)
             return None
         return mapping.get(task_type)
+
+    def _check_fixture_availability(self, adapter: str) -> bool:
+        """Return True if fixtures_root/adapter has >= MIN_FIXTURES_PER_ADAPTER."""
+        adapter_dir = self._fixtures_root / adapter
+        if not adapter_dir.exists() or not adapter_dir.is_dir():
+            return False
+        count = 0
+        for f in adapter_dir.iterdir():
+            if f.is_file() and f.suffix == ".json" and f.name != "baseline.json":
+                count += 1
+        return count >= MIN_FIXTURES_PER_ADAPTER
