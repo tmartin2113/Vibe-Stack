@@ -70,6 +70,33 @@ class SkillLoaderNode:
             if not skill_name:
                 continue
 
+            # ── Version-aware selection (Tier 1a A/B) ──────────────
+            # If a __v{N} sibling exists for this skill (produced by a
+            # Tier 1a refinement), deterministically bucket the current
+            # run to one version via skill_ab.pick_active_version. The
+            # chosen directory's name becomes the effective skill_name
+            # for the rest of this load and for outcome recording.
+            raw_path = skill_info.get("skill_path")
+            if raw_path:
+                from . import skill_ab
+                base = skill_ab.base_name(skill_name)
+                sp = Path(raw_path)
+                versions = skill_ab.list_versions_for(
+                    base, skills_root=sp.parent
+                )
+                if len(versions) > 1:
+                    chosen = skill_ab.pick_active_version(
+                        versions, run_input=state.get("session_id", "")
+                    )
+                    # Mutate skill_info in place so downstream state
+                    # (discovered_skills + loaded_skills) agree on the
+                    # versioned name. skill_cleanup's task_type map
+                    # reads from discovered_skills.
+                    if chosen.name != skill_name:
+                        skill_name = chosen.name
+                        skill_info["skill_name"] = chosen.name
+                        skill_info["skill_path"] = str(chosen)
+
             # Load skill content
             skill_content = self.skill_registry.load_skill(skill_name)
 

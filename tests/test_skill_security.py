@@ -148,6 +148,36 @@ class TestNameValidation:
             with pytest.raises(SkillSecurityError):
                 security.validate_skill_name(name)
 
+    def test_ab_version_suffix_allowed(self, security):
+        """Tier 1a A/B refinement candidates use the __v{N} suffix."""
+        for name in [
+            "pdf__v2",
+            "webapp-testing__v2",
+            "my-cool-skill__v10",
+            "a1-b2-c3__v42",
+        ]:
+            security.validate_skill_name(name)  # Should not raise
+
+    def test_ab_version_suffix_requires_digits(self, security):
+        """__v must be followed by one or more digits — no bare __v."""
+        with pytest.raises(SkillSecurityError, match="kebab-case"):
+            security.validate_skill_name("pdf__v")
+
+    def test_ab_version_suffix_requires_v_prefix(self, security):
+        """__2 alone (no v) is not a valid A/B suffix."""
+        with pytest.raises(SkillSecurityError, match="kebab-case"):
+            security.validate_skill_name("pdf__2")
+
+    def test_ab_version_suffix_only_at_end(self, security):
+        """__v{N} must be at the end; mid-name underscores are rejected."""
+        with pytest.raises(SkillSecurityError, match="kebab-case"):
+            security.validate_skill_name("pdf__v2-extra")
+
+    def test_single_underscore_still_rejected(self, security):
+        """Regression: a single underscore mid-name is still invalid."""
+        with pytest.raises(SkillSecurityError, match="kebab-case"):
+            security.validate_skill_name("my_pdf")
+
 
 # ── Path Validation ───────────────────────────────────────────────────
 
