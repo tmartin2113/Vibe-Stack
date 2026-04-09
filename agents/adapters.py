@@ -21,6 +21,7 @@ class GenerateKwargs(TypedDict, total=False):
     stop: Optional[List[str]]
     history: List[Dict[str, str]]
     system_prompt: str
+    task_type: str
 
 logger = logging.getLogger(__name__)
 

@@ -1,7 +1,5 @@
 """Tests for PromptAdapter + override loader integration."""
 
-from unittest.mock import MagicMock
-
 import pytest
 
 from agents.adapters import PromptAdapter
