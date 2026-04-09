@@ -167,3 +167,96 @@ def _update_baseline(directory: Path, *, fixture_id: str, score: float) -> None:
 def _utcnow_iso() -> str:
     """Return current UTC time as ISO 8601 with trailing Z."""
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
+
+
+from typing import Any, Mapping, Optional
+
+
+def maybe_capture_canonical(
+    *,
+    state: Mapping[str, Any],
+    task_type_registry: Any,
+    fixtures_root: Optional[Path] = None,
+    score_threshold: int = 90,
+    cap_per_adapter: int = 20,
+) -> Optional[Path]:
+    """Capture a successful workflow run as a canonical fixture.
+
+    Safe to call from the heartbeat finally-block: every failure path
+    logs and returns None. Never raises.
+
+    Args:
+        state: Workflow state mapping. Expected keys: routed_task_type,
+            critic_score, user_prompt, final_output, model_id.
+        task_type_registry: Object providing ``adapter_mapping()`` that
+            returns a dict of {task_type: adapter_name}.
+        fixtures_root: Where to write fixtures. Defaults to
+            ``tests/canonical``.
+        score_threshold: Minimum critic score to capture. Default 90.
+        cap_per_adapter: Maximum fixtures per adapter directory. At the
+            cap, the harvester stops capturing (no eviction).
+
+    Returns:
+        Path to the written fixture file on success, or None if the run
+        was not captured for any reason (low score, unknown adapter,
+        cap reached, redaction refused, write failure).
+    """
+    if fixtures_root is None:
+        fixtures_root = Path("tests/canonical")
+    try:
+        critic_score = int(state.get("critic_score", 0))
+    except (TypeError, ValueError):
+        critic_score = 0
+    if critic_score < score_threshold:
+        return None
+
+    task_type = state.get("routed_task_type") or state.get("task_type")
+    if not task_type:
+        return None
+
+    try:
+        mapping = task_type_registry.adapter_mapping()
+    except Exception as exc:
+        logger.debug("harvester: adapter_mapping failed: %s", exc)
+        return None
+    adapter = mapping.get(task_type)
+    if not adapter:
+        return None
+
+    target_dir = fixtures_root / adapter
+    if _count_fixtures(target_dir) >= cap_per_adapter:
+        return None
+
+    try:
+        prompt = _redact(str(state.get("user_prompt", "")))
+        output = _redact(str(state.get("final_output", "")))
+    except RedactionRefused as exc:
+        logger.debug("harvester: refused to capture: %s", exc)
+        return None
+
+    fixture_id = _new_ulid()
+    fixture = {
+        "id": fixture_id,
+        "task_type": task_type,
+        "prompt": prompt,
+        "expected_keywords": _extract_keywords(output),
+        "baseline_score": critic_score,
+        "model_id": state.get("model_id", ""),
+        "captured_at": _utcnow_iso(),
+    }
+
+    try:
+        target_dir.mkdir(parents=True, exist_ok=True)
+        fixture_path = target_dir / f"{fixture_id}.json"
+        fixture_path.write_text(json.dumps(fixture, indent=2, sort_keys=True))
+    except OSError as exc:
+        logger.warning("harvester: write failed for %s: %s", adapter, exc)
+        return None
+
+    try:
+        _update_baseline(target_dir, fixture_id=fixture_id, score=critic_score)
+    except OSError as exc:
+        logger.warning("harvester: baseline update failed: %s", exc)
+        # Fixture was still written — return the path.
+
+    return fixture_path

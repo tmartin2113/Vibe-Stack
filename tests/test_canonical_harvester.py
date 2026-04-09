@@ -152,3 +152,136 @@ class TestUtcnowIso:
         ts = _utcnow_iso()
         # yyyy-mm-ddThh:mm:ssZ or yyyy-mm-ddThh:mm:ss.ffffffZ
         assert re.match(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$", ts)
+
+
+from agents.canonical_harvester import maybe_capture_canonical
+
+
+class _StubRegistry:
+    def __init__(self, mapping):
+        self._mapping = mapping
+
+    def adapter_mapping(self):
+        return dict(self._mapping)
+
+
+def _good_state(**overrides):
+    base = {
+        "routed_task_type": "code_generation",
+        "critic_score": 95,
+        "user_prompt": "Write a FastAPI endpoint for user login",
+        "final_output": "from fastapi import FastAPI\napp = FastAPI()\n",
+        "model_id": "vllm-local",
+    }
+    base.update(overrides)
+    return base
+
+
+class TestMaybeCaptureCanonical:
+    def test_happy_path_writes_fixture(self, tmp_path):
+        registry = _StubRegistry({"code_generation": "vibe"})
+        result = maybe_capture_canonical(
+            state=_good_state(),
+            task_type_registry=registry,
+            fixtures_root=tmp_path,
+        )
+        assert result is not None
+        assert result.exists()
+        assert result.parent == tmp_path / "vibe"
+        data = json.loads(result.read_text())
+        assert data["task_type"] == "code_generation"
+        assert data["baseline_score"] == 95
+        assert "expected_keywords" in data
+
+    def test_low_score_not_captured(self, tmp_path):
+        registry = _StubRegistry({"code_generation": "vibe"})
+        result = maybe_capture_canonical(
+            state=_good_state(critic_score=85),
+            task_type_registry=registry,
+            fixtures_root=tmp_path,
+            score_threshold=90,
+        )
+        assert result is None
+
+    def test_missing_task_type_not_captured(self, tmp_path):
+        registry = _StubRegistry({})
+        result = maybe_capture_canonical(
+            state=_good_state(routed_task_type=""),
+            task_type_registry=registry,
+            fixtures_root=tmp_path,
+        )
+        assert result is None
+
+    def test_unknown_adapter_not_captured(self, tmp_path):
+        registry = _StubRegistry({})  # no mapping for code_generation
+        result = maybe_capture_canonical(
+            state=_good_state(),
+            task_type_registry=registry,
+            fixtures_root=tmp_path,
+        )
+        assert result is None
+
+    def test_cap_reached_not_captured(self, tmp_path):
+        registry = _StubRegistry({"code_generation": "vibe"})
+        vibe_dir = tmp_path / "vibe"
+        vibe_dir.mkdir()
+        # Create 20 existing fixtures
+        for i in range(20):
+            (vibe_dir / f"can_0{i:025d}.json").write_text("{}")
+        result = maybe_capture_canonical(
+            state=_good_state(),
+            task_type_registry=registry,
+            fixtures_root=tmp_path,
+            cap_per_adapter=20,
+        )
+        assert result is None
+
+    def test_redaction_refusal_not_captured(self, tmp_path):
+        registry = _StubRegistry({"code_generation": "vibe"})
+        state = _good_state(user_prompt="API key is sk-proj-abcdef1234567890abcdef1234567890")
+        result = maybe_capture_canonical(
+            state=state,
+            task_type_registry=registry,
+            fixtures_root=tmp_path,
+        )
+        assert result is None
+
+    def test_osfailure_swallowed_returns_none(self, tmp_path, monkeypatch):
+        registry = _StubRegistry({"code_generation": "vibe"})
+
+        def raising_write(*args, **kwargs):
+            raise OSError("disk full")
+        monkeypatch.setattr(Path, "write_text", raising_write)
+        # Should not raise — harvester swallows OSError
+        result = maybe_capture_canonical(
+            state=_good_state(),
+            task_type_registry=registry,
+            fixtures_root=tmp_path,
+        )
+        assert result is None
+
+    def test_fixture_has_required_fields(self, tmp_path):
+        registry = _StubRegistry({"code_generation": "vibe"})
+        result = maybe_capture_canonical(
+            state=_good_state(),
+            task_type_registry=registry,
+            fixtures_root=tmp_path,
+        )
+        assert result is not None
+        data = json.loads(result.read_text())
+        for required in ("id", "task_type", "prompt", "expected_keywords",
+                         "baseline_score", "model_id", "captured_at"):
+            assert required in data, f"missing {required}"
+
+    def test_happy_path_updates_baseline(self, tmp_path):
+        registry = _StubRegistry({"code_generation": "vibe"})
+        maybe_capture_canonical(
+            state=_good_state(),
+            task_type_registry=registry,
+            fixtures_root=tmp_path,
+        )
+        baseline_path = tmp_path / "vibe" / "baseline.json"
+        assert baseline_path.exists()
+        data = json.loads(baseline_path.read_text())
+        assert len(data) == 1
+        assert next(iter(data.values())) == 95.0
