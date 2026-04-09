@@ -144,6 +144,40 @@ class SkillRegistryLifecycleMixin:
 
         return metadata
 
+    def unregister_skill(self, name: str) -> None:
+        """Remove a skill from the registry index.
+
+        Removes the entry from the first tier in which it is found
+        (official, then local, then temp). If the name appears in
+        multiple tiers simultaneously, only the first match is removed.
+
+        Idempotent: silently no-ops if the skill is not registered.
+        Persists the change to the index file immediately. Also clears
+        the integrity hash and embedding cache entry so a subsequent
+        ``register_skill`` for the same name (e.g. during the
+        ``archive_loser`` → ``rename_winner_to_base`` flow) does not
+        collide with stale state.
+
+        Does NOT delete the skill's directory from disk — that is the
+        caller's responsibility. Used by ``skill_ab.archive_loser`` after
+        the directory has already been moved to the archive.
+        """
+        for tier in ("official", "local", "temp"):
+            if name in self.index["tiers"][tier]["skills"]:
+                del self.index["tiers"][tier]["skills"][name]
+                self._save_index()
+                # Mirror the cleanup that _evict_stale_from_tier does so
+                # the integrity hash and embedding cache don't outlive
+                # the index entry.
+                self.security.remove_integrity_hash(name)
+                try:
+                    self._get_embedding_cache().invalidate(name)
+                except Exception as e:  # pragma: no cover — defensive
+                    logger.debug(
+                        f"Embedding cache invalidate failed for {name}: {e}"
+                    )
+                return
+
     def track_usage(self, skill_name: str, quality_score: int):
         """
         Track skill usage and update metrics.

@@ -4,8 +4,8 @@ Tests for the skill reinforcement pipeline.
 Covers:
 - SkillOutcomeStore: recording, retrieval, FIFO eviction, score bands
 - SkillGeneratorNode: LLM-driven generation, template fallback, RAG
-- SkillGeneratorNode: RAG-augmented generation, self-refinement
-- SkillCleanupNode: outcome recording + refinement trigger integration
+- SkillGeneratorNode: RAG-augmented generation, draft_refined_content
+- SkillCleanupNode: outcome recording integration
 - Bug fixes: score=0 poisoning, feedback misattribution, empty content
 """
 
@@ -21,7 +21,7 @@ import pytest
 os.environ["VIBE_DISABLE_REMOTE_SKILLS"] = "1"
 
 from agents.skill_outcome_store import SkillOutcomeStore
-from agents.skill_generator import SkillGeneratorNode, REFINEMENT_THRESHOLD
+from agents.skill_generator import SkillGeneratorNode
 from agents.skill_cleanup import SkillCleanupNode
 from agents.skill_registry import SkillRegistry
 from agents.skill_security import SkillSecurity
@@ -303,59 +303,24 @@ class TestSkillGeneratorRAG:
 
 
 class TestSelfRefinement:
-    """Test skill self-refinement triggered by low scores."""
+    """Test skill draft_refined_content — pure content generation."""
 
-    def test_refine_low_scoring_skill(self, registry, tmp_store):
-        """Skills below threshold get refined with critic feedback."""
+    def test_draft_refined_content_with_feedback(self, registry, tmp_store):
+        """draft_refined_content always returns a string with critic directives."""
         gen = SkillGeneratorNode(registry, outcome_store=tmp_store)
 
-        # First, generate a skill so it exists in the registry
-        gen._generate_skill("test_generation", "Write tests")
-
-        # Now refine it
-        refined = gen.refine_skill(
-            skill_name="ephemeral-test-generation",
+        refined = gen.draft_refined_content(
             task_type="test_generation",
-            original_content="# Old content",
-            score=40,
-            feedback="Missing edge cases and error handling",
             specification="Write tests",
+            original_content="# Old content",
+            feedback="Missing edge cases and error handling",
+            score=40,
         )
 
-        assert refined is not None
+        assert refined  # always returns a string
         assert "Refinement Directives" in refined
         assert "Missing edge cases and error handling" in refined
         assert "40/100" in refined
-
-    def test_skip_refinement_above_threshold(self, registry, tmp_store):
-        """Skills above threshold are not refined."""
-        gen = SkillGeneratorNode(registry, outcome_store=tmp_store)
-
-        result = gen.refine_skill(
-            skill_name="test-skill",
-            task_type="test_generation",
-            original_content="# Good skill",
-            score=85,
-            feedback="Minor improvements possible",
-            specification="Write tests",
-        )
-
-        assert result is None
-
-    def test_refinement_threshold_boundary(self, registry, tmp_store):
-        """Score exactly at threshold is NOT refined."""
-        gen = SkillGeneratorNode(registry, outcome_store=tmp_store)
-
-        result = gen.refine_skill(
-            skill_name="test-skill",
-            task_type="test_generation",
-            original_content="# OK skill",
-            score=REFINEMENT_THRESHOLD,
-            feedback="On the boundary",
-            specification="Write tests",
-        )
-
-        assert result is None
 
 
 # ====================================================================
@@ -364,7 +329,11 @@ class TestSelfRefinement:
 
 
 class TestCleanupOutcomeRecording:
-    """Test that skill_cleanup records outcomes and triggers refinement."""
+    """Test that skill_cleanup records outcomes in the outcome store.
+
+    Refinement is no longer triggered here — that path moved to the
+    self-upgrade dispatcher (Tier 1a) in a separate task.
+    """
 
     def _make_state(
         self,
@@ -418,40 +387,52 @@ class TestCleanupOutcomeRecording:
         # Should not raise
         cleanup.execute(state)
 
-    def test_low_score_triggers_refinement(self, registry, tmp_store):
-        """Skills below REFINEMENT_THRESHOLD trigger self-refinement."""
-        # Generate a skill first so it exists
-        gen = SkillGeneratorNode(registry, outcome_store=tmp_store)
-        skill_name, _ = gen._generate_skill("test_generation", "Write tests")
+    def test_tier1a_promotion_called_after_recording(self, registry, tmp_store):
+        """After recording outcomes, cleanup fires the Tier 1a promotion check.
 
-        state = self._make_state(score=40, skill_name=skill_name)
+        The check iterates all three tier dirs (temp/local/official). It's
+        a no-op when no A/B'd skill has hit K per-version outcomes, so we
+        just verify it was invoked (via a spy on skill_ab.maybe_promote_winners)
+        and didn't crash.
+        """
+        from unittest.mock import patch
 
+        state = self._make_state(score=90)
         cleanup = SkillCleanupNode(registry, outcome_store=tmp_store)
-        cleanup.execute(state)
 
-        # Check outcome was recorded
+        with patch(
+            "agents.skill_cleanup.skill_ab.maybe_promote_winners",
+            return_value=[],
+        ) as mock_promote:
+            cleanup.execute(state)
+
+        # Called once per tier (temp, local, official) = 3 times
+        assert mock_promote.call_count == 3
+        # Every call gets the same skill list and config
+        for call in mock_promote.call_args_list:
+            kwargs = call.kwargs
+            assert kwargs["skill_names_in_run"] == ["ephemeral-test-generation"]
+            assert kwargs["outcome_store"] is tmp_store
+            assert kwargs["skill_registry"] is registry
+            assert kwargs["K_per_version"] == 10
+
+    def test_tier1a_promotion_failure_does_not_crash_cleanup(self, registry, tmp_store):
+        """A crash inside maybe_promote_winners is swallowed so cleanup finishes."""
+        from unittest.mock import patch
+
+        state = self._make_state(score=90)
+        cleanup = SkillCleanupNode(registry, outcome_store=tmp_store)
+
+        with patch(
+            "agents.skill_cleanup.skill_ab.maybe_promote_winners",
+            side_effect=RuntimeError("simulated failure"),
+        ):
+            # Should NOT raise
+            cleanup.execute(state)
+
+        # Outcome should still have been recorded (cleanup completed)
         entries = tmp_store._read_all()
         assert len(entries) == 1
-
-        # Check skill was refined (SKILL.md should contain refinement directives)
-        skill_path = registry.temp_dir / skill_name / "SKILL.md"
-        content = skill_path.read_text()
-        assert "Refinement Directives" in content
-
-    def test_high_score_no_refinement(self, registry, tmp_store):
-        """Skills above threshold are not refined."""
-        gen = SkillGeneratorNode(registry, outcome_store=tmp_store)
-        skill_name, _ = gen._generate_skill("test_generation", "Write tests")
-
-        state = self._make_state(score=90, skill_name=skill_name)
-
-        cleanup = SkillCleanupNode(registry, outcome_store=tmp_store)
-        cleanup.execute(state)
-
-        # Skill should NOT have refinement directives
-        skill_path = registry.temp_dir / skill_name / "SKILL.md"
-        content = skill_path.read_text()
-        assert "Refinement Directives" not in content
 
     def test_full_loop_outcome_feeds_generation(self, registry, tmp_store):
         """

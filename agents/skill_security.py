@@ -105,8 +105,12 @@ SUSPICIOUS_PATTERNS: List[Tuple[str, str, str]] = [
 # Maximum allowed SKILL.md file size (512 KB)
 MAX_SKILL_FILE_SIZE: int = 512 * 1024
 
-# Valid skill name: kebab-case, starts with letter, 1–64 chars
-VALID_SKILL_NAME_RE = re.compile(r"^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$")
+# Valid skill name: kebab-case, starts with letter, 1–64 chars.
+# An optional ``__v{N}`` suffix (where N is one or more digits) is
+# permitted for A/B refinement candidates produced by the Tier 1a
+# builder (agents/skill_ab.py). This is the only use of underscores
+# in skill names and the only deviation from strict kebab-case.
+VALID_SKILL_NAME_RE = re.compile(r"^[a-z][a-z0-9]*(?:-[a-z0-9]+)*(?:__v\d+)?$")
 
 # Maximum skill name length
 MAX_SKILL_NAME_LENGTH: int = 64
@@ -213,7 +217,9 @@ class SkillSecurity:
             raise SkillSecurityError(
                 f"Invalid skill name: {name!r}. "
                 f"Must be kebab-case (e.g., 'my-skill-name'), "
-                f"start with a letter, and contain only a-z, 0-9, hyphens."
+                f"start with a letter, and contain only a-z, 0-9, hyphens. "
+                f"An optional '__v{{N}}' suffix is permitted for Tier 1a "
+                f"A/B refinement candidates (e.g., 'my-skill-name__v2')."
             )
 
     # ── Path validation ───────────────────────────────────────────────

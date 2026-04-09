@@ -939,7 +939,7 @@ class TestSkillGeneratorExtractWorkflow:
 
 
 class TestSkillGeneratorRefinement:
-    """Cover line 643: _create_refined_skill_content anchor missing."""
+    """Cover draft_refined_content anchor-missing branch."""
 
     def test_refined_content_no_context_anchor(self):
         from agents.skill_generator import SkillGeneratorNode
@@ -954,7 +954,7 @@ class TestSkillGeneratorRefinement:
         # Produce content that does NOT have "## Context" anchor
         node._create_skill_content = MagicMock(return_value="# Skill\n## How It Works\nContent here")
 
-        result = node._create_refined_skill_content(
+        result = node.draft_refined_content(
             task_type="code_generation",
             specification="spec",
             original_content="old content",

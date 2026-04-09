@@ -4,7 +4,6 @@ Skill Cleanup Node - TTL-based skill cache management at session end.
 This node should be called at the end of the workflow to:
 - Track quality scores for used skills (enabling promotion)
 - Record outcomes in the SkillOutcomeStore (closing the reinforcement loop)
-- Trigger self-refinement for low-scoring skills
 - Evict stale temp skills (unused > 7 days) while retaining recent ones
 - Evict stale official skills (unused > 30 days) since they can be re-fetched
 
@@ -18,23 +17,26 @@ from typing import Any, Optional
 from .state import AgentState
 from .skill_registry import SkillRegistry
 from .skill_outcome_store import SkillOutcomeStore
-from .skill_generator import SkillGeneratorNode, REFINEMENT_THRESHOLD
+from . import skill_ab
 
 logger = logging.getLogger(__name__)
 
 
 class SkillCleanupNode:
     """
-    Handles TTL-based skill cache eviction, final usage tracking, outcome
-    recording, and self-refinement of low-scoring skills.
+    Handles TTL-based skill cache eviction, final usage tracking, and
+    outcome recording.
 
     This node should be called at the end of a session to:
     1. Track final quality scores for all used skills
     2. Record skill outcomes in the outcome store (reinforcement memory)
-    3. Trigger self-refinement for skills below REFINEMENT_THRESHOLD
-    4. Evict stale temp skills (> 7 days unused) while retaining recent ones
-    5. Evict stale official skills (> 30 days unused) — re-fetchable from GitHub
-    6. Update usage statistics in the index
+    3. Evict stale temp skills (> 7 days unused) while retaining recent ones
+    4. Evict stale official skills (> 30 days unused) — re-fetchable from GitHub
+    5. Update usage statistics in the index
+
+    Note: Skill refinement is no longer triggered here. Refinements now run
+    through the self-upgrade dispatcher (Tier 1a), which writes versioned
+    candidates; promotion of A/B winners is added in a separate task.
     """
 
     def __init__(
@@ -49,9 +51,8 @@ class SkillCleanupNode:
         Args:
             skill_registry: Shared SkillRegistry instance
             outcome_store:  Shared SkillOutcomeStore for recording outcomes.
-                           If None, outcome recording and refinement are skipped.
-            base_model:     LLM backend, passed to SkillGeneratorNode for
-                           LLM-driven refinement.
+                           If None, outcome recording is skipped.
+            base_model:     Reserved for future use (currently unused).
         """
         self.name = "skill_cleanup"
         self.skill_registry = skill_registry
@@ -82,11 +83,22 @@ class SkillCleanupNode:
                 state, skills_in_use, subtask_scores, fallback_score
             )
 
-            # Record outcomes and trigger refinement (reinforcement loop)
+            # Record outcomes (reinforcement loop). Refinement runs via
+            # the self-upgrade dispatcher (Tier 1a); this node records
+            # outcomes and then promotes A/B winners below.
             self._record_outcomes_and_refine(
                 state, skills_in_use, subtask_scores, subtask_feedback,
                 fallback_score, fallback_feedback,
             )
+
+            # Tier 1a promotion: check whether any A/B'd skill in this
+            # run has hit K per-version outcomes; promote winners and
+            # archive losers inline. Iterates all three tier dirs since
+            # a skill can live in any of them; list_versions_for returns
+            # empty for tiers that don't contain the skill, so the extra
+            # calls are cheap no-ops.
+            if self.outcome_store is not None:
+                self._promote_ab_winners(skills_in_use)
         else:
             logger.info("No skills were used in this session")
 
@@ -149,14 +161,13 @@ class SkillCleanupNode:
         fallback_feedback: str,
     ):
         """
-        Record skill outcomes in the outcome store and trigger refinement
-        for low-scoring skills.
+        Record skill outcomes in the outcome store.
 
         This is the write side of the reinforcement loop:
-          Critic scores -> Outcome Store -> (future) Skill Generator reads them
+          Critic scores -> Outcome Store -> Skill Generator reads them
 
-        For skills scoring below REFINEMENT_THRESHOLD, triggers immediate
-        self-refinement using the critic feedback.
+        Refinement is no longer triggered here; it runs through the
+        self-upgrade dispatcher (Tier 1a).
         """
         if self.outcome_store is None:
             return
@@ -166,8 +177,6 @@ class SkillCleanupNode:
         loaded_skills = {
             s["name"]: s for s in state.get("loaded_skills", [])
         }
-
-        refined_count = 0
 
         for skill_name in skills_in_use:
             score = subtask_scores.get(skill_name, fallback_score)
@@ -204,27 +213,6 @@ class SkillCleanupNode:
                 score=score,
                 feedback=feedback,
             )
-
-            # Self-refinement: if score is below threshold and we have
-            # feedback, regenerate with critic directives
-            if score < REFINEMENT_THRESHOLD and feedback:
-                generator = SkillGeneratorNode(
-                    self.skill_registry, self.outcome_store,
-                    base_model=self.base_model,
-                )
-                refined = generator.refine_skill(
-                    skill_name=skill_name,
-                    task_type=task_type,
-                    original_content=skill_content,
-                    score=score,
-                    feedback=feedback,
-                    specification=specification,
-                )
-                if refined:
-                    refined_count += 1
-
-        if refined_count > 0:
-            logger.info(f"🔄 Refined {refined_count} low-scoring skill(s)")
 
     @staticmethod
     def _build_subtask_score_map(state: AgentState) -> dict:
@@ -305,6 +293,43 @@ class SkillCleanupNode:
                 mapping[name] = task_type
         return mapping
 
+    def _promote_ab_winners(self, skills_in_use: list) -> None:
+        """Promote Tier 1a A/B winners for any skills that hit K per-version.
+
+        Iterates the three tier directories (temp/local/official) because
+        the skill could live in any of them. maybe_promote_winners returns
+        an empty list for tiers that don't contain the skill, so the extra
+        calls are cheap no-ops.
+
+        Defensive: a promotion failure never crashes cleanup.
+        """
+        tier_dirs = (
+            self.skill_registry.temp_dir,
+            self.skill_registry.local_dir,
+            self.skill_registry.official_dir,
+        )
+        for tier_dir in tier_dirs:
+            try:
+                promotions = skill_ab.maybe_promote_winners(
+                    skill_names_in_run=list(skills_in_use),
+                    outcome_store=self.outcome_store,
+                    skills_root=tier_dir,
+                    skill_registry=self.skill_registry,
+                    K_per_version=10,
+                )
+                for p in promotions:
+                    logger.info(
+                        "🎯 Tier 1a promoted %s: v%d beat v%d "
+                        "(avg %.1f vs %.1f)",
+                        p.base_name, p.winner_version, p.loser_version,
+                        p.winner_avg, p.loser_avg,
+                    )
+            except Exception as e:  # pragma: no cover — defensive
+                logger.warning(
+                    "Tier 1a promotion check failed for %s: %s",
+                    tier_dir, e,
+                )
+
     def _evict_stale_skills(self):
         """
         Evict stale skills using TTL-based retention, then clear workspace.
@@ -338,7 +363,7 @@ def cleanup_skills(
         state: Current agent state
         skill_registry: Shared SkillRegistry instance
         outcome_store:  Optional SkillOutcomeStore for outcome recording
-        base_model:     Optional LLM backend for refinement
+        base_model:     Reserved for future use (currently unused)
 
     Returns:
         Updated state with cleanup complete

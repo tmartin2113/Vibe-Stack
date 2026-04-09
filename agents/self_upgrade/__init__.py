@@ -118,7 +118,8 @@ _ADDITIONAL_IMMUTABLES = frozenset({
     "agents/lesson_store.py",       # M1 — cannot modify lesson persistence
     "agents/self_upgrade/tier0_builder.py",   # M1
     "agents/self_upgrade/tier3_builder.py",   # M1
-    "agents/self_upgrade/tier1a_builder.py",  # M2
+    "agents/self_upgrade/tier1a_builder.py",  # M2 (Tier 1a)
+    "agents/skill_ab.py",                     # M2 (Tier 1a) — A/B mechanics
     "agents/self_upgrade/tier1b_builder.py",  # M3
     "agents/self_upgrade/tier2_builder.py",   # M4
     "agents/self_upgrade/ast_verifier.py",    # M4
