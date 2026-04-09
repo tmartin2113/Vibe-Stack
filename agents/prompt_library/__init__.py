@@ -13,9 +13,8 @@ Strict at gate time: validate_override_dict raises on any violation.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Dict, List
+from typing import Any, Dict
 
 
 # ULID uses Crockford base32: 0-9, A-H, J, K, M, N, P-T, V-Z (no I, L, O, U)
