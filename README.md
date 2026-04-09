@@ -221,6 +221,29 @@ Infrastructure service URLs (`SEARXNG_URL`, `MIROFISH_URL`, `PADDLEOCR_URL`, etc
 
 ---
 
+## Paperclip Skill Management
+
+The Paperclip server container (`vibe-stack-server-1`) loads its adapter skills from `$PAPERCLIP_SKILLS_DIR`, which the published server image sets to `/app/skills`. You can override it via `docker-compose.yml` to bind-mount a host directory for runtime skill swapping — e.g. to drop customized `SKILL.md` files into a volume that outlives container rebuilds.
+
+Two operator helpers live in `scripts/`:
+
+| Script | Purpose |
+|---|---|
+| `scripts/check-paperclip-skills.sh` | Verify the active skill dir, list loaded skills, and warn about stale npx caches. Safe to run anytime. |
+| `scripts/cleanup-paperclip-skill-cache.sh` | Purge stale `/paperclip/.npm/_npx/*` caches left by earlier Paperclip setup steps. Dry-run by default; pass `--apply` to delete. |
+
+Typical first-time cleanup:
+
+```bash
+./scripts/check-paperclip-skills.sh                    # inspect current state
+./scripts/cleanup-paperclip-skill-cache.sh --apply     # purge ~hundreds of MB of stale cache
+./scripts/check-paperclip-skills.sh                    # confirm the warning clears
+```
+
+Both scripts honor `SERVER_CONTAINER=<name>` if your container is named differently.
+
+---
+
 ## Testing
 
 ```bash
