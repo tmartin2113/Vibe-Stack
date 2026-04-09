@@ -1,5 +1,6 @@
 """Tests for agents/prompt_library — prompt override loader and schema."""
 
+from dataclasses import FrozenInstanceError
 from pathlib import Path
 
 import pytest
@@ -198,7 +199,6 @@ class TestPromptOverrideLoader:
             author_run_id="y",
             created_at="2026-04-09T17:23:00Z",
         )
-        from dataclasses import FrozenInstanceError
         with pytest.raises(FrozenInstanceError):
             entry.append = "mutated"  # type: ignore[misc]
 
