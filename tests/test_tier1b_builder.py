@@ -106,3 +106,82 @@ class TestTier1bBuilderStub:
             author_run_id="run_1",
         )
         assert isinstance(result, Tier1bResult.LowConfidence)
+
+
+class TestValidateCluster:
+    def _builder(self, tmp_path):
+        return Tier1bBuilder(
+            task_type_registry=MagicMock(),
+            smoke_scorer=MagicMock(),
+            git_runner=MagicMock(),
+            paperclip_client=MagicMock(),
+            fixtures_root=tmp_path / "canonical",
+            overrides_root=tmp_path / "overrides",
+            allow_publish=False,
+        )
+
+    def test_empty_cluster_is_low_confidence(self, tmp_path):
+        b = self._builder(tmp_path)
+        result = b.build([], author_agent_id="x", author_run_id="y")
+        assert isinstance(result, Tier1bResult.LowConfidence)
+        assert "empty" in result.reason.lower()
+
+    def test_mismatched_task_types_is_low_confidence(self, tmp_path):
+        b = self._builder(tmp_path)
+        signals = [
+            _make_signal(task_type="code_generation"),
+            _make_signal(task_type="code_review"),
+        ]
+        result = b.build(signals, author_agent_id="x", author_run_id="y")
+        assert isinstance(result, Tier1bResult.LowConfidence)
+        assert "task_type" in result.reason.lower()
+
+    def test_mismatched_details_is_low_confidence(self, tmp_path):
+        b = self._builder(tmp_path)
+        signals = [
+            _make_signal(detail="use response_model"),
+            _make_signal(detail="use type hints"),
+        ]
+        result = b.build(signals, author_agent_id="x", author_run_id="y")
+        assert isinstance(result, Tier1bResult.LowConfidence)
+        assert "detail" in result.reason.lower()
+
+
+class TestResolveAdapter:
+    def test_unknown_task_type_is_low_confidence(self, tmp_path):
+        registry = MagicMock()
+        registry.adapter_mapping.return_value = {}
+        b = Tier1bBuilder(
+            task_type_registry=registry,
+            smoke_scorer=MagicMock(),
+            git_runner=MagicMock(),
+            paperclip_client=MagicMock(),
+            fixtures_root=tmp_path / "canonical",
+            overrides_root=tmp_path / "overrides",
+            allow_publish=False,
+        )
+        signals = [_make_signal(), _make_signal(), _make_signal()]
+        result = b.build(signals, author_agent_id="x", author_run_id="y")
+        assert isinstance(result, Tier1bResult.LowConfidence)
+        assert "unknown task_type" in result.reason.lower() or "code_generation" in result.reason
+
+    def test_known_task_type_continues_past_resolution(self, tmp_path):
+        # With adapter known but no fixtures, we expect to fail at the
+        # fixture-availability gate (Task 12). For now, we just check
+        # that the error is NOT 'unknown task_type'.
+        registry = MagicMock()
+        registry.adapter_mapping.return_value = {"code_generation": "vibe"}
+        b = Tier1bBuilder(
+            task_type_registry=registry,
+            smoke_scorer=MagicMock(),
+            git_runner=MagicMock(),
+            paperclip_client=MagicMock(),
+            fixtures_root=tmp_path / "canonical",
+            overrides_root=tmp_path / "overrides",
+            allow_publish=False,
+        )
+        signals = [_make_signal(), _make_signal(), _make_signal()]
+        result = b.build(signals, author_agent_id="x", author_run_id="y")
+        # Still stubs beyond this gate → LowConfidence, but NOT for unknown task_type
+        assert isinstance(result, Tier1bResult.LowConfidence)
+        assert "unknown task_type" not in result.reason.lower()

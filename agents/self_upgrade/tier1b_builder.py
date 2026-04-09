@@ -170,8 +170,54 @@ class Tier1bBuilder:
                 diff, publish failure).
         """
         sig_refs = [s.id for s in signals]
-        # Stub until later tasks wire gates.
+
+        # Gate 1: cluster validation
+        cluster_error = self._validate_cluster(signals)
+        if cluster_error is not None:
+            return Tier1bResult.LowConfidence(
+                reason=cluster_error, signal_refs=sig_refs,
+            )
+
+        # All signals share task_type at this point
+        task_type = signals[0].task_type
+
+        # Gate 2: adapter resolution
+        adapter = self._resolve_adapter(task_type)
+        if adapter is None:
+            return Tier1bResult.LowConfidence(
+                reason=f"unknown task_type: {task_type}",
+                signal_refs=sig_refs,
+            )
+
+        # Still stubs beyond this gate
         return Tier1bResult.LowConfidence(
-            reason="stub (gates not yet wired)",
+            reason=f"stub (gates beyond adapter_resolution not wired): adapter={adapter}",
             signal_refs=sig_refs,
         )
+
+    def _validate_cluster(self, signals: List[UpgradeSignal]) -> Optional[str]:
+        """Defensive re-check of the dispatcher's Tier 1b classification.
+
+        Returns an error string on failure, None on success.
+        """
+        if not signals:
+            return "empty cluster"
+        task_types = {s.task_type for s in signals}
+        if len(task_types) != 1:
+            return f"cluster task_type mismatch: {sorted(task_types)}"
+        details = {s.detail for s in signals}
+        if len(details) != 1:
+            return f"cluster detail mismatch ({len(details)} distinct details)"
+        return None
+
+    def _resolve_adapter(self, task_type: str) -> Optional[str]:
+        """Map task_type → adapter name via the registry.
+
+        Returns None if the registry has no mapping for the task_type.
+        """
+        try:
+            mapping = self._task_type_registry.adapter_mapping()
+        except Exception as exc:
+            logger.warning("tier1b: adapter_mapping failed: %s", exc)
+            return None
+        return mapping.get(task_type)
