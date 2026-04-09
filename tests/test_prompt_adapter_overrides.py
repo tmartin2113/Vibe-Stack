@@ -112,3 +112,46 @@ class TestPromptAdapterTaskType:
         system = backend.last_messages[0]["content"]
         assert system.startswith("CALLER_OVERRIDE")
         assert "EXTRA" in system
+
+
+class TestAdapterRegistryLoaderWiring:
+    def test_registry_constructs_loader_by_default(self, monkeypatch, tmp_path):
+        from agents.adapters import AdapterRegistry
+        monkeypatch.chdir(tmp_path)  # empty dir → loader finds no overrides
+        registry = AdapterRegistry()
+        assert registry._override_loader is not None
+
+    def test_registry_injects_loader_into_registered_adapter(self):
+        from agents.adapters import AdapterRegistry, PromptAdapter
+        registry = AdapterRegistry()
+        backend = _FakeBackend()
+        adapter = PromptAdapter(
+            name="vibe", system_prompt="BASE", base_model=backend,
+        )
+        assert adapter._override_loader is None  # sanity
+        registry.register(adapter)
+        assert adapter._override_loader is registry._override_loader
+
+    def test_registry_does_not_overwrite_existing_loader(self):
+        from agents.adapters import AdapterRegistry, PromptAdapter
+        registry = AdapterRegistry()
+        custom_loader = _StubLoader({})
+        backend = _FakeBackend()
+        adapter = PromptAdapter(
+            name="vibe", system_prompt="BASE", base_model=backend,
+            override_loader=custom_loader,
+        )
+        registry.register(adapter)
+        assert adapter._override_loader is custom_loader
+
+    def test_get_or_create_dynamic_adapter_has_loader(self):
+        from agents.adapters import AdapterRegistry, PromptAdapter
+        registry = AdapterRegistry()
+        seed = PromptAdapter(
+            name="vibe", system_prompt="BASE", base_model=_FakeBackend(),
+        )
+        registry.register(seed)
+        dynamic = registry.get_or_create(
+            "specialist", skill_adapter_prompt="SKILL DEFINED PROMPT"
+        )
+        assert dynamic._override_loader is registry._override_loader

@@ -111,9 +111,21 @@ class AdapterRegistry:
     def __init__(self):
         self.adapters: Dict[str, PromptAdapter] = {}
         self.current_adapter: Optional[str] = None
+        # Tier 1b: shared override loader, built once per registry.
+        # Permissive — failures to load are logged and swallowed here.
+        try:
+            from agents.prompt_library import PromptOverrideLoader
+            self._override_loader: Any = PromptOverrideLoader()
+        except Exception as exc:
+            logger.warning("prompt override loader init failed: %s", exc)
+            self._override_loader = None
 
     def register(self, adapter: PromptAdapter):
         """Register an adapter"""
+        # Tier 1b: inject the registry's shared loader if the adapter
+        # doesn't already have one. Never overwrite a caller-supplied loader.
+        if getattr(adapter, "_override_loader", None) is None:
+            adapter._override_loader = self._override_loader
         self.adapters[adapter.name] = adapter
         logger.info(f"Registered adapter: {adapter.name}")
 
@@ -181,7 +193,8 @@ class AdapterRegistry:
             # Need a base_model reference — borrow from any existing adapter
             base_model = next(iter(self.adapters.values())).base_model
             adapter = PromptAdapter(
-                dynamic_name, skill_adapter_prompt, base_model
+                dynamic_name, skill_adapter_prompt, base_model,
+                override_loader=self._override_loader,
             )
             self.adapters[dynamic_name] = adapter
             self.current_adapter = dynamic_name
