@@ -45,7 +45,7 @@ SMOKE_MAX_DROP_PCT = 5
 # existing ones without an explicit invariant-test update.
 SAFETY_CLAUSE_BLOCKLIST: Tuple[re.Pattern, ...] = (
     re.compile(r"\bignore\s+(?:previous|prior|all|the\s+above)", re.IGNORECASE),
-    re.compile(r"\bdisregard\s+(?:previous|prior|the\s+system)", re.IGNORECASE),
+    re.compile(r"\bdisregard\s+(?:previous|prior|the\b)", re.IGNORECASE),
     re.compile(r"\byou\s+are\s+now\b", re.IGNORECASE),
     re.compile(r"\breveal\s+(?:your\s+)?(?:system\s+)?prompt", re.IGNORECASE),
     re.compile(r"\boverride\s+(?:safety|security)\b", re.IGNORECASE),
