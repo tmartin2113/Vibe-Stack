@@ -312,7 +312,9 @@ You can make multiple tool calls. After seeing tool results, you can refine your
         if multi_turn_history:
             gen_kwargs["history"] = multi_turn_history
 
-        output = specialist.generate(prompt, **gen_kwargs)
+        output = specialist.generate(
+            prompt, task_type=state.get("routed_task_type"), **gen_kwargs
+        )
 
         # If the specialist is asking for clarification, escalate to human.
         # (MiroFish handles simulation externally via the MiroFishSimulation tool.)
@@ -405,7 +407,11 @@ If you're satisfied with the results, provide your final output without more too
                 continuation_config = {**config}
                 continuation_max = min(config.get("max_tokens", 1500), 500)
                 continuation_config["max_tokens"] = continuation_max
-                output = specialist.generate(continuation_prompt, **continuation_config)
+                output = specialist.generate(
+                    continuation_prompt,
+                    task_type=state.get("routed_task_type"),
+                    **continuation_config,
+                )
                 tool_iteration += 1
 
             except Exception as e:
@@ -623,7 +629,9 @@ Otherwise, focus on the specific issues identified. Provide an improved solution
         )
 
         # Generate initial output
-        output = specialist.generate(prompt, **config)
+        output = specialist.generate(
+            prompt, task_type=state.get("routed_task_type"), **config
+        )
 
         # If the sub-task specialist asks for clarification, escalate to human.
         needs_clarification, questions = parse_clarification(output)
