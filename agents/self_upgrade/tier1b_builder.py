@@ -239,12 +239,113 @@ class Tier1bBuilder:
                 signal_refs=sig_refs,
             )
 
-        # Still stubs beyond smoke test (publish path is Tasks 15-16)
-        return Tier1bResult.LowConfidence(
-            reason=(
-                f"stub (publish not wired): "
-                f"adapter={adapter} id={override_id} append={append_text!r}"
-            ),
+        # Publish path (only when allow_publish=True)
+        if not self._allow_publish:
+            return Tier1bResult.LowConfidence(
+                reason=f"gates passed; publish disabled by allow_publish=False",
+                signal_refs=sig_refs,
+            )
+
+        # Compute pre-merge baseline snapshot (rolling-avg floor) —
+        # for now, use the arithmetic mean of current baseline.json scores
+        # for this adapter. Task 17 will refine.
+        baseline_snapshot = self._compute_baseline_snapshot(adapter)
+
+        try:
+            branch = self._publish_branch_create(override_id)
+        except Exception as exc:
+            return Tier1bResult.GateFailed(
+                gate="publish",
+                detail=f"branch creation failed: {exc}",
+                signal_refs=sig_refs,
+            )
+
+        try:
+            self._publish_write_files(
+                task_type=task_type,
+                override_id=override_id,
+                append=append_text,
+                signal_refs=sig_refs,
+                author_agent_id=author_agent_id,
+                author_run_id=author_run_id,
+                created_at=created_at,
+                baseline_snapshot=baseline_snapshot,
+            )
+        except Exception as exc:
+            return Tier1bResult.GateFailed(
+                gate="publish",
+                detail=f"file write failed: {exc}",
+                signal_refs=sig_refs,
+            )
+
+        # Gate 8: append-only diff check
+        diff_err = self._publish_diff_check()
+        if diff_err is not None:
+            return Tier1bResult.GateFailed(
+                gate="diff_check",
+                detail=diff_err,
+                signal_refs=sig_refs,
+            )
+
+        try:
+            commit_sha = self._publish_commit(override_id, task_type)
+        except Exception as exc:
+            return Tier1bResult.GateFailed(
+                gate="publish",
+                detail=f"commit failed: {exc}",
+                signal_refs=sig_refs,
+            )
+
+        # Push
+        push_err = self._publish_push(branch)
+        if push_err is not None:
+            return Tier1bResult.GateFailed(
+                gate="publish",
+                detail=push_err,
+                signal_refs=sig_refs,
+            )
+
+        # PR create
+        gate_outputs = (
+            "- schema: ok\n"
+            "- safety_regex: ok\n"
+            "- smoke_test: ok\n"
+            "- diff_check: ok\n"
+        )
+        pr_url, pr_err = self._publish_pr(
+            branch=branch,
+            override_id=override_id,
+            task_type=task_type,
+            append=append_text,
+            signal_refs=sig_refs,
+            gate_outputs=gate_outputs,
+        )
+        if pr_err is not None:
+            return Tier1bResult.GateFailed(
+                gate="publish",
+                detail=f"{pr_err} (branch={branch})",
+                signal_refs=sig_refs,
+            )
+
+        # Companion issue (failure is non-fatal)
+        issue_id = self._file_companion_issue(
+            override_id=override_id,
+            task_type=task_type,
+            adapter=adapter,
+            branch=branch,
+            commit=commit_sha,
+            pr_url=pr_url or "",
+            append=append_text,
+            signal_refs=sig_refs,
+        )
+
+        return Tier1bResult.OverrideCommitted(
+            override_id=override_id,
+            task_type=task_type,
+            branch=branch,
+            commit=commit_sha,
+            pr_url=pr_url or "",
+            issue_id=issue_id,
             signal_refs=sig_refs,
         )
 
@@ -397,3 +498,227 @@ class Tier1bBuilder:
                     f"(-{drop:.1f}, exceeds {SMOKE_MAX_DROP_PCT} tolerance)"
                 )
         return None
+
+    _BRANCH_PREFIX = "vibe/self-upgrade/tier1b"
+
+    def _publish_branch_create(self, override_id: str) -> str:
+        """Create and check out a new branch for the override. Returns branch name."""
+        branch = f"{self._BRANCH_PREFIX}-{override_id}"
+        self._git.run(["checkout", "-b", branch], check=True)
+        return branch
+
+    def _publish_write_files(
+        self,
+        *,
+        task_type: str,
+        override_id: str,
+        append: str,
+        signal_refs: List[str],
+        author_agent_id: str,
+        author_run_id: str,
+        created_at: str,
+        baseline_snapshot: float,
+    ) -> tuple[Path, Path]:
+        """Write the override YAML and its .baseline sidecar.
+
+        Returns (override_path, baseline_path).
+        """
+        target_dir = self._overrides_root / task_type
+        target_dir.mkdir(parents=True, exist_ok=True)
+        override_path = target_dir / f"{override_id}.yaml"
+        baseline_path = target_dir / f"{override_id}.baseline"
+
+        # Render YAML by hand to keep the multiline append readable
+        yaml_text = (
+            f"id: {override_id}\n"
+            f"task_type: {task_type}\n"
+            f"append: |\n"
+            f"  {append}\n"
+            f"signal_refs:\n"
+            + "".join(f"  - {ref}\n" for ref in signal_refs)
+            + f"author_agent_id: {author_agent_id}\n"
+            f"author_run_id: {author_run_id}\n"
+            f"created_at: {created_at}\n"
+        )
+        override_path.write_text(yaml_text)
+
+        baseline_path.write_text(
+            f"{created_at} {baseline_snapshot:.1f}\n"
+        )
+        return override_path, baseline_path
+
+    def _publish_diff_check(self) -> Optional[str]:
+        """Run git diff --name-status and reject any modifications under overrides/.
+
+        Returns None on pass, or a violation string on failure.
+        """
+        result = self._git.run(["diff", "--name-status", "HEAD"], check=False)
+        if result.returncode != 0:
+            return f"git diff failed: {result.stderr}"
+        for line in result.stdout.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            parts = line.split("\t", 1)
+            if len(parts) != 2:
+                continue
+            status, path = parts
+            if path.startswith("agents/prompt_library/overrides/"):
+                if status != "A":
+                    return (
+                        f"append-only violation: {status} on {path} "
+                        f"(only 'A' allowed under overrides/)"
+                    )
+        return None
+
+    def _publish_commit(self, override_id: str, task_type: str) -> str:
+        """Stage the new files and create a commit. Returns commit SHA."""
+        # Stage specific paths only — do not 'git add .'
+        self._git.run([
+            "add",
+            f"agents/prompt_library/overrides/{task_type}/{override_id}.yaml",
+            f"agents/prompt_library/overrides/{task_type}/{override_id}.baseline",
+        ], check=True)
+        self._git.run([
+            "commit",
+            "-m",
+            f"feat(prompt_overrides): tier1b {override_id} for {task_type}",
+        ], check=True)
+        # Capture the commit SHA
+        result = self._git.run(["rev-parse", "HEAD"], check=True)
+        return result.stdout.strip() or "unknown"
+
+    def _compute_baseline_snapshot(self, adapter: str) -> float:
+        """Compute the pre-merge baseline floor for the adapter.
+
+        For M0 of Tier 1b, this is the arithmetic mean of the adapter's
+        current baseline.json scores. Returns 0.0 if the baseline is
+        missing or empty (the baseline sidecar is still written, but
+        the regression monitor will skip comparison for missing values).
+        """
+        import json as _json
+        baseline_path = self._fixtures_root / adapter / "baseline.json"
+        if not baseline_path.exists():
+            return 0.0
+        try:
+            scores = _json.loads(baseline_path.read_text())
+        except (OSError, _json.JSONDecodeError):
+            return 0.0
+        if not scores:
+            return 0.0
+        values = [float(v) for v in scores.values()]
+        return sum(values) / len(values)
+
+    def _publish_push(self, branch: str) -> Optional[str]:
+        """Push the branch to origin. Returns None on success, error string on failure."""
+        result = self._git.run(["push", "-u", "origin", branch], check=False)
+        if result.returncode != 0:
+            return f"push failed: {result.stderr[:200]}"
+        return None
+
+    def _publish_pr(
+        self,
+        *,
+        branch: str,
+        override_id: str,
+        task_type: str,
+        append: str,
+        signal_refs: List[str],
+        gate_outputs: str,
+    ) -> tuple[Optional[str], Optional[str]]:
+        """Open a PR via gh. Returns (pr_url, error) tuple."""
+        title = f"feat(prompt_overrides): tier1b {override_id} for {task_type}"
+        body = self._render_pr_body(
+            override_id=override_id,
+            task_type=task_type,
+            append=append,
+            signal_refs=signal_refs,
+            gate_outputs=gate_outputs,
+            branch=branch,
+        )
+        result = self._git.run(
+            ["gh", "pr", "create", "--title", title, "--body", body],
+            check=False,
+        )
+        if result.returncode != 0:
+            return None, f"PR create failed: {result.stderr[:200]}"
+        pr_url = result.stdout.strip().splitlines()[-1].strip() if result.stdout else ""
+        return pr_url, None
+
+    def _render_pr_body(
+        self,
+        *,
+        override_id: str,
+        task_type: str,
+        append: str,
+        signal_refs: List[str],
+        gate_outputs: str,
+        branch: str,
+    ) -> str:
+        refs = "\n".join(f"- {r}" for r in signal_refs)
+        return (
+            f"## Tier 1b prompt override\n\n"
+            f"- **Override id:** `{override_id}`\n"
+            f"- **Task type:** `{task_type}`\n"
+            f"- **Branch:** `{branch}`\n\n"
+            f"### Append preview\n\n"
+            f"```\n{append[:200]}\n```\n\n"
+            f"### Gate outputs\n\n"
+            f"{gate_outputs}\n\n"
+            f"### Signal refs\n\n"
+            f"{refs}\n"
+        )
+
+    def _file_companion_issue(
+        self,
+        *,
+        override_id: str,
+        task_type: str,
+        adapter: str,
+        branch: str,
+        commit: str,
+        pr_url: str,
+        append: str,
+        signal_refs: List[str],
+    ) -> str:
+        """File a Paperclip issue for human triage. Returns issue_id on success, empty string on failure."""
+        try:
+            description = (
+                f"```yaml\n"
+                f"override_id: {override_id}\n"
+                f"task_type: {task_type}\n"
+                f"adapter: {adapter}\n"
+                f"branch: {branch}\n"
+                f"commit: {commit}\n"
+                f"pr_url: {pr_url}\n"
+                f"signal_refs:\n"
+                + "".join(f"  - {r}\n" for r in signal_refs)
+                + f"gate_outputs:\n"
+                f"  schema: ok\n"
+                f"  safety_regex: ok\n"
+                f"  smoke_test: ok\n"
+                f"  diff_check: ok\n"
+                f"append_preview: {append[:200]!r}\n"
+                f"```\n\n"
+                f"## What changed\n\n"
+                f"Added prompt override `{override_id}` scoped to "
+                f"task_type `{task_type}`.\n"
+            )
+            issue = self._paperclip.create_issue(
+                title=f"[self-upgrade] tier 1b prompt override for {task_type}",
+                description=description,
+                labels=[
+                    "self-upgrade",
+                    "auto-generated",
+                    "tier-1b",
+                    f"task:{task_type}",
+                ],
+                assignee_user_id=self._human_triage_user_id or None,
+            )
+            return issue.id
+        except Exception as exc:
+            logger.warning(
+                "tier1b: companion issue filing failed (orphaned PR %s): %s",
+                pr_url, exc,
+            )
+            return ""
