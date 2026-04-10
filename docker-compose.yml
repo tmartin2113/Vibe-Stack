@@ -71,6 +71,9 @@ services:
       # The same pattern is used by the `server` service above.
       - ${PAPERCLIP_PROJECTS_DIR:-${HOME}/Projects}:/workspace:ro
       - ${PAPERCLIP_PROJECTS_DIR:-${HOME}/Projects}:${HOME}/Projects:ro
+      # Mirror the server's /paperclip/Projects path so DeerFlow pre-flight
+      # research can resolve the same cwd the server passes in context.
+      - ${PAPERCLIP_PROJECTS_DIR:-${HOME}/Projects}:/paperclip/Projects:ro
     environment:
       - SEARXNG_URL=${SEARXNG_URL:-http://searxng:8080}
       - GITEA_URL=${GITEA_URL:-http://gitea:3000}
@@ -96,6 +99,7 @@ services:
       # (e.g. file previews) may resolve paths directly.
       - ${PAPERCLIP_PROJECTS_DIR:-${HOME}/Projects}:/workspace:ro
       - ${PAPERCLIP_PROJECTS_DIR:-${HOME}/Projects}:${HOME}/Projects:ro
+      - ${PAPERCLIP_PROJECTS_DIR:-${HOME}/Projects}:/paperclip/Projects:ro
     environment:
       - SEARXNG_URL=${SEARXNG_URL:-http://searxng:8080}
       - GITEA_URL=${GITEA_URL:-http://gitea:3000}
