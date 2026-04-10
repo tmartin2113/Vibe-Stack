@@ -18,6 +18,7 @@ if TYPE_CHECKING:
     from .paperclip_client import PaperclipClient
     from .self_upgrade.tier0_builder import Tier0Builder
     from .self_upgrade.tier1a_builder import Tier1aBuilder
+    from .self_upgrade.tier1b_builder import Tier1bBuilder
     from .self_upgrade.tier3_builder import Tier3Builder
 
 logger = logging.getLogger(__name__)
@@ -99,6 +100,7 @@ class SelfUpgradeDispatcher:
         lesson_store: "Optional[LessonStore]" = None,
         tier0_builder: "Optional[Tier0Builder]" = None,
         tier1a_builder: "Optional[Tier1aBuilder]" = None,
+        tier1b_builder: "Optional[Tier1bBuilder]" = None,
         tier3_builder: "Optional[Tier3Builder]" = None,
         paperclip_client: "Optional[PaperclipClient]" = None,
         human_triage_user_id: str = "",
@@ -106,6 +108,7 @@ class SelfUpgradeDispatcher:
         self._lesson_store = lesson_store
         self._tier0 = tier0_builder
         self._tier1a = tier1a_builder
+        self._tier1b = tier1b_builder
         self._tier3 = tier3_builder
         self._paperclip = paperclip_client
         self._human_triage_user_id = human_triage_user_id
@@ -173,10 +176,12 @@ class SelfUpgradeDispatcher:
             return self._handle_tier0(signals, author_agent_id, author_run_id, role)
         if tier == Tier.ONE_A:
             return self._handle_tier1a(signals, author_agent_id, author_run_id, role)
+        if tier == Tier.ONE_B:
+            return self._handle_tier1b(signals, author_agent_id, author_run_id, role)
         if tier == Tier.THREE:
             return self._handle_tier3(signals, author_agent_id, role)
 
-        # Tier 1b/2 still stubs
+        # Tier 2 still a stub
         return DispatchResult.Rejected(
             reason=f"tier {tier.value} not implemented yet",
             signal_refs=sig_refs,
@@ -263,6 +268,57 @@ class SelfUpgradeDispatcher:
 
         return DispatchResult.Tier1aQueued(
             refinement_id=result.skill_name + "__v2",
+            signal_refs=result.signal_refs,
+        )
+
+    def _handle_tier1b(
+        self,
+        signals: List[UpgradeSignal],
+        author_agent_id: str,
+        author_run_id: str,
+        role: str,
+    ) -> "DispatchResult.AnyResult":
+        """Build a prompt override via Tier1bBuilder.
+
+        On LowConfidence or GateFailed, falls through to Tier 3 so the
+        signals still surface as a human-visible issue with the builder's
+        refusal reason in the body.
+        """
+        if self._tier1b is None:
+            return DispatchResult.Rejected(
+                reason="tier1b dependencies not wired",
+                signal_refs=[s.id for s in signals],
+            )
+
+        # Lazy import to avoid circular imports at module load
+        from .self_upgrade.tier1b_builder import Tier1bResult
+
+        result = self._tier1b.build(
+            signals,
+            author_agent_id=author_agent_id,
+            author_run_id=author_run_id,
+        )
+
+        if isinstance(result, Tier1bResult.LowConfidence):
+            logger.info(
+                "Tier 1b returned low confidence (%s); falling through to Tier 3",
+                result.reason,
+            )
+            return self._handle_tier3(signals, author_agent_id, role)
+
+        if isinstance(result, Tier1bResult.GateFailed):
+            logger.info(
+                "Tier 1b gate %s failed (%s); falling through to Tier 3",
+                result.gate, result.detail,
+            )
+            return self._handle_tier3(signals, author_agent_id, role)
+
+        # Tier1bResult.OverrideCommitted — wrap into DispatchResult
+        return DispatchResult.Tier1bCommitted(
+            branch=result.branch,
+            commit=result.commit,
+            pr_url=result.pr_url,
+            issue_id=result.issue_id,
             signal_refs=result.signal_refs,
         )
 
