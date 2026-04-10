@@ -21,6 +21,7 @@ class GenerateKwargs(TypedDict, total=False):
     stop: Optional[List[str]]
     history: List[Dict[str, str]]
     system_prompt: str
+    task_type: str
 
 logger = logging.getLogger(__name__)
 
@@ -41,12 +42,14 @@ class PromptAdapter:
         name: str,
         system_prompt: str,
         base_model: Any,  # The LLM instance
-        config: Optional[Dict[str, Any]] = None
+        config: Optional[Dict[str, Any]] = None,
+        override_loader: Any = None,  # Optional PromptOverrideLoader
     ):
         self.name = name
         self.system_prompt = system_prompt
         self.base_model = base_model
         self.config = config or {}
+        self._override_loader = override_loader
 
     def generate(self, prompt: str, **kwargs: Unpack[GenerateKwargs]) -> str:
         """
@@ -63,6 +66,15 @@ class PromptAdapter:
         history = kwargs.pop("history", None)
         # Allow callers to override the system prompt (e.g., aggregator)
         system_prompt = kwargs.pop("system_prompt", self.system_prompt)
+        # Tier 1b: optional task_type — append matching prompt overrides
+        task_type = kwargs.pop("task_type", None)
+        if task_type and self._override_loader is not None:
+            try:
+                appends = self._override_loader.get_appends_for(task_type)
+            except Exception:  # never crash generate() over override lookup
+                appends = []
+            if appends:
+                system_prompt = system_prompt + "\n\n" + "\n\n".join(appends)
 
         # Merge default config with kwargs
         gen_config = {**self.config, **kwargs}
@@ -99,9 +111,21 @@ class AdapterRegistry:
     def __init__(self):
         self.adapters: Dict[str, PromptAdapter] = {}
         self.current_adapter: Optional[str] = None
+        # Tier 1b: shared override loader, built once per registry.
+        # Permissive — failures to load are logged and swallowed here.
+        try:
+            from agents.prompt_library import PromptOverrideLoader
+            self._override_loader: Any = PromptOverrideLoader()
+        except Exception as exc:
+            logger.warning("prompt override loader init failed: %s", exc)
+            self._override_loader = None
 
     def register(self, adapter: PromptAdapter):
         """Register an adapter"""
+        # Tier 1b: inject the registry's shared loader if the adapter
+        # doesn't already have one. Never overwrite a caller-supplied loader.
+        if getattr(adapter, "_override_loader", None) is None:
+            adapter._override_loader = self._override_loader
         self.adapters[adapter.name] = adapter
         logger.info(f"Registered adapter: {adapter.name}")
 
@@ -169,7 +193,8 @@ class AdapterRegistry:
             # Need a base_model reference — borrow from any existing adapter
             base_model = next(iter(self.adapters.values())).base_model
             adapter = PromptAdapter(
-                dynamic_name, skill_adapter_prompt, base_model
+                dynamic_name, skill_adapter_prompt, base_model,
+                override_loader=self._override_loader,
             )
             self.adapters[dynamic_name] = adapter
             self.current_adapter = dynamic_name

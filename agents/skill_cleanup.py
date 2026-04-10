@@ -13,6 +13,7 @@ GitHub repository is always available for re-downloading.
 """
 
 import logging
+from pathlib import Path
 from typing import Any, Optional
 from .state import AgentState
 from .skill_registry import SkillRegistry
@@ -38,6 +39,11 @@ class SkillCleanupNode:
     through the self-upgrade dispatcher (Tier 1a), which writes versioned
     candidates; promotion of A/B winners is added in a separate task.
     """
+
+    # Tier 1b regression monitor constants
+    _REGRESSION_THRESHOLD = 8  # points absolute drop triggers alert
+    _REGRESSION_DEDUP_DAYS = 30
+    _REGRESSION_ROLLING_K = 20  # must match the baseline window used at commit
 
     def __init__(
         self,
@@ -99,6 +105,12 @@ class SkillCleanupNode:
             # calls are cheap no-ops.
             if self.outcome_store is not None:
                 self._promote_ab_winners(skills_in_use)
+
+            # Tier 1b regression monitor
+            try:
+                self._check_override_regressions()
+            except Exception as exc:
+                logger.warning("override regression check failed: %s", exc)
         else:
             logger.info("No skills were used in this session")
 
@@ -330,6 +342,165 @@ class SkillCleanupNode:
                     tier_dir, e,
                 )
 
+    def _check_override_regressions(self) -> None:
+        """Compare active Tier 1b overrides against their pre-merge baselines.
+
+        For each active override (no .decayed or .superseded sibling),
+        read the .baseline sidecar and compute the current task_type
+        rolling avg. If the drop exceeds _REGRESSION_THRESHOLD, file a
+        Paperclip issue for human triage. Dedup via .regression_alerts.jsonl.
+        """
+        import datetime as _dt
+        import json as _json
+
+        overrides_root = getattr(
+            self, "_overrides_root",
+            Path("agents/prompt_library/overrides"),
+        )
+        if not overrides_root.exists():
+            return
+
+        alerts_log = getattr(
+            self, "_alerts_log",
+            overrides_root / ".regression_alerts.jsonl",
+        )
+
+        for task_type_dir in overrides_root.iterdir():
+            if not task_type_dir.is_dir():
+                continue
+            task_type = task_type_dir.name
+            for yaml_file in task_type_dir.glob("ovr_*.yaml"):
+                stem = yaml_file.stem
+                if (task_type_dir / f"{stem}.decayed").exists():
+                    continue
+                if (task_type_dir / f"{stem}.superseded").exists():
+                    continue
+                baseline_file = task_type_dir / f"{stem}.baseline"
+                if not baseline_file.exists():
+                    continue
+
+                if SkillCleanupNode._already_alerted_recently(self, alerts_log, stem):
+                    continue
+
+                try:
+                    baseline_text = baseline_file.read_text().strip()
+                    _, score_str = baseline_text.split(" ", 1)
+                    baseline_score = float(score_str)
+                except (OSError, ValueError) as exc:
+                    logger.debug(
+                        "override %s baseline unreadable: %s", stem, exc
+                    )
+                    continue
+
+                _rolling_k = SkillCleanupNode._REGRESSION_ROLLING_K
+                try:
+                    current_avg = self._rolling_avg_for(
+                        task_type, k=_rolling_k
+                    )
+                except Exception as exc:
+                    logger.debug(
+                        "override %s rolling avg failed: %s", stem, exc
+                    )
+                    continue
+                if current_avg is None:
+                    continue
+
+                drop = baseline_score - float(current_avg)
+                if drop <= SkillCleanupNode._REGRESSION_THRESHOLD:
+                    continue
+
+                # File the alert
+                try:
+                    issue = self._paperclip.create_issue(
+                        title=f"[tier-1b-regression] override {stem} regressing {task_type}",
+                        description=(
+                            f"Override `{stem}` for `{task_type}` appears to be "
+                            f"regressing.\n\n"
+                            f"- **Pre-merge baseline:** {baseline_score:.1f}\n"
+                            f"- **Current rolling avg (K={_rolling_k}):** "
+                            f"{float(current_avg):.1f}\n"
+                            f"- **Drop:** {drop:.1f} points\n\n"
+                            f"Human action: write a decay PR by adding "
+                            f"`{stem}.decayed` sibling marker, or close this "
+                            f"issue if the regression is unrelated.\n"
+                        ),
+                        labels=[
+                            "self-upgrade",
+                            "auto-generated",
+                            "tier-1b",
+                            "tier-1b-regression",
+                            f"task:{task_type}",
+                        ],
+                        assignee_user_id=getattr(self, "_human_triage_user_id", "") or None,
+                    )
+                    SkillCleanupNode._record_alert(self, alerts_log, stem, issue.id)
+                except Exception as exc:
+                    logger.warning(
+                        "tier1b regression alert filing failed for %s: %s",
+                        stem, exc,
+                    )
+
+    def _already_alerted_recently(self, alerts_log: Path, override_id: str) -> bool:
+        """Return True if this override was alerted within _REGRESSION_DEDUP_DAYS."""
+        import datetime as _dt
+        import json as _json
+        if not alerts_log.exists():
+            return False
+        cutoff = _dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(
+            days=SkillCleanupNode._REGRESSION_DEDUP_DAYS
+        )
+        try:
+            for line in alerts_log.read_text().splitlines():
+                if not line.strip():
+                    continue
+                try:
+                    entry = _json.loads(line)
+                except _json.JSONDecodeError:
+                    continue
+                if entry.get("override_id") != override_id:
+                    continue
+                try:
+                    filed = _dt.datetime.fromisoformat(
+                        entry["filed_at"].rstrip("Z")
+                    ).replace(tzinfo=_dt.timezone.utc)
+                except (KeyError, ValueError):
+                    continue
+                if filed > cutoff:
+                    return True
+        except OSError:
+            return False
+        return False
+
+    def _record_alert(self, alerts_log: Path, override_id: str, issue_id: str) -> None:
+        """Append an entry to the dedup log."""
+        import datetime as _dt
+        import json as _json
+        try:
+            alerts_log.parent.mkdir(parents=True, exist_ok=True)
+            entry = {
+                "override_id": override_id,
+                "filed_at": _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "issue_id": issue_id,
+            }
+            with alerts_log.open("a") as f:
+                f.write(_json.dumps(entry) + "\n")
+        except OSError as exc:
+            logger.warning("tier1b alerts log append failed: %s", exc)
+
+    def _rolling_avg_for(self, task_type: str, *, k: int) -> Optional[float]:
+        """Return the rolling avg critic score for a task_type over last k runs.
+
+        Delegates to the outcome store if available. Returns None if no
+        data or the store is unavailable.
+        """
+        try:
+            if self.outcome_store is None:
+                return None
+            return self.outcome_store.rolling_avg_for_task_type(task_type, k=k)
+        except Exception as exc:
+            logger.debug("rolling_avg_for task_type %s failed: %s", task_type, exc)
+            return None
+
     def _evict_stale_skills(self):
         """
         Evict stale skills using TTL-based retention, then clear workspace.
@@ -372,3 +543,7 @@ def cleanup_skills(
         skill_registry, outcome_store=outcome_store, base_model=base_model
     )
     return cleanup_node.execute(state)
+
+
+# Alias so tests and future callers can import SkillCleanup directly.
+SkillCleanup = SkillCleanupNode
