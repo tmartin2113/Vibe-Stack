@@ -17,7 +17,6 @@ import os
 import subprocess
 import time
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Callable, Dict, List, Optional, Set, Tuple
 
 from .config import SchedulerConfig
@@ -211,8 +210,8 @@ class SubprocessPool:
         process = subprocess.Popen(
             cmd,
             env=proc_env,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
         )
         ap = ActiveProcess(
             role=role,
@@ -363,47 +362,31 @@ class Scheduler:
     # -- instruction resolution ------------------------------------------------
 
     def _resolve_instructions_path(self, role: str) -> str:
-        """Return the instructions directory for *role*.
+        """Return the AGENTS.md path for *role*.
 
-        Checks the overrides directory first; falls back to the baked dir.
+        Checks ``<overrides>/<role>/AGENTS.md`` first; falls back to
+        ``<instructions>/<role>/AGENTS.md``.
         """
-        overrides_dir = Path(self._config.overrides_path)
-        for suffix in (f"{role}.md", f"{role}.txt", role):
-            candidate = overrides_dir / suffix
-            if candidate.exists():
-                return str(overrides_dir)
-        return self._config.instructions_path
+        override = os.path.join(self._config.overrides_path, role, "AGENTS.md")
+        if os.path.isfile(override):
+            return override
+        return os.path.join(self._config.instructions_path, role, "AGENTS.md")
 
     # -- poll ------------------------------------------------------------------
 
     def _poll_pending_tasks(self) -> Dict[str, float]:
         """Query Paperclip for each agent's pending (todo) tasks.
 
-        Returns a dict of ``{agent_id: created_at_timestamp}``.
+        Returns ``{role: earliest_task_timestamp}`` for roles with work.
         """
         pending: Dict[str, float] = {}
         for role, agent_id in self._agent_map.items():
-            if role in self._config.disabled_agents:
-                continue
             try:
                 tasks = self._client.get_assignments_for(agent_id, statuses=["todo"])
                 if tasks:
-                    # Use earliest task's created_at (or current time as fallback)
-                    earliest = min(
-                        (getattr(t, "created_at", None) or time.time() for t in tasks),
-                        default=time.time(),
-                    )
-                    # Normalize to float timestamp
-                    if isinstance(earliest, str):
-                        try:
-                            from datetime import datetime
-                            dt = datetime.fromisoformat(earliest.replace("Z", "+00:00"))
-                            earliest = dt.timestamp()
-                        except Exception:
-                            earliest = time.time()
-                    pending[agent_id] = float(earliest)
+                    pending[role] = time.time()
             except Exception as exc:
-                logger.warning("Failed to poll tasks for %s (%s): %s", role, agent_id, exc)
+                logger.warning("Failed to poll tasks for %s: %s", role, exc)
         return pending
 
     # -- enqueue ---------------------------------------------------------------
@@ -411,19 +394,11 @@ class Scheduler:
     def _enqueue_pending(self, pending: Dict[str, float]) -> None:
         """Add agents with pending tasks to the priority queue.
 
-        Skips agents that are:
-        - already running in the pool
-        - already in the queue
-        - in an unhealthy backoff period
+        Skips agents that are already running, already queued, or in backoff.
         """
-        # Build reverse map: agent_id → role
-        agent_id_to_role = {v: k for k, v in self._agent_map.items()}
-
-        for agent_id, created_at in pending.items():
-            role = agent_id_to_role.get(agent_id)
-            if role is None:
-                continue
-            if role in self._config.disabled_agents:
+        for role, created_at in pending.items():
+            agent_id = self._agent_map.get(role)
+            if agent_id is None:
                 continue
             if self._pool.is_running(role):
                 continue
@@ -529,12 +504,18 @@ class Scheduler:
     # -- status ----------------------------------------------------------------
 
     def get_status(self) -> Dict:
-        """Return current scheduler state for /healthz or admin endpoints."""
+        """Return current scheduler state for /healthz endpoint.
+
+        Field names match the spec (Section 4, lines 276-291).
+        """
         return {
-            "running": self._running,
-            "active_count": self._pool.active_count,
+            "slots_total": self._max_slots,
+            "slots_active": self._pool.active_count,
+            "slots_available": self._max_slots - self._pool.active_count,
+            "queue_depth": len(self._queue),
+            "agents_healthy": sum(1 for r in self._agent_map if self._health.is_healthy(r)),
+            "agents_unhealthy": sum(1 for r in self._agent_map if not self._health.is_healthy(r)),
+            "memory_pressure_pct": self._memory_pressure_fn(),
+            "paused_for_memory": self._memory_paused,
             "active_roles": sorted(self._pool.active_roles),
-            "queue_size": len(self._queue),
-            "memory_paused": self._memory_paused,
-            "max_slots": self._max_slots,
         }

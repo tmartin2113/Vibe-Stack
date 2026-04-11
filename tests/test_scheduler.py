@@ -329,21 +329,26 @@ class TestScheduler:
         # 75% < 80% resume threshold → should resume
         assert s._memory_paused is False
 
-    def test_get_status_returns_correct_fields(self):
+    def test_get_status_returns_spec_fields(self):
         s = self._make_scheduler()
         status = s.get_status()
-        assert "active_count" in status
-        assert "queue_size" in status
-        assert "memory_paused" in status
-        assert "running" in status
+        assert "slots_total" in status
+        assert "slots_active" in status
+        assert "slots_available" in status
+        assert "queue_depth" in status
+        assert "agents_healthy" in status
+        assert "agents_unhealthy" in status
+        assert "memory_pressure_pct" in status
+        assert status["slots_total"] == 3
+        assert status["slots_active"] == 0
+        assert status["slots_available"] == 3
 
-    def test_resolve_instructions_prefers_override_dir(self, tmp_path):
+    def test_resolve_instructions_prefers_override(self, tmp_path):
         baked = tmp_path / "baked"
         overrides = tmp_path / "overrides"
-        baked.mkdir()
-        overrides.mkdir()
-        # Write an override for cto
-        (overrides / "cto.md").write_text("override instructions")
+        # Create override at <overrides>/cto/AGENTS.md
+        (overrides / "cto").mkdir(parents=True)
+        (overrides / "cto" / "AGENTS.md").write_text("# Override")
 
         cfg = SchedulerConfig(
             instructions_path=str(baked),
@@ -351,14 +356,13 @@ class TestScheduler:
         )
         s = self._make_scheduler(cfg=cfg)
         resolved = s._resolve_instructions_path("cto")
-        assert str(overrides) in resolved
+        assert resolved == str(overrides / "cto" / "AGENTS.md")
 
     def test_resolve_instructions_falls_back_to_baked(self, tmp_path):
         baked = tmp_path / "baked"
         overrides = tmp_path / "overrides"
         baked.mkdir()
         overrides.mkdir()
-        # No override file for cto
 
         cfg = SchedulerConfig(
             instructions_path=str(baked),
@@ -366,7 +370,7 @@ class TestScheduler:
         )
         s = self._make_scheduler(cfg=cfg)
         resolved = s._resolve_instructions_path("cto")
-        assert str(baked) in resolved
+        assert resolved == str(baked / "cto" / "AGENTS.md")
 
     def test_stop_sets_running_false(self):
         s = self._make_scheduler()
@@ -388,7 +392,7 @@ class TestScheduler:
             started_at=time.monotonic(),
         )
         # Try to enqueue cto
-        pending = {"agent-cto-1": time.time()}
+        pending = {"cto": time.time()}
         s._enqueue_pending(pending)
         # Queue should remain empty — cto is already running
         assert len(s._queue) == 0
