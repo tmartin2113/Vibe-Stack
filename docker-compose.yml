@@ -96,6 +96,10 @@ services:
       - DEER_FLOW_EXTENSIONS_CONFIG_PATH=/app/extensions_config.json
       - PAPERCLIP_INTERNAL_URL=http://server:3100
       - GRAPHIFY_DATA_PATH=/graphify
+      # LangSmith tracing (optional — set LANGSMITH_API_KEY in .env to enable)
+      - LANGSMITH_TRACING=${LANGSMITH_TRACING:-false}
+      - LANGSMITH_API_KEY=${LANGSMITH_API_KEY:-}
+      - LANGSMITH_PROJECT=${LANGSMITH_PROJECT:-vibe-stack}
 
   # ── DeerFlow Gateway ───────────────────────────────────────────────────────
   deerflow-gateway:
@@ -136,6 +140,9 @@ services:
       - DEER_FLOW_EXTENSIONS_CONFIG_PATH=/app/extensions_config.json
       - PAPERCLIP_INTERNAL_URL=http://server:3100
       - GRAPHIFY_DATA_PATH=/graphify
+      - LANGSMITH_TRACING=${LANGSMITH_TRACING:-false}
+      - LANGSMITH_API_KEY=${LANGSMITH_API_KEY:-}
+      - LANGSMITH_PROJECT=${LANGSMITH_PROJECT:-vibe-stack}
 
   # ── Vibe Agent (local build) ───────────────────────────────────────────────
   vibe:

@@ -309,6 +309,57 @@ services:
       timeout: 5s
       retries: 3
 
+  # ── Blackbox Exporter (HTTP health probes for Prometheus) ──────────────────
+  blackbox-exporter:
+    image: prom/blackbox-exporter:v0.26.0
+    restart: unless-stopped
+    volumes:
+      - ./monitoring/prometheus/blackbox.yml:/config/blackbox.yml:ro
+    command: ["--config.file=/config/blackbox.yml"]
+
+  # ── Prometheus (metrics collection) ────────────────────────────────────────
+  prometheus:
+    image: prom/prometheus:v3.4.0
+    restart: unless-stopped
+    ports:
+      - "9091:9090"
+    volumes:
+      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.retention.time=30d"
+      - "--web.enable-lifecycle"
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:9090/-/healthy"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # ── Grafana (metrics dashboards + alerting) ──────────────────────────────
+  grafana:
+    image: grafana/grafana:11.6.0
+    restart: unless-stopped
+    ports:
+      - "3333:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_ADMIN_USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-vibe}
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    depends_on:
+      prometheus:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
 volumes:
   gitea-data:
   minio-data:
@@ -317,3 +368,5 @@ volumes:
   zep-db-data:
   neo4j-data:
   mirofish-uploads:
+  prometheus-data:
+  grafana-data:

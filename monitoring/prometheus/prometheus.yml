@@ -1,0 +1,48 @@
+# Prometheus scrape configuration for Vibe Stack
+#
+# Uses blackbox_exporter for HTTP health probes on services that return JSON.
+# Only vibe-agent exposes native Prometheus-format metrics.
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  # ── Vibe Agent (native Prometheus metrics on /metrics) ──────
+  - job_name: "vibe-agent"
+    metrics_path: /metrics
+    scrape_interval: 30s
+    scrape_timeout: 10s
+    static_configs:
+      - targets: ["vibe:8080"]
+
+  # ── Prometheus self-monitoring ──────────────────────────────
+  - job_name: "prometheus"
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  # ── HTTP health probes via blackbox exporter ────────────────
+  # Records probe_success=1 (up) or probe_success=0 (down) for
+  # each target. Grafana queries: probe_success{job="health-probes"}
+  - job_name: "health-probes"
+    metrics_path: /probe
+    params:
+      module: [http_2xx]
+    scrape_interval: 30s
+    scrape_timeout: 10s
+    static_configs:
+      - targets:
+          - http://server:3100/api/health
+          - http://deerflow-langgraph:2024/ok
+          - http://deerflow-gateway:8001/health
+          - http://vibe:8080/healthz
+    relabel_configs:
+      # Pass the probe target as a URL parameter
+      - source_labels: [__address__]
+        target_label: __param_target
+      # Use the target URL as the instance label
+      - source_labels: [__param_target]
+        target_label: instance
+      # Route the scrape through the blackbox exporter
+      - target_label: __address__
+        replacement: blackbox-exporter:9115
