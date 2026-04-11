@@ -354,6 +354,27 @@ class PaperclipClient:
         issues_list = data if isinstance(data, list) else data.get("issues", data.get("data", []))
         return [_parse_issue(item) for item in issues_list]
 
+    def get_assignments_for(
+        self,
+        agent_id: str,
+        statuses: Optional[List[str]] = None,
+    ) -> List[Issue]:
+        """GET /api/companies/{companyId}/issues — fetch tasks assigned to a specific agent."""
+        if statuses is None:
+            statuses = ["todo"]
+
+        params: Dict[str, str] = {
+            "assigneeAgentId": agent_id,
+            "status": ",".join(statuses),
+        }
+        data = self._request(
+            "GET",
+            f"/api/companies/{self.company_id}/issues",
+            params=params,
+        )
+        issues_list = data if isinstance(data, list) else data.get("issues", data.get("data", []))
+        return [_parse_issue(item) for item in issues_list]
+
     # ── Issue Operations ──
 
     def checkout_issue(
