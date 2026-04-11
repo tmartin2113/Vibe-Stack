@@ -311,6 +311,13 @@ class _HealthHandler(BaseHTTPRequestHandler):
                 checks["sandbox"] = "unreachable"
                 checks["sandbox_note"] = "degraded_but_not_fatal"
 
+        # Check 6: Scheduler state (when orchestrator mode is active)
+        if _scheduler_status_fn is not None:
+            try:
+                checks["scheduler"] = _scheduler_status_fn()
+            except Exception:
+                checks["scheduler"] = "probe_failed"
+
         status_code = 200 if healthy else 503
         body = json.dumps({"status": "ok" if healthy else "unhealthy", "checks": checks})
         self._respond(status_code, body, "application/json")
