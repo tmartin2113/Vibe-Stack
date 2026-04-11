@@ -520,6 +520,18 @@ def _execute_checked_out_task(
             if identity
             else os.environ.get("PAPERCLIP_AGENT_ID", "")
         )
+
+        # MemPalace: ensure agent identity + inject L0+L1 wake-up context
+        try:
+            from .palace_bridge import ensure_agent_identity, palace_wakeup
+            ensure_agent_identity(_agent_id)
+            wakeup_text = palace_wakeup(_agent_id)
+            if wakeup_text:
+                user_request = wakeup_text + "\n\n---\n\n" + user_request
+                logger.info("Injected palace wake-up (%d chars) into request", len(wakeup_text))
+        except Exception as e:
+            logger.debug("Palace wake-up skipped: %s", e)
+
         final_state = _run_workflow(
             config, user_request, task_type,
             complexity_tier=complexity_tier,

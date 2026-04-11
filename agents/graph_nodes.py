@@ -163,6 +163,16 @@ def create_node_wrappers(
             )
             logger.info(f"Injected {len(results)} memories into specialist context")
 
+            # Supplement with MemPalace long-term memory
+            try:
+                from .palace_bridge import palace_inject
+                palace_text = palace_inject(state)
+                if palace_text:
+                    state["memory_context"] = state.get("memory_context", "") + palace_text
+                    logger.info("Injected palace long-term memories into specialist context")
+            except Exception as e:
+                logger.debug(f"Palace injection skipped: {e}")
+
         except Exception as e:
             logger.debug(f"Memory injection skipped: {e}")
             state["memory_context"] = ""
@@ -342,12 +352,22 @@ def create_node_wrappers(
 
         Runs on every terminal path so subsequent heartbeats can recall the
         agent's prior decisions via inject_memory. Best-effort; never raises.
+        Also syncs to MemPalace for structured long-term storage.
         """
         try:
-            return persist_memory_node(state)
+            result = persist_memory_node(state)
         except Exception as e:
             logger.debug("persist_memory_wrapper: skipped (%s)", e)
-            return state
+            result = state
+
+        # Sync to MemPalace (additive, never blocks)
+        try:
+            from .palace_bridge import palace_persist
+            palace_persist(state)
+        except Exception as e:
+            logger.debug("palace_persist: skipped (%s)", e)
+
+        return result
 
     # ===== MEMORY NOTE (Tier 0 lesson writer) =====
     def memory_note_wrapper(state: AgentState) -> AgentState:

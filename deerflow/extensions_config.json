@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "mempalace": {
+      "enabled": true,
+      "type": "stdio",
+      "command": "uv",
+      "args": ["run", "python", "-m", "mempalace.mcp_server", "--palace", "/palace/palace"],
+      "env": {
+        "MEMPALACE_PALACE_PATH": "/palace/palace"
+      },
+      "description": "MemPalace — structured AI memory with semantic search, knowledge graph, and agent diaries"
+    }
+  },
+  "skills": {}
+}

@@ -56,13 +56,16 @@ services:
     image: ghcr.io/tmartin2113/paperclip-deerflow:${PAPERCLIP_VERSION:-latest}
     restart: always
     command: >
-      sh -c "cd backend && uv run langgraph dev
+      sh -c "uv pip install mempalace>=3.1.0 &&
+      cd backend && uv run langgraph dev
       --no-browser --allow-blocking --no-reload --host 0.0.0.0 --port 2024"
     env_file: .env
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
       - ./deerflow/config.yaml:/app/backend/config.yaml:ro
+      - ./deerflow/extensions_config.json:/app/extensions_config.json:ro
+      - palace-data:/palace
       # Mount the user's project directory read-only at two paths:
       #   /workspace          — canonical container path (use in agent prompts)
       #   ${HOME}/Projects    — host-HOME path (so absolute paths like
@@ -82,19 +85,24 @@ services:
       - MINIO_URL=${MINIO_URL:-http://minio:9000}
       - MINIO_ACCESS_KEY=${MINIO_ROOT_USER:-vibe}
       - MINIO_SECRET_KEY=${MINIO_ROOT_PASSWORD:?Set MINIO_ROOT_PASSWORD in .env}
+      - MEMPALACE_PALACE_PATH=/palace/palace
+      - DEER_FLOW_EXTENSIONS_CONFIG_PATH=/app/extensions_config.json
 
   # ── DeerFlow Gateway ───────────────────────────────────────────────────────
   deerflow-gateway:
     image: ghcr.io/tmartin2113/paperclip-deerflow:${PAPERCLIP_VERSION:-latest}
     restart: always
     command: >
-      sh -c "cd backend && uv run uvicorn
+      sh -c "uv pip install mempalace>=3.1.0 &&
+      cd backend && uv run uvicorn
       src.gateway.app:app --host 0.0.0.0 --port 8001"
     env_file: .env
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
       - ./deerflow/config.yaml:/app/backend/config.yaml:ro
+      - ./deerflow/extensions_config.json:/app/extensions_config.json:ro
+      - palace-data:/palace
       # Same workspace mounts as deerflow-langgraph — some gateway tools
       # (e.g. file previews) may resolve paths directly.
       - ${PAPERCLIP_PROJECTS_DIR:-${HOME}/Projects}:/workspace:ro
@@ -108,6 +116,8 @@ services:
       - MINIO_URL=${MINIO_URL:-http://minio:9000}
       - MINIO_ACCESS_KEY=${MINIO_ROOT_USER:-vibe}
       - MINIO_SECRET_KEY=${MINIO_ROOT_PASSWORD:?Set MINIO_ROOT_PASSWORD in .env}
+      - MEMPALACE_PALACE_PATH=/palace/palace
+      - DEER_FLOW_EXTENSIONS_CONFIG_PATH=/app/extensions_config.json
 
   # ── Vibe Agent (local build) ───────────────────────────────────────────────
   vibe:
@@ -135,9 +145,11 @@ services:
       - COMFYUI_URL=${COMFYUI_URL:-http://host.docker.internal:8188}
       - GITEA_URL=${GITEA_URL:-http://gitea:3000}
       - MINIO_URL=${MINIO_URL:-http://minio:9000}
+      - MEMPALACE_PALACE_PATH=/home/vibe/.mempalace/palace
     volumes:
       - vibe-data:/home/vibe/.vibe
       - bulletin-data:/shared/bulletin
+      - palace-data:/home/vibe/.mempalace
       - /var/run/docker.sock:/var/run/docker.sock
     deploy:
       resources:
@@ -165,6 +177,7 @@ volumes:
   paperclip-data:
   vibe-data:
   bulletin-data:
+  palace-data:
   tailscale-state:
 
 networks:
