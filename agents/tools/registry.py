@@ -77,6 +77,8 @@ ROLE_TOOL_SETS: Dict[str, Optional[frozenset]] = {
         "file_reader", "file_writer", "memory_store", "memory_recall",
         # OCR (reading screenshots in issues)
         "OCRTool",
+        # Structural knowledge graph
+        "graphify_rebuild",
     }),
 
     "frontend_engineer": frozenset({
@@ -93,6 +95,8 @@ ROLE_TOOL_SETS: Dict[str, Optional[frozenset]] = {
         "git_forge", "artifact_storage", "bulletin_board",
         # File ops & memory
         "file_reader", "file_writer", "memory_store", "memory_recall",
+        # Structural knowledge graph
+        "graphify_rebuild",
     }),
 
     "backend_engineer": frozenset({
@@ -111,6 +115,8 @@ ROLE_TOOL_SETS: Dict[str, Optional[frozenset]] = {
         "container_inspect", "git_forge", "artifact_storage", "bulletin_board",
         # File ops & memory
         "file_reader", "file_writer", "memory_store", "memory_recall",
+        # Structural knowledge graph
+        "graphify_rebuild",
     }),
 
     "qa_engineer": frozenset({
@@ -131,6 +137,8 @@ ROLE_TOOL_SETS: Dict[str, Optional[frozenset]] = {
         "container_inspect", "git_forge", "artifact_storage", "bulletin_board",
         # File ops & memory
         "file_reader", "file_writer", "memory_store", "memory_recall",
+        # Structural knowledge graph
+        "graphify_rebuild",
     }),
 
     "devops_engineer": frozenset({
@@ -145,6 +153,8 @@ ROLE_TOOL_SETS: Dict[str, Optional[frozenset]] = {
         "container_inspect", "git_forge", "artifact_storage", "bulletin_board",
         # File ops & memory
         "file_reader", "file_writer", "memory_store", "memory_recall",
+        # Structural knowledge graph
+        "graphify_rebuild",
     }),
 
     "ux_engineer": frozenset({
@@ -163,6 +173,8 @@ ROLE_TOOL_SETS: Dict[str, Optional[frozenset]] = {
         "git_forge", "artifact_storage", "bulletin_board",
         # File ops & memory
         "file_reader", "file_writer", "memory_store", "memory_recall",
+        # Structural knowledge graph
+        "graphify_rebuild",
     }),
 
     "security_engineer": frozenset({
@@ -181,6 +193,8 @@ ROLE_TOOL_SETS: Dict[str, Optional[frozenset]] = {
         "container_inspect", "git_forge", "artifact_storage", "bulletin_board",
         # File ops & memory
         "file_reader", "file_writer", "memory_store", "memory_recall",
+        # Structural knowledge graph
+        "graphify_rebuild",
     }),
 
     # DeerFlow research assistants: full research tools, no code execution
@@ -563,6 +577,12 @@ def create_default_tool_registry(
     registry.register(MemoryStoreTool())
     registry.register(MemoryRecallTool())
 
+    # --- Structural knowledge graph (env-gated) ---
+    if os.environ.get("GRAPHIFY_DATA_PATH"):
+        from .graphify_tool import GraphifyRebuildTool
+        registry.register(GraphifyRebuildTool())
+        logger.info("Tool registry: graphify_rebuild enabled")
+
     # --- File operation tools (always local) ---
     registry.register(FileReader(allowed_dirs=resolved_dirs))
     registry.register(FileWriter(allowed_dirs=resolved_dirs))
@@ -680,6 +700,12 @@ def create_subprocess_tool_registry(
     # --- Persistent memory tools ---
     registry.register(MemoryStoreTool())
     registry.register(MemoryRecallTool())
+
+    # --- Structural knowledge graph (env-gated) ---
+    if os.environ.get("GRAPHIFY_DATA_PATH"):
+        from .graphify_tool import GraphifyRebuildTool
+        registry.register(GraphifyRebuildTool())
+        logger.info("Tool registry: graphify_rebuild enabled")
 
     # --- File operation tools ---
     registry.register(FileReader(allowed_dirs=resolved_dirs))

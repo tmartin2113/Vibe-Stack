@@ -131,3 +131,22 @@ class TestGraphifyRebuild:
                     "routed_task_type": "documentation",
                 })
                 assert result is None
+
+
+from agents.tools.graphify_tool import GraphifyRebuildTool
+
+
+class TestGraphifyRebuildTool:
+    def test_instantiates(self):
+        """Tool can be created."""
+        tool = GraphifyRebuildTool()
+        assert tool.name == "graphify_rebuild"
+        assert "knowledge graph" in tool.description.lower()
+
+    def test_graceful_when_graphify_missing(self):
+        """Tool returns helpful message when graphify not installed."""
+        tool = GraphifyRebuildTool()
+        with patch("agents.graphify_bridge._GRAPHIFY_DATA_PATH", ""):
+            result = tool.execute(repo_path="/some/repo")
+        assert result.success is False
+        assert "not configured" in result.output.lower() or "unavailable" in result.output.lower()
