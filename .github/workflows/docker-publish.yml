@@ -248,54 +248,5 @@ jobs:
           ignore-unfixed: true
           trivyignores: .trivyignore
 
-  deerflow:
-    needs: [scan, test]
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    permissions:
-      contents: read
-      packages: write
-
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          repository: tmartin2113/paperclip
-          ref: main
-
-      - uses: docker/setup-buildx-action@v4
-
-      - uses: docker/login-action@v4
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - id: meta
-        uses: docker/metadata-action@v6
-        with:
-          images: ghcr.io/${{ github.repository_owner }}/paperclip-deerflow
-          tags: |
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=sha,prefix=
-            type=raw,value=latest,enable={{is_default_branch}}
-
-      - uses: docker/build-push-action@v7
-        with:
-          context: ./deerflow
-          file: ./deerflow/backend/Dockerfile
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha,scope=deerflow
-          cache-to: type=gha,scope=deerflow,mode=max
-          platforms: linux/amd64
-
-      - name: Scan image with Trivy
-        uses: aquasecurity/trivy-action@v0.35.0
-        with:
-          image-ref: ghcr.io/${{ github.repository_owner }}/paperclip-deerflow:${{ steps.meta.outputs.version }}
-          severity: CRITICAL
-          exit-code: 1
-          format: table
-          ignore-unfixed: true
+  # NOTE: DeerFlow image is now built by Paperclip CI (deerflow-build.yml).
+  # Removed from this workflow to avoid dual-ownership of the same image.

@@ -56,12 +56,18 @@ services:
     image: ghcr.io/tmartin2113/paperclip-deerflow:${PAPERCLIP_VERSION:-latest}
     restart: always
     command: >
-      sh -c "cd backend && uv pip install mempalace>=3.1.0 'graphifyy[mcp,leiden]' &&
+      sh -c "cd backend &&
       uv run langgraph dev
       --no-browser --allow-blocking --no-reload --host 0.0.0.0 --port 2024"
     env_file: .env
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:2024/ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
     volumes:
       - ./deerflow/config.yaml:/app/backend/config.yaml:ro
       - ./deerflow/extensions_config.json:/app/extensions_config.json:ro
@@ -96,12 +102,18 @@ services:
     image: ghcr.io/tmartin2113/paperclip-deerflow:${PAPERCLIP_VERSION:-latest}
     restart: always
     command: >
-      sh -c "cd backend && uv pip install mempalace>=3.1.0 'graphifyy[mcp,leiden]' &&
+      sh -c "cd backend &&
       uv run uvicorn
       src.gateway.app:app --host 0.0.0.0 --port 8001"
     env_file: .env
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
     volumes:
       - ./deerflow/config.yaml:/app/backend/config.yaml:ro
       - ./deerflow/extensions_config.json:/app/extensions_config.json:ro
@@ -137,6 +149,12 @@ services:
     depends_on:
       server:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
     environment:
       - VIBE_BACKEND_HOST=${VIBE_BACKEND_HOST:-host.docker.internal}
       - VIBE_BACKEND_PORT=${VIBE_BACKEND_PORT:-8000}
