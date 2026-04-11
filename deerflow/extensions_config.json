@@ -9,6 +9,14 @@
         "MEMPALACE_PALACE_PATH": "/palace/palace"
       },
       "description": "MemPalace — structured AI memory with semantic search, knowledge graph, and agent diaries"
+    },
+    "graphify": {
+      "enabled": true,
+      "type": "stdio",
+      "command": "python3",
+      "args": ["-m", "graphify.serve", "/graphify/vibe-stack/graph.json"],
+      "env": {},
+      "description": "Graphify — structural codebase knowledge graph with community detection and god node analysis"
     }
   },
   "skills": {}

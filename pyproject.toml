@@ -38,6 +38,7 @@ agents = [
     "websockets>=12.0,<16.0.0",
     "pyyaml>=6.0,<7.0.0",
     "mempalace>=3.1.0",
+    "graphifyy[leiden]>=0.3.20",
 ]
 sandbox = [
     "opensandbox>=0.1.4,<1.0.0",
