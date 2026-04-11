@@ -124,6 +124,18 @@ Issues tagged `self-upgrade` appear in the **Improvements** dashboard and are au
 
 Do **not** skip this step. Even if the task succeeded, there may be friction worth reporting. If genuinely nothing went wrong and there's nothing to improve, move on — don't fabricate issues.
 
+## Test Validation
+
+Before marking any code task as done, run the **full** test suite — not a single variant or subset:
+
+| Project type | Command | Notes |
+|-------------|---------|-------|
+| Android/Kotlin | `./gradlew test` | Runs ALL build variants (debug + release). Do not use `testDebugUnitTest` alone. |
+| TypeScript/Node | `npm test` or `pnpm test` | As configured in package.json |
+| Python | `pytest` or `make test` | As configured in pyproject.toml |
+
+If a task's acceptance criteria specifies a different test command, use that instead. But the default is always the full suite.
+
 ## Working Directory
 
 Default: `/home/prime/Projects`. Create project subdirectories as needed.
