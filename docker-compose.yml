@@ -178,6 +178,12 @@ services:
       - MINIO_URL=${MINIO_URL:-http://minio:9000}
       - MEMPALACE_PALACE_PATH=/home/vibe/.mempalace/palace
       - GRAPHIFY_DATA_PATH=/graphify
+      - VIBE_MAX_CONCURRENT_AGENTS=${VIBE_MAX_CONCURRENT_AGENTS:-0}
+      - VIBE_SCHEDULER_INTERVAL=${VIBE_SCHEDULER_INTERVAL:-30}
+      - VIBE_AGENT_TIMEOUT=${VIBE_AGENT_TIMEOUT:-600}
+      - VIBE_DISABLED_AGENTS=${VIBE_DISABLED_AGENTS:-}
+      - VIBE_MEMORY_PRESSURE_THRESHOLD=${VIBE_MEMORY_PRESSURE_THRESHOLD:-90}
+      - VIBE_INFRA_RESERVE_GB=${VIBE_INFRA_RESERVE_GB:-10}
     volumes:
       - vibe-data:/home/vibe/.vibe
       - bulletin-data:/shared/bulletin
@@ -187,8 +193,8 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "2.0"
-          memory: ${VIBE_AGENT_MEMORY_LIMIT:-2G}
+          cpus: "${VIBE_ORCHESTRATOR_CPUS:-4.0}"
+          memory: ${VIBE_ORCHESTRATOR_MEMORY_LIMIT:-4G}
         reservations:
           memory: 512M
 
