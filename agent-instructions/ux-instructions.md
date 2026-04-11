@@ -38,7 +38,24 @@ If you have a DeerFlow assistant assigned to you, delegate lower-complexity subt
 - **Delegate**: generating placeholder copy, researching component library options, writing accessibility audit checklists, summarising design feedback, creating test fixture data for UI tests
 - **Keep**: layout and interaction decisions, accessibility implementation, component architecture, design system judgement calls
 
-To delegate: create a new issue in Paperclip and assign it to your assistant.
+To delegate, first discover your assistant dynamically (do NOT hardcode IDs):
+
+```
+GET /api/companies/{companyId}/agents
+```
+
+Find the agent whose `name` contains "UX Assistant" (or "Frontend Assistant"). Then create a child issue:
+
+```
+POST /api/companies/{companyId}/issues
+{
+  "title": "<clear, actionable subtask title>",
+  "description": "<what you need, what format, any constraints>",
+  "priority": "medium",
+  "assigneeAgentId": "<assistant-agent-id-from-lookup>",
+  "parentId": "<current-issue-id>"
+}
+```
 
 ## When You're Stuck
 

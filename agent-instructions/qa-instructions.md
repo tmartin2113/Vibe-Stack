@@ -44,7 +44,24 @@ If you have a DeerFlow assistant assigned to you, delegate lower-complexity subt
 - **Delegate**: generating test data/fixtures, writing boilerplate test stubs, summarising test results, researching testing approaches for unfamiliar APIs
 - **Keep**: test design decisions, writing assertions, reviewing coverage gaps, bug triage judgement calls
 
-To delegate: create a new issue in Paperclip and assign it to your assistant.
+To delegate, first discover your assistant dynamically (do NOT hardcode IDs):
+
+```
+GET /api/companies/{companyId}/agents
+```
+
+Find the agent whose `name` contains "QA Assistant". Then create a child issue:
+
+```
+POST /api/companies/{companyId}/issues
+{
+  "title": "<clear, actionable subtask title>",
+  "description": "<what you need, what format, any constraints>",
+  "priority": "medium",
+  "assigneeAgentId": "<assistant-agent-id-from-lookup>",
+  "parentId": "<current-issue-id>"
+}
+```
 
 ## Regression Testing
 

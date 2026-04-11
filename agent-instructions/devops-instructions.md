@@ -62,7 +62,15 @@ Before starting any subtask, classify it:
 
 **Rule: If a subtask fits the first three categories, you MUST delegate it.** Your time on the Anthropic API costs money. Your assistant's time on local vLLM costs nothing.
 
-To delegate, create a child issue assigned to your assistant:
+To delegate, first discover your assistant dynamically (do NOT hardcode IDs — they change across deployments):
+
+```
+GET /api/companies/{companyId}/agents
+```
+
+Find the agent whose `name` contains "DevOps Assistant" (or your role's assistant). Use its `id` as `assigneeAgentId`.
+
+Then create a child issue:
 
 ```
 POST /api/companies/{companyId}/issues
@@ -70,7 +78,7 @@ POST /api/companies/{companyId}/issues
   "title": "<clear, actionable subtask title>",
   "description": "<what you need, what format, any constraints>",
   "priority": "medium",
-  "assigneeAgentId": "1e694ab1-aae0-4469-b596-a41a6451a757",
+  "assigneeAgentId": "<assistant-agent-id-from-lookup>",
   "parentId": "<current-issue-id>"
 }
 ```

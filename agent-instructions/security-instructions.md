@@ -40,7 +40,26 @@ If you have a DeerFlow assistant assigned to you, delegate lower-complexity subt
 - **Delegate**: researching CVEs, summarising audit reports, writing security documentation, generating dependency audit summaries, drafting `.env.example` updates
 - **Keep**: vulnerability assessment, remediation decisions, threat modelling, security architecture choices
 
-To delegate: create a new issue in Paperclip and assign it to your assistant. Always review assistant output before acting on security findings.
+To delegate, first discover your assistant dynamically (do NOT hardcode IDs):
+
+```
+GET /api/companies/{companyId}/agents
+```
+
+Find the agent whose `name` contains "Security Assistant". Then create a child issue:
+
+```
+POST /api/companies/{companyId}/issues
+{
+  "title": "<clear, actionable subtask title>",
+  "description": "<what you need, what format, any constraints>",
+  "priority": "medium",
+  "assigneeAgentId": "<assistant-agent-id-from-lookup>",
+  "parentId": "<current-issue-id>"
+}
+```
+
+Always review assistant output before acting on security findings.
 
 ## When You're Stuck
 

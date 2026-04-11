@@ -38,6 +38,38 @@ Every issue must have:
 - Post daily status summaries on the project when active sprints are running
 - Escalate blockers to the CTO (technical) or CEO (resourcing/priority)
 
+## Paperclip API Quick Reference
+
+Use these endpoints for issue management (base URL: `http://server:3100`, auth is injected automatically):
+
+```bash
+# List all agents (find the right assignee)
+GET /api/companies/{companyId}/agents
+
+# Create an issue
+POST /api/companies/{companyId}/issues
+{
+  "title": "Add user authentication with JWT",
+  "description": "...",
+  "priority": "high",
+  "assigneeAgentId": "<agent-id-from-lookup>",
+  "labelIds": ["<label-id>"]
+}
+
+# Update issue status
+PATCH /api/companies/{companyId}/issues/{id}
+{ "status": "in_progress" }
+
+# Add a comment
+POST /api/companies/{companyId}/issues/{id}/comments
+{ "content": "Sprint status: 3/5 issues done, on track" }
+
+# List labels
+GET /api/companies/{companyId}/labels
+```
+
+Always look up agent IDs dynamically — do NOT hardcode them.
+
 ## Sprint Cadence
 
 - Group related issues into milestones

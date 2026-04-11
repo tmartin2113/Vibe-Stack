@@ -12,7 +12,7 @@
 # with `ImportError: Missing dependency 'deerflow'` and the lead
 # agent never starts. Always verify with:
 #   docker compose exec deerflow-langgraph bash -c \
-#     'cd /app/backend && uv run python -c "from src.community.tavily.tools import web_search_tool"'
+#     'cd /app/backend && uv run python -c "from src.community.searxng.tools import web_search_tool"'
 #
 # Required env vars (set in .env by setup.sh):
 #   VLLM_MODEL     — model name served by vLLM
@@ -63,10 +63,10 @@ tool_groups:
   - name: "code_interpreter"
 
 tools:
-  # Tavily web search (set TAVILY_API_KEY in .env, or swap for infoquest)
+  # SearXNG web search — self-hosted, no API key needed (SEARXNG_URL env var)
   - name: "web_search"
     group: "web_search"
-    use: "src.community.tavily.tools:web_search_tool"
+    use: "src.community.searxng.tools:web_search_tool"
   # Jina AI web fetch — reads and extracts web page content
   - name: "crawl"
     group: "crawl"

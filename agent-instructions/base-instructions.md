@@ -136,6 +136,168 @@ Before marking any code task as done, run the **full** test suite — not a sing
 
 If a task's acceptance criteria specifies a different test command, use that instead. But the default is always the full suite.
 
+## Infrastructure Tools
+
+You have access to the following self-hosted services. All are reachable by service name from any agent container. Use `curl` to interact with them.
+
+### Gitea (Git Server & PR Creation)
+
+- **URL**: `http://gitea:3000`
+- **Auth**: `Authorization: token $GITEA_TOKEN` (env var injected automatically)
+- **Host SSH**: port 2223
+
+**Push code:**
+```bash
+git remote add gitea http://gitea:3000/<owner>/<repo>.git || true
+git push gitea <branch-name>
+```
+
+**Create a pull request:**
+```bash
+TOKEN=$(cat ~/.gitea-token 2>/dev/null || echo $GITEA_TOKEN)
+curl -s -X POST "http://gitea:3000/api/v1/repos/<owner>/<repo>/pulls" \
+  -H "Authorization: token $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "title": "<PR title>",
+    "head": "<branch-name>",
+    "base": "master",
+    "body": "<description>"
+  }'
+```
+
+**List open PRs:**
+```bash
+curl -s -H "Authorization: token $GITEA_TOKEN" \
+  "http://gitea:3000/api/v1/repos/<owner>/<repo>/pulls?state=open"
+```
+
+Gitea auto-mirrors to GitHub — once pushed to Gitea, code appears on GitHub within seconds.
+
+### SearXNG (Web Search)
+
+- **URL**: `http://searxng:8080`
+- **Auth**: None required
+
+```bash
+# Search the web (JSON response)
+curl -s "http://searxng:8080/search?q=<query>&format=json" | jq '.results[:5][] | {title, url, content}'
+```
+
+Use this for researching APIs, finding documentation, investigating CVEs, or any web lookup.
+
+### MinIO (Object Storage / S3-Compatible)
+
+- **URL**: `http://minio:9000`
+- **Auth**: `MINIO_ACCESS_KEY` / `MINIO_SECRET_KEY` (env vars injected)
+- **Bucket**: `vibe-artifacts`
+- **Console**: `http://minio:9002` (web UI)
+
+```bash
+# Upload a file
+curl -s -X PUT "http://minio:9000/vibe-artifacts/<path>" \
+  -H "Content-Type: application/octet-stream" \
+  --data-binary @<local-file> \
+  --user "$MINIO_ACCESS_KEY:$MINIO_SECRET_KEY"
+```
+
+Use for storing build artifacts, test reports, screenshots, or any files that need to persist between runs.
+
+### Playwright (Browser Automation)
+
+- **URL**: `ws://playwright:3003`
+- **Auth**: None required
+
+Use Playwright for E2E browser testing. Configure your test runner to connect to the remote browser:
+
+```javascript
+// playwright.config.ts
+connectOptions: { wsEndpoint: 'ws://playwright:3003' }
+```
+
+```bash
+# Verify Playwright is running
+curl -s http://playwright:3003/json
+```
+
+### Mirofish (Multi-Agent Simulation)
+
+- **URL**: `http://mirofish:5001`
+- **Auth**: None required
+
+```bash
+# Health check
+curl -s http://mirofish:5001/health
+
+# Run a simulation (POST with scenario JSON)
+curl -s -X POST http://mirofish:5001/simulate \
+  -H "Content-Type: application/json" \
+  -d '{"scenario": "...", "agents": 5, "iterations": 10}'
+```
+
+Use for architecture decisions, deployment risk assessment, and integration conflict detection.
+
+### PaddleOCR (Text Extraction)
+
+- **URL**: `http://paddleocr:8868`
+- **Auth**: None required
+
+```bash
+# Extract text from an image
+curl -s -X POST http://paddleocr:8868/ocr \
+  -F "image=@screenshot.png"
+```
+
+Use for extracting text from screenshots, PDFs, or scanned documents.
+
+### OpenSandbox (Isolated Code Execution)
+
+- **URL**: `http://opensandbox:8080`
+- **Auth**: None required
+
+```bash
+# Execute code in an isolated container
+curl -s -X POST http://opensandbox:8080/execute \
+  -H "Content-Type: application/json" \
+  -d '{"language": "python", "code": "print(42)"}'
+```
+
+Use for running untrusted code or testing in isolation.
+
+### Dev Runner (App Deployment)
+
+- **URL**: `http://dev-runner:9000`
+- **Auth**: None required
+
+```bash
+# Check status and available ports
+curl -s http://dev-runner:9000/health
+```
+
+Use for deploying and previewing applications during development.
+
+### Paperclip API
+
+- **URL**: `http://server:3100`
+- **Auth**: Injected automatically via agent JWT
+
+Key endpoints:
+```
+GET    /api/companies/{companyId}/issues          # List issues
+POST   /api/companies/{companyId}/issues          # Create issue
+PATCH  /api/companies/{companyId}/issues/{id}     # Update issue
+POST   /api/companies/{companyId}/issues/{id}/comments  # Add comment
+GET    /api/companies/{companyId}/agents          # List all agents
+GET    /api/companies/{companyId}/labels          # List labels
+```
+
+### vLLM (Local LLM Inference)
+
+- **URL**: `http://host.docker.internal:8000/v1`
+- **Auth**: None required (local)
+
+OpenAI-compatible API. Use for free local inference when cloud APIs aren't needed.
+
 ## Working Directory
 
 Default: `/home/prime/Projects`. Create project subdirectories as needed.

@@ -102,7 +102,7 @@ services:
     restart: "no"
     entrypoint: >
       /bin/sh -c "
-      mc alias set vibe http://minio:9000 $${MINIO_ROOT_USER:-vibe} $${MINIO_ROOT_PASSWORD:?Set MINIO_ROOT_PASSWORD in .env} &&
+      mc alias set vibe http://minio:9000 ${MINIO_ROOT_USER:-vibe} ${MINIO_ROOT_PASSWORD:?Set MINIO_ROOT_PASSWORD in .env} &&
       mc mb --ignore-existing vibe/vibe-artifacts &&
       echo 'Bucket vibe-artifacts ready'
       "
