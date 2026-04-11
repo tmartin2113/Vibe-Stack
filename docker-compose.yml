@@ -56,8 +56,8 @@ services:
     image: ghcr.io/tmartin2113/paperclip-deerflow:${PAPERCLIP_VERSION:-latest}
     restart: always
     command: >
-      sh -c "uv pip install mempalace>=3.1.0 &&
-      cd backend && uv run langgraph dev
+      sh -c "cd backend && uv pip install mempalace>=3.1.0 &&
+      uv run langgraph dev
       --no-browser --allow-blocking --no-reload --host 0.0.0.0 --port 2024"
     env_file: .env
     extra_hosts:
@@ -87,14 +87,15 @@ services:
       - MINIO_SECRET_KEY=${MINIO_ROOT_PASSWORD:?Set MINIO_ROOT_PASSWORD in .env}
       - MEMPALACE_PALACE_PATH=/palace/palace
       - DEER_FLOW_EXTENSIONS_CONFIG_PATH=/app/extensions_config.json
+      - PAPERCLIP_INTERNAL_URL=http://server:3100
 
   # ── DeerFlow Gateway ───────────────────────────────────────────────────────
   deerflow-gateway:
     image: ghcr.io/tmartin2113/paperclip-deerflow:${PAPERCLIP_VERSION:-latest}
     restart: always
     command: >
-      sh -c "uv pip install mempalace>=3.1.0 &&
-      cd backend && uv run uvicorn
+      sh -c "cd backend && uv pip install mempalace>=3.1.0 &&
+      uv run uvicorn
       src.gateway.app:app --host 0.0.0.0 --port 8001"
     env_file: .env
     extra_hosts:
@@ -118,6 +119,7 @@ services:
       - MINIO_SECRET_KEY=${MINIO_ROOT_PASSWORD:?Set MINIO_ROOT_PASSWORD in .env}
       - MEMPALACE_PALACE_PATH=/palace/palace
       - DEER_FLOW_EXTENSIONS_CONFIG_PATH=/app/extensions_config.json
+      - PAPERCLIP_INTERNAL_URL=http://server:3100
 
   # ── Vibe Agent (local build) ───────────────────────────────────────────────
   vibe:
