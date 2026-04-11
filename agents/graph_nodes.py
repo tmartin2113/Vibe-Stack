@@ -173,6 +173,16 @@ def create_node_wrappers(
             except Exception as e:
                 logger.debug(f"Palace injection skipped: {e}")
 
+            # Supplement with Graphify structural context
+            try:
+                from .graphify_bridge import graphify_inject
+                graph_text = graphify_inject(state)
+                if graph_text:
+                    state["memory_context"] = state.get("memory_context", "") + graph_text
+                    logger.info("Injected graphify structural context into specialist context")
+            except Exception as e:
+                logger.debug(f"Graphify injection skipped: {e}")
+
         except Exception as e:
             logger.debug(f"Memory injection skipped: {e}")
             state["memory_context"] = ""
@@ -366,6 +376,13 @@ def create_node_wrappers(
             palace_persist(state)
         except Exception as e:
             logger.debug("palace_persist: skipped (%s)", e)
+
+        # Update knowledge graph if code changed (additive, never blocks)
+        try:
+            from .graphify_bridge import graphify_rebuild
+            graphify_rebuild(state)
+        except Exception as e:
+            logger.debug("graphify_rebuild: skipped (%s)", e)
 
         return result
 
