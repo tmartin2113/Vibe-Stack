@@ -23,11 +23,14 @@ models:
   - name: "local-vllm"
     display_name: "Local vLLM"
     description: "Local model via vLLM"
-    use: "langchain_openai:ChatOpenAI"
+    # VllmChatModel preserves reasoning across multi-turn tool-call flows.
+    # Falls back to ChatOpenAI if the provider isn't available in the image.
+    use: "src.models.vllm_provider:VllmChatModel"
     model: "$VLLM_MODEL"
     base_url: "$VLLM_API_URL"
     api_key: "no-key-needed"
     temperature: 0.3
+    supports_thinking: true
     # CRITICAL: suppress Qwen3.5's reasoning/thinking tokens at the chat
     # template layer. Without this, vLLM streams `<think>...</think>` blocks
     # as the response content. DeerFlow's adapter strips that boilerplate
@@ -55,38 +58,91 @@ models:
 # No Docker-in-Docker needed; the container already has filesystem access.
 sandbox:
   use: "src.sandbox.local.local_sandbox_provider:LocalSandboxProvider"
+  # Bash is gated because LocalSandboxProvider is not an isolation boundary.
+  # Explicitly enabled here since the container IS the sandbox.
+  allow_host_bash: true
+  # Output truncation limits (characters) — prevent context window overflow.
+  # bash uses middle-truncation (head + tail); read_file and ls use head-truncation.
+  bash_output_max_chars: 20000
+  read_file_output_max_chars: 50000
+  ls_output_max_chars: 20000
 
 # ── Tools ───────────────────────────────────────────────────────
+# Tool groups use upstream's finer-grained access control model:
+#   web       — search + fetch (read-only external)
+#   file:read — ls, read_file, glob, grep (read-only workspace)
+#   file:write— write_file, str_replace (workspace mutations)
+#   bash      — shell execution (gated by sandbox.allow_host_bash)
 tool_groups:
-  - name: "web_search"
-  - name: "crawl"
-  - name: "code_interpreter"
+  - name: "web"
+  - name: "file:read"
+  - name: "file:write"
+  - name: "bash"
 
 tools:
-  # SearXNG web search — self-hosted, no API key needed (SEARXNG_URL env var)
+  # ── Web tools ───────────────────────────────────────────────
   - name: "web_search"
-    group: "web_search"
+    group: "web"
     use: "src.community.searxng.tools:web_search_tool"
-  # Jina AI web fetch — reads and extracts web page content
   - name: "crawl"
-    group: "crawl"
+    group: "web"
     use: "src.community.jina_ai.tools:web_fetch_tool"
-  # Sandbox tools — bash, file I/O for codebase exploration
-  - name: "bash"
-    group: "code_interpreter"
-    use: "src.sandbox.tools:bash_tool"
-  - name: "read_file"
-    group: "code_interpreter"
-    use: "src.sandbox.tools:read_file_tool"
-  - name: "write_file"
-    group: "code_interpreter"
-    use: "src.sandbox.tools:write_file_tool"
+  # ── File read tools ─────────────────────────────────────────
   - name: "ls"
-    group: "code_interpreter"
+    group: "file:read"
     use: "src.sandbox.tools:ls_tool"
+  - name: "read_file"
+    group: "file:read"
+    use: "src.sandbox.tools:read_file_tool"
+  - name: "glob"
+    group: "file:read"
+    use: "src.sandbox.tools:glob_tool"
+    max_results: 200
+  - name: "grep"
+    group: "file:read"
+    use: "src.sandbox.tools:grep_tool"
+    max_results: 100
+  # ── File write tools ────────────────────────────────────────
+  - name: "write_file"
+    group: "file:write"
+    use: "src.sandbox.tools:write_file_tool"
   - name: "str_replace"
-    group: "code_interpreter"
+    group: "file:write"
     use: "src.sandbox.tools:str_replace_tool"
+  # ── Shell execution ─────────────────────────────────────────
+  - name: "bash"
+    group: "bash"
+    use: "src.sandbox.tools:bash_tool"
+
+# ── Title Generation ──────────────────────────────────────────
+# Auto-generate conversation titles after first exchange.
+title:
+  enabled: true
+  max_words: 6
+  max_chars: 60
+  model_name: null  # use default model
+
+# ── Summarization ─────────────────────────────────────────────
+# Auto-summarize conversation history when approaching token limits.
+# Critical for long-running DeerFlow sessions on vLLM's context window.
+summarization:
+  enabled: true
+  model_name: null  # use default model
+  trigger:
+    - type: tokens
+      value: 15564
+  keep:
+    type: messages
+    value: 10
+  trim_tokens_to_summarize: 15564
+
+# ── Memory ────────────────────────────────────────────────────
+# Persistent memory — stores user context and conversation history
+# for personalized responses across sessions.
+memory:
+  enabled: true
+  storage_path: memory.json
+  debounce_seconds: 30
 
 # ── Checkpointer ────────────────────────────────────────────────
 checkpointer:
