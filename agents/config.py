@@ -310,6 +310,44 @@ class PaperclipConfig:
 
 
 @dataclass
+class SchedulerConfig:
+    """Resource-aware orchestrator scheduler configuration.
+
+    Controls how the ``--orchestrator`` mode spawns and manages agent
+    subprocesses.  All fields can be overridden via VIBE_* env vars.
+    """
+    max_concurrent_agents: int = 0          # 0 = auto-detect from hardware
+    scheduler_interval: int = 30            # Poll interval in seconds
+    agent_timeout: int = 600                # Per-heartbeat timeout in seconds
+    disabled_agents: List[str] = field(default_factory=list)  # Roles to skip
+    memory_pressure_threshold: int = 90     # Pause spawning above this %
+    memory_pressure_resume: int = 80        # Resume spawning below this %
+    infra_reserve_gb: int = 10              # RAM reserved for non-agent containers
+    slot_cost_gb: float = 1.5               # Estimated peak RAM per subprocess
+    crash_threshold: int = 3                # Consecutive crashes before unhealthy
+    backoff_base_minutes: int = 5           # Initial backoff after unhealthy
+    backoff_max_minutes: int = 60           # Maximum backoff cap
+    instructions_path: str = "/opt/vibe/instructions"  # Baked instruction dir
+    overrides_path: str = "/opt/vibe/overrides"         # Optional override dir
+
+    @classmethod
+    def from_env(cls) -> "SchedulerConfig":
+        """Create SchedulerConfig by reading VIBE_* environment variables."""
+        disabled_str = os.environ.get("VIBE_DISABLED_AGENTS", "")
+        disabled = [r.strip() for r in disabled_str.split(",") if r.strip()]
+        return cls(
+            max_concurrent_agents=int(os.environ.get("VIBE_MAX_CONCURRENT_AGENTS", "0")),
+            scheduler_interval=int(os.environ.get("VIBE_SCHEDULER_INTERVAL", "30")),
+            agent_timeout=int(os.environ.get("VIBE_AGENT_TIMEOUT", "600")),
+            disabled_agents=disabled,
+            memory_pressure_threshold=int(os.environ.get("VIBE_MEMORY_PRESSURE_THRESHOLD", "90")),
+            memory_pressure_resume=int(os.environ.get("VIBE_MEMORY_PRESSURE_RESUME", "80")),
+            infra_reserve_gb=int(os.environ.get("VIBE_INFRA_RESERVE_GB", "10")),
+            slot_cost_gb=float(os.environ.get("VIBE_SLOT_COST_GB", "1.5")),
+        )
+
+
+@dataclass
 class SelfUpgradeConfig:
     """Self-upgrade pipeline configuration.
 
@@ -343,6 +381,7 @@ class SystemConfig:
     backend_pool: BackendPoolConfig = field(default_factory=BackendPoolConfig)
     storage: StorageConfig = field(default_factory=StorageConfig)
     self_upgrade: SelfUpgradeConfig = field(default_factory=SelfUpgradeConfig)
+    scheduler: SchedulerConfig = field(default_factory=SchedulerConfig)
 
     # Logging
     log_level: str = "INFO"

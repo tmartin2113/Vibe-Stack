@@ -402,6 +402,12 @@ def main():
     parser.add_argument("--heartbeat", action="store_true", help="Run one Paperclip heartbeat cycle and exit")
     parser.add_argument("--spending-status", action="store_true", help="Show spending tracker status and exit")
     parser.add_argument("--spending-reset", action="store_true", help="Reset the spending circuit breaker and exit")
+    parser.add_argument("--orchestrator", action="store_true",
+                        help="Run orchestrator scheduler (long-running, manages agent subprocesses)")
+    parser.add_argument("--agent-id", type=str, default=None,
+                        help="Override PAPERCLIP_AGENT_ID (used by orchestrator subprocesses)")
+    parser.add_argument("--instructions", type=str, default=None,
+                        help="Path to agent instruction file (used by orchestrator subprocesses)")
 
     args = parser.parse_args()
 
@@ -451,11 +457,25 @@ def main():
         console.print()
         sys.exit(0)
 
+    # Orchestrator mode — long-running scheduler
+    if args.orchestrator:
+        from .orchestrator_main import run_orchestrator
+        from .config import SchedulerConfig
+        setup_logging(config)
+        config.paperclip.enabled = True
+        config.scheduler = SchedulerConfig.from_env()
+        run_orchestrator(config)
+        return
+
     # Heartbeat mode — run one Paperclip heartbeat and exit
     if args.heartbeat:
         from .heartbeat import run_heartbeat
         setup_logging(config)
         config.paperclip.enabled = True
+        if args.agent_id:
+            os.environ["PAPERCLIP_AGENT_ID"] = args.agent_id
+        if args.instructions:
+            os.environ["VIBE_INSTRUCTIONS_PATH"] = args.instructions
         result = run_heartbeat(config)
         # Write structured output for the adapter to parse
         if config.paperclip.output_format == "json":

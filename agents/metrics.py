@@ -31,6 +31,16 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
+# Optional scheduler status provider — set by orchestrator_main
+_scheduler_status_fn: Optional[Callable[[], Dict[str, Any]]] = None
+
+
+def set_scheduler_status_fn(fn: Callable[[], Dict[str, Any]]) -> None:
+    """Register a scheduler status provider for the /healthz endpoint."""
+    global _scheduler_status_fn
+    _scheduler_status_fn = fn
+
+
 # Default histogram buckets (seconds) — suited for LLM call latencies
 DEFAULT_BUCKETS = (0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 60.0, 120.0, 300.0, 600.0)
 
@@ -300,6 +310,13 @@ class _HealthHandler(BaseHTTPRequestHandler):
             except (urllib.error.URLError, OSError):
                 checks["sandbox"] = "unreachable"
                 checks["sandbox_note"] = "degraded_but_not_fatal"
+
+        # Check 6: Scheduler state (when orchestrator mode is active)
+        if _scheduler_status_fn is not None:
+            try:
+                checks["scheduler"] = _scheduler_status_fn()
+            except Exception:
+                checks["scheduler"] = "probe_failed"
 
         status_code = 200 if healthy else 503
         body = json.dumps({"status": "ok" if healthy else "unhealthy", "checks": checks})

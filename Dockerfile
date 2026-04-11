@@ -39,12 +39,16 @@ COPY --chown=vibe:vibe vibe/ vibe/
 COPY --chown=vibe:vibe agents/ agents/
 COPY --chown=vibe:vibe pyproject.toml .
 COPY --chown=vibe:vibe scripts/ scripts/
+COPY --chown=vibe:vibe agents/instructions/ /opt/vibe/instructions/
 
 # Install the vibe package itself (non-editable for production)
 RUN pip install --no-cache-dir .
 
 # Create data directory for vibe user (includes skills dir for SkillRegistry)
 RUN mkdir -p /home/vibe/.vibe/skills && chown -R vibe:vibe /home/vibe/.vibe
+
+# Create empty overrides directory (mounted as volume for dev-time instruction editing)
+RUN mkdir -p /opt/vibe/overrides && chown -R vibe:vibe /opt/vibe/overrides
 
 # Switch to non-root user
 USER vibe
@@ -63,4 +67,4 @@ HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
     CMD curl -f http://localhost:${VIBE_HEALTH_PORT:-8080}/healthz || exit 1
 
 ENTRYPOINT ["python", "-m", "agents.main"]
-CMD ["--heartbeat"]
+CMD ["--orchestrator"]
