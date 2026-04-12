@@ -246,6 +246,11 @@ Otherwise, provide a complete, high-quality solution that directly addresses the
 
 Otherwise, focus on the specific issues identified in the feedback. Provide an improved solution."""
 
+        # Inject role-specific agent instructions if available
+        agent_instructions = state.get("agent_instructions", "")
+        if agent_instructions:
+            base_prompt += f"\n\n## Your Role\n\n{agent_instructions}"
+
         # Determine tool access: skill-declared tools_enabled overrides the
         # hardcoded set, allowing arbitrary agent types to opt in/out of tools.
         tool_enabled_specialists = {

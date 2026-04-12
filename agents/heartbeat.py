@@ -532,6 +532,13 @@ def _execute_checked_out_task(
         except Exception as e:
             logger.debug("Palace wake-up skipped: %s", e)
 
+        # Load role-specific agent instructions
+        agent_instructions = _load_agent_instructions(
+            os.environ.get("VIBE_INSTRUCTIONS_PATH", "")
+        )
+        if agent_instructions:
+            logger.info("Loaded agent instructions (%d chars)", len(agent_instructions))
+
         final_state = _run_workflow(
             config, user_request, task_type,
             complexity_tier=complexity_tier,
@@ -543,6 +550,7 @@ def _execute_checked_out_task(
             agent_title=getattr(identity, "title", None) if identity else None,
             agent_id=_agent_id,
             task_id=issue.id,
+            agent_instructions=agent_instructions,
         )
     except WorkflowCancelledError as e:
         logger.info("Workflow cancelled for %s: %s", issue.id, e.reason,
@@ -829,6 +837,20 @@ def _create_client(config: SystemConfig) -> PaperclipClient:
     return client
 
 
+def _load_agent_instructions(path: Optional[str] = None) -> str:
+    """Load agent instructions from file path.
+
+    Returns empty string if path is None, empty, or file doesn't exist.
+    """
+    if not path:
+        return ""
+    try:
+        with open(path, "r") as f:
+            return f.read().strip()
+    except (FileNotFoundError, PermissionError, OSError):
+        return ""
+
+
 def _run_workflow(
     config: SystemConfig,
     user_request: str,
@@ -843,6 +865,7 @@ def _run_workflow(
     agent_title: Optional[str] = None,
     agent_id: Optional[str] = None,
     task_id: Optional[str] = None,
+    agent_instructions: str = "",
 ) -> Dict[str, Any]:
     """
     Run the Vibe workflow graph on the given request.
@@ -863,6 +886,7 @@ def _run_workflow(
         agent_title=agent_title,
         agent_id=agent_id,
         task_id=task_id,
+        agent_instructions=agent_instructions,
     )
 
 

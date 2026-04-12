@@ -116,6 +116,7 @@ class WorkflowFactory:
         agent_title: Optional[str] = None,
         agent_id: Optional[str] = None,
         task_id: Optional[str] = None,
+        agent_instructions: str = "",
     ) -> Dict[str, Any]:
         """Run the Vibe workflow graph on the given request.
 
@@ -158,6 +159,9 @@ class WorkflowFactory:
             initial_state["agent_id"] = agent_role
         if task_id:
             initial_state["task_id"] = task_id
+
+        if agent_instructions:
+            initial_state["agent_instructions"] = agent_instructions
 
         # Pre-set complexity tier (from orchestrator or bridge)
         if complexity_tier:
