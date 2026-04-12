@@ -27,6 +27,7 @@ class InputState(TypedDict, total=False):
 
     user_request: str  # Original user request
     session_id: str  # Unique session identifier
+    agent_instructions: str  # Role-specific instructions from AGENTS.md
 
 
 class IntentState(TypedDict, total=False):
