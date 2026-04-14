@@ -242,18 +242,20 @@ def _validate_app_dir(app_dir_str: str) -> Path:
     workspace_root = Path(WORKSPACE_PATH).resolve()
     app_dir = (workspace_root / app_dir_str).resolve()
     try:
-        app_dir.relative_to(workspace_root)
+        safe_relative = app_dir.relative_to(workspace_root)
     except ValueError:
         raise HTTPException(
             status_code=400,
             detail="app_dir must be within /workspace (path traversal blocked)",
         )
-    if not app_dir.exists():
+    # Reconstruct from the validated relative path to sever taint from user input
+    safe_dir = workspace_root / safe_relative
+    if not safe_dir.exists():
         raise HTTPException(
             status_code=400,
-            detail=f"App directory not found: {app_dir}",
+            detail=f"App directory not found: {safe_dir}",
         )
-    return app_dir
+    return safe_dir
 
 
 # ── Suspicious pattern scanner ──────────────────────────────────────────
