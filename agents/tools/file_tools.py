@@ -7,6 +7,7 @@ Provides secure file I/O with configurable allowed-directory restrictions.
 from __future__ import annotations
 
 from typing import Any, Dict, Optional, List
+import difflib
 import logging
 import os
 import sys
@@ -322,6 +323,52 @@ class FileWriter(Tool):
             "required": ["file_path", "content"]
         }
 
+    def _emit_file_edit_event(
+        self,
+        file_path: str,
+        edit_type: str,
+        old_content: str,
+        new_content: str,
+    ) -> None:
+        """Best-effort emission of file.edit event to Paperclip."""
+        try:
+            import agents.tools.registry as _reg
+            client = getattr(_reg, "_paperclip_client", None)
+            if client is None:
+                return
+
+            workspace = os.environ.get("WORKSPACE_DIR", "")
+            rel_path = file_path
+            if workspace and file_path.startswith(workspace):
+                rel_path = os.path.relpath(file_path, workspace)
+
+            diff_lines = list(difflib.unified_diff(
+                old_content.splitlines(keepends=True),
+                new_content.splitlines(keepends=True),
+                fromfile=rel_path,
+                tofile=rel_path,
+                lineterm="",
+            ))
+            truncated = diff_lines[-50:] if len(diff_lines) > 50 else diff_lines
+
+            added = sum(1 for l in diff_lines if l.startswith("+") and not l.startswith("+++"))
+            removed = sum(1 for l in diff_lines if l.startswith("-") and not l.startswith("---"))
+
+            client.emit_run_event(
+                event_type="file.edit",
+                data={
+                    "filePath": rel_path,
+                    "editType": edit_type,
+                    "diff": "\n".join(truncated),
+                    "linesAdded": added,
+                    "linesRemoved": removed,
+                    "timestamp": __import__("datetime").datetime.utcnow().isoformat() + "Z",
+                },
+                message=f"{edit_type.capitalize()} {rel_path} (+{added} -{removed})",
+            )
+        except Exception:
+            pass  # Best-effort, never block file writes
+
     def execute(self, file_path: str, content: str, encoding: str = "utf-8", **kwargs) -> ToolResult:
         """Write content to file"""
         try:
@@ -359,7 +406,20 @@ class FileWriter(Tool):
             # Create parent directories if needed
             path.parent.mkdir(parents=True, exist_ok=True)
 
+            # Capture old content for diff (best-effort)
+            old_content = ""
+            edit_type = "create"
+            if path.exists():
+                try:
+                    old_content = path.read_text(encoding=encoding)
+                    edit_type = "modify"
+                except (OSError, UnicodeDecodeError):
+                    pass
+
             path.write_text(content, encoding=encoding)
+
+            # Emit file.edit event (best-effort, non-blocking)
+            self._emit_file_edit_event(str(path), edit_type, old_content, content)
 
             return ToolResult(
                 success=True,
