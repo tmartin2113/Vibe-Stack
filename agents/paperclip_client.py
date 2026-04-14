@@ -465,6 +465,34 @@ class PaperclipClient:
         )
         return _parse_comment(data)
 
+    def emit_run_event(
+        self,
+        event_type: str,
+        data: Dict[str, Any],
+        message: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """POST /api/heartbeat-runs/{runId}/events — emit a run event.
+
+        Best-effort: returns None on failure instead of raising.
+        Requires self.run_id to be set (heartbeat mode).
+        """
+        if not self.run_id:
+            return None
+        try:
+            result = self._request(
+                "POST",
+                f"/api/heartbeat-runs/{self.run_id}/events",
+                json_body={
+                    "eventType": event_type,
+                    "message": message,
+                    "payload": data,
+                },
+            )
+            return result
+        except (PaperclipAPIError, requests.RequestException) as exc:
+            logger.debug("emit_run_event failed (best-effort): %s", exc)
+            return None
+
     def release_issue(self, issue_id: str) -> None:
         """POST /api/issues/{issueId}/release — release checkout."""
         self._request("POST", f"/api/issues/{issue_id}/release")
