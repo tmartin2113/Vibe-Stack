@@ -26,9 +26,10 @@ services:
       - DATABASE_URL=
       # Container-side path for agent instruction files (bootstrap uses this)
       - PAPERCLIP_PROJECTS_DIR=/paperclip/Projects
-      # Check agents every 60s instead of default 30s — reduces idle DB churn.
-      # Per-agent intervalSec (300s) controls actual wakeup frequency.
-      - HEARTBEAT_SCHEDULER_INTERVAL_MS=60000
+      # Heartbeat scheduler disabled — agents are woken by events, not timers.
+      # To re-enable, set ENABLED=true and uncomment the interval.
+      - HEARTBEAT_SCHEDULER_ENABLED=false
+      # - HEARTBEAT_SCHEDULER_INTERVAL_MS=60000
       - BETTER_AUTH_TRUSTED_ORIGINS=${BETTER_AUTH_TRUSTED_ORIGINS:-http://localhost:3100,https://${TAILSCALE_HOSTNAME:-localhost}}
       - PAPERCLIP_ALLOWED_HOSTNAMES=${TAILSCALE_HOSTNAME:-localhost},localhost,server
       - SEARXNG_URL=${SEARXNG_URL:-http://host.docker.internal:8888}
