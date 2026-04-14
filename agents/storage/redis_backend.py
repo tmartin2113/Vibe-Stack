@@ -51,9 +51,10 @@ class RedisCacheBackend(CacheBackend):
 
         self._url = url or _get_redis_url()
         self._prefix = prefix
-        # Extract host:port for safe logging (never log credentials)
-        _raw = self._url
-        self._safe_host = _raw.rsplit("@", 1)[-1] if "@" in _raw else _raw.split("//", 1)[-1]
+        # Extract host:port for safe logging — use urllib to avoid taint flow
+        from urllib.parse import urlparse
+        _parsed = urlparse(self._url)
+        self._log_endpoint = f"{_parsed.hostname or 'unknown'}:{_parsed.port or 6379}"
         self._client = redis_lib.from_url(
             self._url,
             decode_responses=True,
@@ -64,7 +65,7 @@ class RedisCacheBackend(CacheBackend):
         # Verify connection
         try:
             self._client.ping()
-            logger.info("RedisCacheBackend connected to %s", self._safe_host)
+            logger.info("RedisCacheBackend connected to %s", self._log_endpoint)
         except Exception as e:
             logger.warning("Redis connection failed: %s", e)
             raise

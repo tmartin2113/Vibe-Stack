@@ -240,16 +240,17 @@ def _sanitize_command(command: str, port: int) -> str:
 def _validate_app_dir(app_dir_str: str) -> Path:
     """Resolve app_dir and ensure it stays within WORKSPACE_PATH."""
     workspace_root = Path(WORKSPACE_PATH).resolve()
-    app_dir = (workspace_root / app_dir_str).resolve()
+    candidate = (workspace_root / app_dir_str).resolve()
     try:
-        safe_relative = app_dir.relative_to(workspace_root)
+        relative = candidate.relative_to(workspace_root)
     except ValueError:
         raise HTTPException(
             status_code=400,
             detail="app_dir must be within /workspace (path traversal blocked)",
         )
-    # Reconstruct from the validated relative path to sever taint from user input
-    safe_dir = workspace_root / safe_relative
+    # Reconstruct using only the validated path parts to sever taint chain
+    safe_parts = relative.parts  # tuple of clean str segments
+    safe_dir = workspace_root.joinpath(*safe_parts) if safe_parts else workspace_root
     if not safe_dir.exists():
         raise HTTPException(
             status_code=400,
