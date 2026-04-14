@@ -241,7 +241,9 @@ def _validate_app_dir(app_dir_str: str) -> Path:
     """Resolve app_dir and ensure it stays within WORKSPACE_PATH."""
     workspace_root = Path(WORKSPACE_PATH).resolve()
     app_dir = (workspace_root / app_dir_str).resolve()
-    if not str(app_dir).startswith(str(workspace_root)):
+    try:
+        app_dir.relative_to(workspace_root)
+    except ValueError:
         raise HTTPException(
             status_code=400,
             detail="app_dir must be within /workspace (path traversal blocked)",

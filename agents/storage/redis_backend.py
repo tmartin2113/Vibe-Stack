@@ -61,7 +61,9 @@ class RedisCacheBackend(CacheBackend):
         # Verify connection
         try:
             self._client.ping()
-            logger.info("RedisCacheBackend connected to %s", self._url.split("@")[-1])
+            # Log only host:port, never credentials
+            host_part = self._url.rsplit("@", 1)[-1] if "@" in self._url else self._url.split("//", 1)[-1]
+            logger.info("RedisCacheBackend connected to %s", host_part)
         except Exception as e:
             logger.warning("Redis connection failed: %s", e)
             raise

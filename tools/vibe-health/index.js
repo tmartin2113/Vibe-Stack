@@ -3,11 +3,12 @@
 'use strict';
 
 const http = require('http');
-const { execSync } = require('child_process');
+const { execFileSync } = require('child_process');
 const fs = require('fs');
 
 const DOCKER_COMPOSE_FILE = require('path').resolve(__dirname, '..', '..', 'docker-compose.yml');
-const DC_BASE = `docker compose -f ${DOCKER_COMPOSE_FILE}`;
+// DC_BASE is built from a resolved filesystem path, not user input.
+const DC_BASE = ['docker', 'compose', '-f', DOCKER_COMPOSE_FILE];
 
 // --- HTTP check ---
 
@@ -33,7 +34,7 @@ function httpGet(url, timeoutMs = 5000) {
 function dockerExec(service, innerCmd, timeoutMs = 10000) {
   const start = Date.now();
   try {
-    execSync(`${DC_BASE} exec -T ${service} ${innerCmd}`, {
+    execFileSync(DC_BASE[0], [...DC_BASE.slice(1), 'exec', '-T', service, ...innerCmd.split(' ')], {
       timeout: timeoutMs,
       stdio: 'pipe',
     });
@@ -52,7 +53,7 @@ function dockerExec(service, innerCmd, timeoutMs = 10000) {
 function dockerPs(timeoutMs = 10000) {
   const start = Date.now();
   try {
-    const out = execSync(`${DC_BASE} ps --format json`, {
+    const out = execFileSync(DC_BASE[0], [...DC_BASE.slice(1), 'ps', '--format', 'json'], {
       timeout: timeoutMs,
       stdio: 'pipe',
     }).toString().trim();
