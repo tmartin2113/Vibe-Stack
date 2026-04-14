@@ -8,7 +8,7 @@
 
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT"></a>
-  <a href="#testing"><img src="https://img.shields.io/badge/tests-3000%2B%20passing-brightgreen.svg" alt="Tests: 3000+ passing"></a>
+  <a href="#testing"><img src="https://img.shields.io/badge/tests-3400%2B%20passing-brightgreen.svg" alt="Tests: 3400+ passing"></a>
   <a href="#system-requirements"><img src="https://img.shields.io/badge/platform-Linux-orange.svg" alt="Platform: Linux"></a>
   <a href="https://paperclip.dev"><img src="https://img.shields.io/badge/orchestration-Paperclip-purple.svg" alt="Orchestration: Paperclip"></a>
 </p>
@@ -41,7 +41,7 @@ You create an issue. The CTO decomposes it, dispatches research to free local-GP
 - **Self-improving** -- agents detect recurring quality issues and propose source code changes to themselves, gated by a 5-stage safety pipeline with human review
 - **Cross-run learning** -- each heartbeat persists spec, output, and critic feedback to a per-agent memory store with importance + 30-day decay; future runs recall scoped context via BM25 + semantic hybrid
 - **Role-based tool filtering** -- each agent only sees tools relevant to their role
-- **3000+ tests** across 52 files covering all major subsystems
+- **3400+ tests** across 91 files covering all major subsystems
 
 ---
 
@@ -158,7 +158,7 @@ Proposals appear in the Paperclip **Improvements** section with branch name and 
 
 ### Workflow Engine
 
-Each agent runs a deterministic state machine with **13 built-in task types**:
+Each agent runs a deterministic state machine with built-in task types:
 
 ```
 Router -> Skill Loader -> Spec Builder -> Specialist -> Critic -+
@@ -185,20 +185,42 @@ Multi-backend failover with per-backend circuit breakers via `BackendPool`. Tran
 
 ### Infrastructure Services
 
+**Core** (`docker-compose.yml` -- always running):
+
 | Service | Purpose | Port |
 |---------|---------|------|
 | **Paperclip** | Control plane + UI | 3100 |
-| **vLLM** | Local model inference | 8000 |
-| **DeerFlow** | Research assistant backend | 2024, 8001 |
+| **DeerFlow LangGraph** | Research assistant backend | 2024 |
+| **DeerFlow Gateway** | Research assistant API | 8001 |
+| **Vibe** | Agent orchestrator | 8080 |
+| **Tailscale** | Mesh VPN + HTTPS | -- |
+
+**Infrastructure** (`docker-compose.infra.yml`):
+
+| Service | Purpose | Port |
+|---------|---------|------|
 | **SearXNG** | Self-hosted web search | 8888 |
 | **Gitea** | Git hosting | 3000 |
 | **MinIO** | S3-compatible object storage | 9000 |
-| **Penpot** | Design tool | 9001 |
 | **Playwright** | Browser automation | 3003 |
-| **OpenSandbox** | Code execution sandbox | 9090 |
+| **Penpot** | Design tool | 9001 |
 | **MiroFish** | Multi-agent simulation | 5001 |
 | **PaddleOCR** | OCR text/layout extraction | 8868 |
-| **Caddy** | TLS reverse proxy | 443 |
+| **Dev Runner** | Sandboxed code execution | 8585 |
+| **SSH Relay** | Git SSH relay | -- |
+| **Prometheus** | Metrics collection | 9091 |
+| **Grafana** | Monitoring dashboards | 3333 |
+| **Zep + Neo4j** | Agent memory graph | 8394 |
+
+**GPU** (`docker-compose.gpu.yml`):
+
+| Service | Purpose | Port |
+|---------|---------|------|
+| **vLLM** | Local model inference | 8000 |
+| **OpenSandbox** | Code execution sandbox | 9090 |
+| **ComfyUI** | Image generation | 8188 |
+
+Tailscale provides HTTPS access; there is no separate reverse proxy container (Caddy runs as a host systemd service if installed by `setup.sh`).
 
 > For detailed subsystem documentation, see [docs/architecture.md](docs/architecture.md).
 
@@ -247,7 +269,7 @@ Both scripts honor `SERVER_CONTAINER=<name>` if your container is named differen
 ## Testing
 
 ```bash
-# Full suite (~3000 tests across 52 files)
+# Full suite (~3400 tests across 91 files)
 python -m pytest tests/ -x -m "not e2e" --no-header -q
 ```
 
@@ -255,13 +277,13 @@ python -m pytest tests/ -x -m "not e2e" --no-header -q
 <summary><strong>Run specific subsystems</strong></summary>
 
 ```bash
-python -m pytest tests/test_heartbeat.py -v          # Heartbeat lifecycle (142 tests)
-python -m pytest tests/test_skill_security.py -v     # Security hardening (142 tests)
+python -m pytest tests/test_heartbeat.py -v          # Heartbeat lifecycle (149 tests)
+python -m pytest tests/test_skill_security.py -v     # Security hardening (152 tests)
 python -m pytest tests/test_tool_system.py -v        # Tool system (157 tests)
 python -m pytest tests/test_mirofish_tool.py -v      # MiroFish simulation (11 tests)
 python -m pytest tests/test_ocr_tool.py -v           # OCR tool (21 tests)
 python -m pytest tests/test_memory_store.py -v       # Long-term memory (167 tests)
-python -m pytest tests/test_message_store.py -v      # Message bus (107 tests)
+python -m pytest tests/test_message_store.py -v      # Message bus (73 tests)
 ```
 </details>
 
@@ -285,7 +307,7 @@ No GPU required for cloud-only mode (Claude/OpenAI backends).
 
 ```bash
 # Health check
-python -m agents.doctor
+python -m agents.main --doctor
 
 # Service status
 docker compose ps
@@ -301,6 +323,10 @@ sudo ./setup.sh
 ```
 
 ---
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
 ## License
 

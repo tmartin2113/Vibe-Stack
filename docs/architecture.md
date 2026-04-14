@@ -10,7 +10,7 @@ Each agent runs a deterministic state machine: **Router -> Skill Loader -> Spec 
 
 | Node | File | Purpose |
 |------|------|---------|
-| **Router** | `agents/router.py` | Classifies task type via regex/LLM/hybrid from `TaskTypeRegistry`. 12 built-in types + skill-defined custom types |
+| **Router** | `agents/router.py` | Classifies task type via regex/LLM/hybrid from `TaskTypeRegistry`. 13 built-in types + skill-defined custom types |
 | **Skill Loader** | `agents/skill_loader.py` | Loads task-type-specific skills from 3-tier registry (community -> approved -> builtin). Security-gated |
 | **Spec Builder** | `agents/nodes.py` | LLM generates detailed specification. Can emit `clarification_needed` with questions for human |
 | **Specialist** | `agents/nodes.py` | Executes code generation with tool access. Single or multi-specialist (sub-task decomposition). Clarification requests escalate to human |

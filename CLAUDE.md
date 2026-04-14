@@ -12,7 +12,7 @@ User → Paperclip issue → Adapter (TypeScript) → Heartbeat (Python) → Wor
 
 Deterministic state machine: **Router → Skill Loader → Spec Builder → Specialist → Critic → (loop or finish)**
 
-- **Router** (`agents/router.py`) — classifies task type via regex/LLM/hybrid from `TaskTypeRegistry`. 12 built-in types + skill-defined custom types.
+- **Router** (`agents/router.py`) — classifies task type via regex/LLM/hybrid from `TaskTypeRegistry`. 13 built-in types + skill-defined custom types.
 - **Skill Loader** (`agents/skill_loader.py`) — loads task-type-specific skills from 3-tier registry (community → approved → builtin). Security-gated.
 - **Spec Builder** (`agents/nodes.py`) — LLM generates detailed specification. Can emit `clarification_needed` with questions for human.
 - **Specialist** (`agents/nodes.py`) — executes code generation with tool access (Python executor, pytest, bandit, file I/O). Single-specialist or multi-specialist (sub-task decomposition). Clarification requests escalate to human.
@@ -160,7 +160,7 @@ python -m pytest tests/ -x -m "not e2e" --no-header -q
 
 ### Test Coverage
 
-~2970 tests across 48 test files covering all major subsystems:
+~3400 tests across 91 test files covering all major subsystems:
 - Heartbeat (142), workflow factory (9), lazy sandbox (4), heartbeat metrics (36), task type registry (22)
 - Skill reinforcement (49), routing (37), security (142), skill registry (48), skill sources (55)
 - API key manager (39), retry/timeout (72), resource discovery (22), allocator (31)
@@ -239,7 +239,7 @@ agents/                    # Main agent pipeline
   resource_allocator.py    # Resource planning + runtime GPU headroom
 vibe/                      # Library layer (backends, core utilities)
   backends/                # vLLM, OpenAI, Anthropic
-tests/                     # ~2970 tests across 48 files
+tests/                     # ~3400 tests across 91 files
 ```
 
 ## Design Decisions

@@ -180,7 +180,7 @@ curl http://localhost:8000/health
 nvidia-smi
 
 # Common causes:
-# - GPU out of memory (reduce VLLM_GPU_MEMORY_UTILIZATION)
+# - GPU out of memory (reduce VLLM_GPU_MEM_UTIL)
 # - Model not downloaded yet (check vllm logs)
 # - Wrong VLLM_MODEL or VLLM_API_URL in .env
 ```
