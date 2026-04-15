@@ -354,16 +354,43 @@ class FileWriter(Tool):
             added = sum(1 for l in diff_lines if l.startswith("+") and not l.startswith("+++"))
             removed = sum(1 for l in diff_lines if l.startswith("-") and not l.startswith("---"))
 
+            # Detect git repo context (best-effort)
+            repo_url = None
+            branch = None
+            try:
+                import subprocess
+                cwd = os.path.dirname(file_path) or "."
+                branch_result = subprocess.run(
+                    ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+                    capture_output=True, text=True, cwd=cwd, timeout=5,
+                )
+                if branch_result.returncode == 0:
+                    branch = branch_result.stdout.strip()
+                remote_result = subprocess.run(
+                    ["git", "remote", "get-url", "origin"],
+                    capture_output=True, text=True, cwd=cwd, timeout=5,
+                )
+                if remote_result.returncode == 0:
+                    repo_url = remote_result.stdout.strip()
+            except (OSError, subprocess.TimeoutExpired):
+                pass
+
+            data = {
+                "filePath": rel_path,
+                "editType": edit_type,
+                "diff": "\n".join(truncated),
+                "linesAdded": added,
+                "linesRemoved": removed,
+                "timestamp": __import__("datetime").datetime.utcnow().isoformat() + "Z",
+            }
+            if repo_url:
+                data["repoUrl"] = repo_url
+            if branch:
+                data["branch"] = branch
+
             client.emit_run_event(
                 event_type="file.edit",
-                data={
-                    "filePath": rel_path,
-                    "editType": edit_type,
-                    "diff": "\n".join(truncated),
-                    "linesAdded": added,
-                    "linesRemoved": removed,
-                    "timestamp": __import__("datetime").datetime.utcnow().isoformat() + "Z",
-                },
+                data=data,
                 message=f"{edit_type.capitalize()} {rel_path} (+{added} -{removed})",
             )
         except Exception:
