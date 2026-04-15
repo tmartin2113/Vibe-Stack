@@ -225,6 +225,11 @@ class _HealthHandler(BaseHTTPRequestHandler):
             self._handle_metrics()
         elif self.path == "/status":
             self._handle_status()
+        elif self.path == "/api/infrastructure/health":
+            self._handle_infra_health_all()
+        elif self.path.startswith("/api/infrastructure/health/"):
+            service_name = self.path[len("/api/infrastructure/health/"):]
+            self._handle_infra_health_service(service_name)
         else:
             self.send_error(404)
 
@@ -346,6 +351,25 @@ class _HealthHandler(BaseHTTPRequestHandler):
         body = json.dumps(status_data, default=str)
         self._respond(200, body, "application/json")
 
+    def _handle_infra_health_all(self):
+        """Aggregate infrastructure health — probes all registered services."""
+        from agents.infra_health import check_all
+        result = check_all()
+        body = json.dumps(result, default=str)
+        self._respond(200, body, "application/json")
+
+    def _handle_infra_health_service(self, service_name: str):
+        """Single-service infrastructure health probe."""
+        from agents.infra_health import check_service, SERVICE_REGISTRY
+        if service_name not in SERVICE_REGISTRY:
+            result = check_service(service_name)
+            body = json.dumps(result, default=str)
+            self._respond(404, body, "application/json")
+        else:
+            result = check_service(service_name)
+            body = json.dumps(result, default=str)
+            self._respond(200, body, "application/json")
+
     def _respond(self, code: int, body: str, content_type: str):
         self.send_response(code)
         self.send_header("Content-Type", content_type)
@@ -388,7 +412,9 @@ def start_health_server(
         )
         thread.start()
         logger.info(f"Health server started on port {port} "
-                     f"(endpoints: /healthz, /readyz, /metrics, /status)")
+                     f"(endpoints: /healthz, /readyz, /metrics, /status, "
+                     f"/api/infrastructure/health, "
+                     f"/api/infrastructure/health/{{service}})")
         return server
     except OSError as e:
         logger.warning(f"Failed to start health server on port {port}: {e}")
