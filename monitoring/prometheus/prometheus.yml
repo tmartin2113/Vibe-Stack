@@ -32,10 +32,19 @@ scrape_configs:
     scrape_timeout: 10s
     static_configs:
       - targets:
+          # Core services
           - http://server:3100/api/health
           - http://deerflow-langgraph:2024/ok
           - http://deerflow-gateway:8001/health
           - http://vibe:8080/healthz
+          # Infrastructure services
+          - http://mirofish:5001/health
+          - http://paddleocr:8868/health
+          - http://searxng:8080/healthz
+          - http://gitea:3000/api/v1/version
+          - http://minio:9000/minio/health/live
+          - http://prometheus:9090/-/healthy
+          - http://grafana:3000/api/health
     relabel_configs:
       # Pass the probe target as a URL parameter
       - source_labels: [__address__]

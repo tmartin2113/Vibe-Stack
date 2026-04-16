@@ -114,20 +114,30 @@ services:
     ports:
       - "9001:80"
     depends_on:
-      - penpot-backend
-      - penpot-exporter
+      penpot-backend:
+        condition: service_healthy
+      penpot-exporter:
+        condition: service_started
     environment:
       - PENPOT_FLAGS=enable-registration enable-login-with-password disable-email-verification
     volumes:
       - penpot-assets:/opt/data/assets
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:80/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
 
   # ── Penpot Backend ──────────────────────────────────────────────────────────
   penpot-backend:
     image: penpotapp/backend:latest
     restart: unless-stopped
     depends_on:
-      - penpot-postgres
-      - penpot-redis
+      penpot-postgres:
+        condition: service_healthy
+      penpot-redis:
+        condition: service_healthy
     environment:
       - PENPOT_FLAGS=enable-registration enable-login-with-password disable-email-verification disable-secure-session-cookies
       - PENPOT_SECRET_KEY=${PENPOT_SECRET_KEY:?Set PENPOT_SECRET_KEY in .env}
@@ -141,6 +151,12 @@ services:
       - PENPOT_PUBLIC_URI=http://localhost:9001
     volumes:
       - penpot-assets:/opt/data/assets
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "-o", "/dev/null", "http://localhost:6060/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
 
   # ── Penpot Exporter ─────────────────────────────────────────────────────────
   penpot-exporter:
@@ -163,11 +179,21 @@ services:
       - POSTGRES_PASSWORD=penpot
     volumes:
       - penpot-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "penpot"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   # ── Penpot Redis ────────────────────────────────────────────────────────────
   penpot-redis:
     image: redis:7-alpine
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
 
   # ── Zep (agent memory for MiroFish simulations) ────────────────────────────
   zep-db:
