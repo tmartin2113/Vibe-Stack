@@ -118,7 +118,7 @@ wait_healthy() {
                 healthy)  ;;
                 unhealthy)
                     # During startup, unhealthy may just mean "still loading"
-                    # (e.g. vLLM model load). Keep waiting until timeout.
+                    # (e.g. model download or initialization). Keep waiting until timeout.
                     all_healthy=false ;;
                 *)  all_healthy=false ;;
             esac
@@ -372,183 +372,161 @@ fi
 success "Docker Compose $(docker compose version --short) available"
 
 # ══════════════════════════════════════════════════════════════
-# 5. NVIDIA Container Toolkit
+# 5. NVIDIA Container Toolkit (Linux only — needed for opensandbox/comfyui)
 # ══════════════════════════════════════════════════════════════
-step "NVIDIA Container Toolkit"
-if ! pkg_installed nvidia-container-toolkit; then
-    info "Installing NVIDIA Container Toolkit..."
-    case "$DISTRO_FAMILY" in
-        debian)
-            curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey \
-                | gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
-            curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list \
-                | sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' \
-                > /etc/apt/sources.list.d/nvidia-container-toolkit.list
-            ;;
-        fedora)
-            curl -s -L https://nvidia.github.io/libnvidia-container/stable/rpm/nvidia-container-toolkit.repo \
-                | tee /etc/yum.repos.d/nvidia-container-toolkit.repo > /dev/null
-            ;;
-        arch)
-            # nvidia-container-toolkit is in the AUR or extra repo
-            info "On Arch, install nvidia-container-toolkit from AUR if not in repos"
-            ;;
-        suse)
-            zypper --non-interactive addrepo https://nvidia.github.io/libnvidia-container/stable/rpm/nvidia-container-toolkit.repo 2>/dev/null || true
-            ;;
-    esac
-    pkg_update
-    pkg_install nvidia-container-toolkit
-    nvidia-ctk runtime configure --runtime=docker
-    systemctl restart docker
-    success "NVIDIA Container Toolkit installed"
-else
-    success "NVIDIA Container Toolkit already present"
-fi
-
-# ══════════════════════════════════════════════════════════════
-# 5b. vLLM — GPU-aware model + context auto-tuning
-# ══════════════════════════════════════════════════════════════
-# Detects GPU VRAM and writes hardware-appropriate VLLM_* values to .env.
-# vLLM itself runs as the `vllm` service in docker-compose.gpu.yml — those
-# defaults are safe baselines, .env overrides them with per-host tuning.
-#
-# Tier values are tuned for stable multi-turn agentic tool use. Agents need
-# enough context to read several files plus accumulate a long tool history
-# without blowing the window. The 22 GB tier in particular is the sweet
-# spot for 3090 / 3090 Ti / 4080 — verified live on 2026-04-07 with the
-# 9B AWQ model at 65 K context and max_num_seqs 4.
-
-step "vLLM model selection (auto-tuned to GPU VRAM)"
-
-VLLM_SKIP=false
-GPU_VRAM_MB=0
-
-if command -v nvidia-smi &>/dev/null; then
-    GPU_VRAM_MB=$(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits 2>/dev/null | head -1 | tr -d ' ')
-    if [[ -z "$GPU_VRAM_MB" || "$GPU_VRAM_MB" -eq 0 ]]; then
-        warn "nvidia-smi found but could not query VRAM — skipping vLLM"
-        VLLM_SKIP=true
+HAS_NVIDIA_GPU=false
+if [[ "$HOST_OS" == "linux" ]]; then
+    step "NVIDIA Container Toolkit"
+    if command -v nvidia-smi &>/dev/null; then
+        HAS_NVIDIA_GPU=true
+        if ! pkg_installed nvidia-container-toolkit; then
+            info "Installing NVIDIA Container Toolkit..."
+            case "$DISTRO_FAMILY" in
+                debian)
+                    curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey \
+                        | gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
+                    curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list \
+                        | sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' \
+                        > /etc/apt/sources.list.d/nvidia-container-toolkit.list
+                    ;;
+                fedora)
+                    curl -s -L https://nvidia.github.io/libnvidia-container/stable/rpm/nvidia-container-toolkit.repo \
+                        | tee /etc/yum.repos.d/nvidia-container-toolkit.repo > /dev/null
+                    ;;
+                arch)
+                    info "On Arch, install nvidia-container-toolkit from AUR if not in repos"
+                    ;;
+                suse)
+                    zypper --non-interactive addrepo https://nvidia.github.io/libnvidia-container/stable/rpm/nvidia-container-toolkit.repo 2>/dev/null || true
+                    ;;
+            esac
+            pkg_update
+            pkg_install nvidia-container-toolkit
+            nvidia-ctk runtime configure --runtime=docker
+            systemctl restart docker
+            success "NVIDIA Container Toolkit installed"
+        else
+            success "NVIDIA Container Toolkit already present"
+        fi
     else
-        GPU_VRAM_GB=$(( GPU_VRAM_MB / 1024 ))
-        info "Detected GPU VRAM: ${GPU_VRAM_MB} MiB (~${GPU_VRAM_GB} GB)"
+        info "No NVIDIA GPU detected — skipping NVIDIA Container Toolkit"
     fi
 else
-    warn "nvidia-smi not found — skipping vLLM"
-    VLLM_SKIP=true
+    step "GPU detection (macOS)"
+    info "macOS uses Ollama with Metal acceleration — no NVIDIA toolkit needed"
 fi
 
-if [[ "$VLLM_SKIP" == "false" ]]; then
-    # Pick model + KV cache budget by VRAM tier.
-    #
-    # Total KV cache budget is roughly (GPU mem - model weights - activations).
-    # Doubling max_model_len at constant max_num_seqs doubles the per-sequence
-    # cache. We deliberately keep max_num_seqs low (2-4) for the smaller
-    # tiers because realistic agent workloads are 1-2 concurrent sessions.
-    if (( GPU_VRAM_MB >= 40960 )); then
-        # ≥ 40 GB (A6000, L40, etc.) — full 27B FP16, generous context.
-        VLLM_MODEL="Qwen/Qwen3.5-27B"
-        VLLM_MAX_MODEL_LEN=65536
-        VLLM_MAX_NUM_SEQS=8
-        VLLM_GPU_MEM_UTIL=0.92
-        VLLM_QUANTIZATION=""
-    elif (( GPU_VRAM_MB >= 20480 )); then
-        # ≥ 20 GB (3090, 3090 Ti, 4080, 4090, A5000, L4) — 9B AWQ at 65 K.
-        # Verified on 3090 Ti (~22 GB reported as 23028 MiB). Halving
-        # max_num_seqs from 8 to 4 keeps total KV cache footprint constant
-        # while doubling per-sequence context.
-        VLLM_MODEL="QuantTrio/Qwen3.5-9B-AWQ"
-        VLLM_MAX_MODEL_LEN=65536
-        VLLM_MAX_NUM_SEQS=4
-        VLLM_GPU_MEM_UTIL=0.92
-        VLLM_QUANTIZATION="awq"
-    elif (( GPU_VRAM_MB >= 12288 )); then
-        # 12-19 GB (3060 12 GB, 4070, etc.) — 9B AWQ at 32 K.
-        # Same model as the 20 GB tier but smaller context to fit smaller
-        # KV cache. Multi-file investigation tasks may still hit the limit
-        # — agents are taught to read partial files via prompt guidance.
-        VLLM_MODEL="QuantTrio/Qwen3.5-9B-AWQ"
-        VLLM_MAX_MODEL_LEN=32768
-        VLLM_MAX_NUM_SEQS=4
-        VLLM_GPU_MEM_UTIL=0.92
-        VLLM_QUANTIZATION="awq"
-    elif (( GPU_VRAM_MB >= 8192 )); then
-        # 8-11 GB (3060 8 GB, 4060) — 4B model with small context.
-        VLLM_MODEL="Qwen/Qwen3.5-4B-Instruct"
-        VLLM_MAX_MODEL_LEN=16384
-        VLLM_MAX_NUM_SEQS=2
-        VLLM_GPU_MEM_UTIL=0.88
-        VLLM_QUANTIZATION=""
+# ══════════════════════════════════════════════════════════════
+# 5b. Ollama — LLM backend (replaces vLLM)
+# ══════════════════════════════════════════════════════════════
+# Ollama runs natively on the host (not in Docker) and provides an
+# OpenAI-compatible API at port 11434. The vibe agent's backend code
+# works with it unmodified. Ollama uses CUDA on Linux (if available)
+# and Metal on macOS (Apple Silicon).
+
+step "Ollama LLM backend"
+
+OLLAMA_SKIP=false
+
+# Install Ollama if not present
+if ! command -v ollama &>/dev/null; then
+    info "Installing Ollama..."
+    if [[ "$HOST_OS" == "darwin" ]]; then
+        brew install ollama
     else
-        warn "GPU VRAM (${GPU_VRAM_MB} MiB) too low for vLLM — skipping"
-        VLLM_SKIP=true
+        curl -fsSL https://ollama.com/install.sh | sh
     fi
+    success "Ollama installed"
+else
+    success "Ollama already present ($(ollama --version 2>/dev/null || echo 'unknown'))"
 fi
 
-if [[ "$VLLM_SKIP" == "false" ]]; then
-    # Tool-call parser MUST match the model family. Wrong parser → vLLM
-    # silently swallows tool calls and DeerFlow agents produce empty
-    # responses. See vibe-stack-vllm-migration memory for the post-mortem.
-    case "$VLLM_MODEL" in
-        Qwen/Qwen3*|qwen/Qwen3*|*Qwen3.5*|*qwen3.5*|*qwen3-*)
-            VLLM_TOOL_CALL_PARSER="qwen3_xml"
-            ;;
-        *)
-            VLLM_TOOL_CALL_PARSER="hermes"
-            ;;
-    esac
+# Start Ollama service
+if [[ "$HOST_OS" == "darwin" ]]; then
+    if ! pgrep -q ollama; then
+        brew services start ollama 2>/dev/null || ollama serve &>/dev/null &
+        sleep 2
+    fi
+    success "Ollama service running"
+else
+    systemctl enable --now ollama 2>/dev/null || true
+    success "Ollama service enabled"
+fi
 
-    success "Selected vLLM tuning:"
-    success "  model              = ${VLLM_MODEL}"
-    success "  max_model_len      = ${VLLM_MAX_MODEL_LEN} tokens"
-    success "  max_num_seqs       = ${VLLM_MAX_NUM_SEQS}"
-    success "  gpu_memory_util    = ${VLLM_GPU_MEM_UTIL}"
-    success "  quantization       = ${VLLM_QUANTIZATION:-none}"
-    success "  tool_call_parser   = ${VLLM_TOOL_CALL_PARSER}"
+# Detect available memory for model selection
+AVAILABLE_MEM_MB=0
+if [[ "$HOST_OS" == "darwin" ]]; then
+    # macOS: unified memory via sysctl
+    TOTAL_BYTES=$(sysctl -n hw.memsize 2>/dev/null || echo 0)
+    AVAILABLE_MEM_MB=$(( TOTAL_BYTES / 1048576 ))
+elif [[ "$HAS_NVIDIA_GPU" == "true" ]]; then
+    # Linux with NVIDIA GPU: use VRAM
+    AVAILABLE_MEM_MB=$(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits 2>/dev/null | head -1 | tr -d ' ')
+else
+    # Linux without GPU: use system RAM
+    AVAILABLE_MEM_MB=$(free -m 2>/dev/null | awk '/^Mem:/{print $2}')
+fi
 
-    # Pre-pull the vLLM container image (skip if already present)
-    if docker image inspect vllm/vllm-openai:latest &>/dev/null; then
-        success "vLLM Docker image already present — skipping pull"
+AVAILABLE_MEM_GB=$(( AVAILABLE_MEM_MB / 1024 ))
+info "Available memory for LLM: ${AVAILABLE_MEM_MB} MiB (~${AVAILABLE_MEM_GB} GB)"
+
+# Model selection by memory tier
+if (( AVAILABLE_MEM_MB >= 40960 )); then
+    OLLAMA_MODEL="qwen3.5:27b"
+    info "Tier: >= 40 GB — full 27B model"
+elif (( AVAILABLE_MEM_MB >= 20480 )); then
+    OLLAMA_MODEL="qwen3.5:9b"
+    info "Tier: >= 20 GB — 9B model (sweet spot)"
+elif (( AVAILABLE_MEM_MB >= 12288 )); then
+    OLLAMA_MODEL="qwen3.5:9b"
+    info "Tier: 12-19 GB — 9B model (reduced context)"
+elif (( AVAILABLE_MEM_MB >= 8192 )); then
+    OLLAMA_MODEL="qwen3.5:4b"
+    info "Tier: 8-11 GB — 4B model"
+else
+    warn "Available memory (${AVAILABLE_MEM_MB} MiB) too low for local LLM"
+    warn "Configure OPENAI_API_KEY or ANTHROPIC_API_KEY in .env for cloud inference"
+    OLLAMA_SKIP=true
+fi
+
+if [[ "$OLLAMA_SKIP" == "false" ]]; then
+    success "Selected model: ${OLLAMA_MODEL}"
+
+    # Pre-pull the model
+    if ollama list 2>/dev/null | grep -q "${OLLAMA_MODEL%%:*}"; then
+        success "Model ${OLLAMA_MODEL} already pulled"
     else
-        info "Pulling vllm/vllm-openai:latest (this is ~20GB, may take a while)..."
-        docker pull vllm/vllm-openai:latest
-        success "vLLM Docker image pulled"
+        info "Pulling ${OLLAMA_MODEL} (this may take a few minutes on first run)..."
+        ollama pull "$OLLAMA_MODEL"
+        success "Model ${OLLAMA_MODEL} pulled"
     fi
 
-    # Persist all VLLM_* values to .env so docker-compose.gpu.yml picks
-    # them up at startup. Defaults in docker-compose.gpu.yml are safe
-    # baselines (32 K context, 8 seqs); these env values override them
-    # with hardware-specific tuning.
-    _update_env_var "VLLM_MODEL" "${VLLM_MODEL}"
-    _update_env_var "VLLM_MAX_MODEL_LEN" "${VLLM_MAX_MODEL_LEN}"
-    _update_env_var "VLLM_MAX_NUM_SEQS" "${VLLM_MAX_NUM_SEQS}"
-    _update_env_var "VLLM_GPU_MEM_UTIL" "${VLLM_GPU_MEM_UTIL}"
-    _update_env_var "VLLM_TOOL_CALL_PARSER" "${VLLM_TOOL_CALL_PARSER}"
-    if [[ -n "${VLLM_QUANTIZATION:-}" ]]; then
-        _update_env_var "VLLM_QUANTIZATION" "${VLLM_QUANTIZATION}"
-    fi
-    success "vLLM tuning written to .env"
+    _update_env_var "OLLAMA_MODEL" "${OLLAMA_MODEL}"
+    _update_env_var "VIBE_BACKEND_HOST" "host.docker.internal"
+    _update_env_var "VIBE_BACKEND_PORT" "11434"
 
-    # Wire MiroFish to use the same model as the main pipeline
+    # MiroFish follows the same model
     if [ -z "${MIROFISH_LLM_MODEL:-}" ]; then
-        _update_env_var "MIROFISH_LLM_MODEL" "${VLLM_MODEL}"
-        success "MIROFISH_LLM_MODEL=${VLLM_MODEL} (follows VLLM_MODEL)"
+        _update_env_var "MIROFISH_LLM_MODEL" "${OLLAMA_MODEL}"
+        _update_env_var "MIROFISH_LLM_API_URL" "http://host.docker.internal:11434/v1"
+        success "MIROFISH_LLM_MODEL=${OLLAMA_MODEL} (follows OLLAMA_MODEL)"
     fi
 else
-    warn "vLLM will not be configured — no suitable GPU detected"
+    warn "No local LLM configured — agents will need cloud API keys"
 fi
 
 # ── Set COMPOSE_FILE based on GPU availability ─────────────────
-if [ -n "${VLLM_MODEL:-}" ]; then
+# GPU compose is only needed for opensandbox/comfyui (not for LLM inference).
+if [[ "$HAS_NVIDIA_GPU" == "true" ]]; then
     COMPOSE_FILE="docker-compose.yml:docker-compose.infra.yml:docker-compose.gpu.yml"
     _update_env_var "COMPOSE_FILE" "$COMPOSE_FILE"
     export COMPOSE_FILE
-    info "Compose profile: full stack (core + infra + gpu)"
+    info "Compose profile: full stack (core + infra + gpu sandbox)"
 else
     COMPOSE_FILE="docker-compose.yml:docker-compose.infra.yml"
     _update_env_var "COMPOSE_FILE" "$COMPOSE_FILE"
     export COMPOSE_FILE
-    info "Compose profile: cloud only (core + infra, no GPU)"
+    info "Compose profile: standard (core + infra, no GPU sandbox)"
 fi
 
 # ══════════════════════════════════════════════════════════════
@@ -980,7 +958,7 @@ success "All images ready"
 # ══════════════════════════════════════════════════════════════
 # 13. Start stack (staged for reliable startup)
 # ══════════════════════════════════════════════════════════════
-# COMPOSE_FILE was set in Phase 5b and exported; docker compose
+# COMPOSE_FILE was set in step 5b and exported; docker compose
 # reads it automatically so no -f flags are needed.
 
 step "Starting stack"
@@ -1033,10 +1011,10 @@ if [[ "$COMPOSE_FILE" == *"infra"* ]]; then
 fi
 
 if [[ "$COMPOSE_FILE" == *"gpu"* ]]; then
-    info "Starting stack — GPU services (model download may take several minutes on first run)..."
-    docker compose up -d vllm opensandbox
+    info "Starting stack — GPU services (opensandbox + comfyui)..."
+    docker compose up -d opensandbox
     info "Waiting for GPU services to become healthy..."
-    wait_healthy 300 vllm opensandbox
+    wait_healthy 300 opensandbox
 fi
 
 info "Starting stack — Tailscale..."
@@ -1210,8 +1188,9 @@ printf "\n${GREEN}════════════════════�
 printf "${GREEN}  Vibe Stack 2.0 deployment complete!${NC}\n"
 printf "${GREEN}══════════════════════════════════════════════════════${NC}\n\n"
 printf "  Paperclip:   ${BLUE}https://${TAILSCALE_HOSTNAME}${NC}\n"
-if [[ "${VLLM_SKIP:-true}" == "false" ]]; then
-    printf "  vLLM model:  ${BLUE}${VLLM_MODEL}${NC}\n"
+if [[ "${OLLAMA_SKIP:-true}" == "false" ]]; then
+    printf "  Ollama model: ${BLUE}${OLLAMA_MODEL}${NC}\n"
+    printf "  Ollama API:   ${BLUE}http://localhost:11434${NC}\n"
 fi
 printf "\n"
 
