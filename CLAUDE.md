@@ -22,13 +22,13 @@ Deterministic state machine: **Router → Skill Loader → Spec Builder → Spec
 
 | System | Files | Purpose |
 |--------|-------|---------|
-| **LLM Backend** | `agents/llm_backend.py`, `vibe/backends/` | vLLM (default, local), OpenAI, Anthropic. BackendPool for multi-backend failover/load balancing |
+| **LLM Backend** | `agents/llm_backend.py`, `vibe/backends/` | Ollama (default, local), vLLM (optional/legacy), OpenAI, Anthropic. BackendPool for multi-backend failover/load balancing |
 | **Backend Pool** | `agents/backend_pool.py` | Multi-backend failover, round-robin, least-loaded strategies. Per-backend circuit breaker (closed→open→half-open) |
 | **Storage Layer** | `agents/storage/` | Pluggable storage abstraction: SQLite (local dev) or PostgreSQL (multi-node). Redis for caching + distributed locks |
 | **Tool System** | `agents/tools/` | 5 default tools + extended dev/SEO tools. OpenSandbox or subprocess execution. |
 | **Skill Security** | `agents/skill_security.py` | Name/path/content validation, AST+regex scanning, runtime tool permission enforcement, SHA-256 integrity |
 | **Skill Reinforcement** | `agents/skill_generator.py`, `agents/skill_outcome_store.py`, `agents/skill_cleanup.py` | Closed-loop: outcomes recorded → RAG retrieval → generation → self-refinement for low scores |
-| **Simulation** | `agents/tools/mirofish_tool.py` | MiroFish multi-agent simulation via external service. Complexity-based LLM routing (local vLLM or cloud). Invoked selectively by agents via MiroFishSimulation tool |
+| **Simulation** | `agents/tools/mirofish_tool.py` | MiroFish multi-agent simulation via external service. Complexity-based LLM routing (local Ollama or cloud). Invoked selectively by agents via MiroFishSimulation tool |
 | **OCR** | `agents/tools/ocr_tool.py` | PaddleOCR text extraction, layout analysis, table parsing from images and PDFs. CPU-only Docker service on port 8868 |
 | **Session Store** | `agents/session_store.py` | SQLite + WAL. Daemon-mode only. TTL-based cleanup. |
 | **Messenger Client** | `agents/messenger_client.py` | MattermostClient + SlackClient. Used by daemon and API key prompting. |
@@ -49,7 +49,7 @@ Deterministic state machine: **Router → Skill Loader → Spec Builder → Spec
 Multi-agent prediction is handled by an external MiroFish service, invoked via the `MiroFishSimulation` tool. Agents use it selectively for architecture decisions, deployment risk assessment, and integration conflict detection.
 
 **Complexity-based LLM routing:**
-- Simple simulations (<40 agents, <20 iterations) → local vLLM (free)
+- Simple simulations (<40 agents, <20 iterations) → local Ollama (free)
 - Complex simulations → cloud API (if configured, else local with warning)
 
 **Infrastructure:** MiroFish service (port 5001) + self-hosted Zep CE (pgvector + Neo4j + Graphiti) for agent memory.
@@ -105,7 +105,7 @@ Configuration via `VIBE_FALLBACK_URLS` (comma-separated host:port), `VIBE_BACKEN
 
 | Backend | File | API | Auth |
 |---------|------|-----|------|
-| **vLLM** | `vllm.py` | OpenAI-compatible `/v1/chat/completions` | None (local) |
+| **vLLM** (optional/legacy) | `vllm.py` | OpenAI-compatible `/v1/chat/completions` | None (local) |
 | **OpenAI** | `openai_backend.py` | OpenAI API | `OPENAI_API_KEY` |
 | **Anthropic** | `anthropic_backend.py` | Anthropic Messages API | `ANTHROPIC_API_KEY` |
 
@@ -246,9 +246,9 @@ tests/                     # ~3400 tests across 91 files
 
 - **Prompt-based adapters only** — LoRA infrastructure was removed (never operational). Task specialization is via system prompts + skills.
 - **Defense-in-depth for skills** — AST+regex content scanning, runtime tool permission enforcement, SHA-256 integrity, container isolation. Each layer is independent.
-- **Local-first LLM** — vLLM is the default and production-tested backend. OpenAI and Anthropic cloud backends are implemented for hybrid/fallback deployment.
+- **Local-first LLM** — Ollama is the default local backend (runs on the host, accessed via `host.docker.internal:11434`). vLLM remains available as an optional/legacy backend. OpenAI and Anthropic cloud backends are implemented for hybrid/fallback deployment.
 - **Paperclip owns orchestration** — No standalone K8s manifests. Paperclip handles scheduling, pod lifecycle, environment injection.
 - **Per-agent skill isolation** — Each agent has its own skill volume. No cross-agent skill sharing by design.
-- **Simulation is external** — MiroFish runs as a Docker service, invoked selectively via the MiroFishSimulation tool. Complexity routing sends simple sims to local vLLM and complex sims to cloud APIs.
+- **Simulation is external** — MiroFish runs as a Docker service, invoked selectively via the MiroFishSimulation tool. Complexity routing sends simple sims to local Ollama and complex sims to cloud APIs.
 - **Storage is pluggable** — SQLite for local dev, PostgreSQL + Redis for production multi-node. All stores accept optional `storage_backend` param. Switch via env var, zero code changes.
 - **Backend pool for resilience** — Multi-backend failover with per-backend circuit breakers. Transparent to the adapter layer — specialists don't know which backend served their request.
