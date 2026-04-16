@@ -123,7 +123,7 @@ class TestServiceRegistry:
     EXPECTED_SERVICES = [
         "mirofish", "paddleocr", "searxng", "playwright",
         "penpot-backend", "penpot-frontend", "minio", "gitea",
-        "vllm", "prometheus", "grafana",
+        "ollama", "prometheus", "grafana",
     ]
 
     def test_expected_services_present(self):
@@ -162,9 +162,9 @@ class TestNormalizeResponse:
 
     def test_http_error_sets_error_status(self):
         raw = {"error": "internal"}
-        result = normalize_response("vllm", raw, 500)
+        result = normalize_response("ollama", raw, 500)
         assert result["status"] == "error"
-        assert result["service"] == "vllm"
+        assert result["service"] == "ollama"
 
     def test_http_4xx_sets_error_status(self):
         result = normalize_response("gitea", {"msg": "not found"}, 404)
