@@ -203,6 +203,8 @@ markers = [
     "integration: marks tests as integration tests",
     "unit: marks tests as unit tests",
     "e2e: marks tests as end-to-end tests requiring live Paperclip + agents (deselect with '-m \"not e2e\"')",
+    "infra: marks tests as infrastructure health checks (Layer 1 — service probes, DNS, docker health)",
+    "pipeline: marks tests as pipeline E2E tests requiring full agent workflow",
 ]
 
 [tool.coverage.run]

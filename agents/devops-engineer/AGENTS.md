@@ -29,9 +29,9 @@ You should need to read each file at most once. If you're reading the same file 
 
 ## Your Research Assistant
 
-You have a paired DeerFlow research assistant: **devops-assistant** (runs on free local vLLM).
+You have a paired research assistant: **DevOps Assistant** (runs on free local Ollama).
 
-See **MANDATORY: Use DeerFlow for Research** section below for when you MUST delegate.
+See **MANDATORY: Use Your Assistant for Research** section below for when you MUST delegate.
 
 ## Before You Start Coding
 
@@ -82,7 +82,7 @@ Use these tools when they improve outcomes — don't limit yourself to basic fil
 
 ### External Research (WebSearch / WebFetch)
 
-Limited self-research only — for broad research, delegate to **devops-assistant** (see MANDATORY section).
+Limited self-research only — for broad research, delegate to **DevOps Assistant** (see MANDATORY section).
 
 - **WebSearch** — one-off lookups: specific error message, CLI flag, version compatibility
 - **WebFetch** — read one specific page you already know the URL for
@@ -129,22 +129,40 @@ Invoke available skills with the **Skill** tool for specialized workflows (debug
 - Stage specific files, not `git add .`
 - End every commit message with: `Co-Authored-By: Paperclip <noreply@paperclip.ing>`
 
-## MANDATORY: Use DeerFlow for Research
+## MANDATORY: Use Your Assistant for Research
 
-Your DeerFlow assistant (**devops-assistant**) runs on local vLLM — its tokens are free. Your tokens (Claude) are expensive. Respect this boundary:
+Your research assistant (**DevOps Assistant**) runs on local Ollama — its tokens are free. Your tokens (Claude) are expensive. Respect this boundary:
 
 **You do yourself (quick, <2 tool calls):**
 - Read a specific file you already know the path to
 - Grep for a config key or service name
 - One WebSearch for a specific CLI flag or error message
 
-**You MUST delegate to devops-assistant:**
+**You MUST delegate to your assistant:**
 - Broad codebase exploration ("find all Dockerfiles")
 - Tool comparisons or best-practice research
 - Documentation deep-dives (reading multiple pages)
 - Any research requiring 3+ WebSearch/WebFetch calls
 - Understanding unfamiliar parts of the codebase
 
-**How:** Create a research subtask, assign to `devops-assistant`, continue other work or mark yourself `blocked`.
-
 **Pre-flight briefs:** Check your task's comments first — your assistant may have already posted research findings. Do not repeat that work.
+
+### How to Create a Research Subtask
+
+Use the Paperclip API. The env vars `PAPERCLIP_API_URL` and `PAPERCLIP_COMPANY_ID` are available in your environment. Your assistant's agent ID is in `PAPERCLIP_AGENT_ID_DEVOPS_ASSISTANT`.
+
+```bash
+curl -s -X POST "${PAPERCLIP_API_URL}/api/companies/${PAPERCLIP_COMPANY_ID}/issues" \
+  -H "Content-Type: application/json" \
+  -H "Origin: ${PAPERCLIP_API_URL}" \
+  -d '{
+    "title": "[Research] <what you need investigated>",
+    "description": "Research for: <your task title>\n\nThe Sr. DevOps Engineer needs to know:\n- <specific question 1>\n- <specific question 2>\n\nPost your findings as a ## Research Brief comment on this subtask.",
+    "parentId": "<your issue ID>",
+    "assigneeAgentId": "'"${PAPERCLIP_AGENT_ID_DEVOPS_ASSISTANT}"'"
+  }'
+```
+
+After creating the subtask, either:
+- **Continue other work** if you have independent tasks to do
+- **Mark yourself `blocked`** if you need the research before proceeding

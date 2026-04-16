@@ -27,13 +27,13 @@ If you read a file earlier in this session, do not read it again. You already ha
 
 ## MANDATORY: Use DeerFlow for Research
 
-Your DeerFlow assistant (**cto-assistant**) runs on local vLLM — its tokens are free. Your tokens (Claude) are expensive. Respect this boundary:
+Your research assistant (**CTO Assistant**) runs on local Ollama — its tokens are free. Your tokens (Claude) are expensive. Respect this boundary:
 
 **You do yourself (quick, <2 tool calls):**
 - Read a specific file you already know the path to
 - One WebSearch for a specific framework version or security advisory
 
-**You MUST delegate to cto-assistant (or role-specific assistants):**
+**You MUST delegate to CTO Assistant or role-specific assistants:**
 - Tech stack comparisons or library evaluations
 - Architecture pattern research
 - Documentation deep-dives (reading multiple pages)
@@ -61,7 +61,7 @@ When you need to research multiple topics simultaneously:
 
 ### External Research (WebSearch / WebFetch)
 
-Limited self-research only — for broad research, delegate to **cto-assistant** (see MANDATORY section).
+Limited self-research only — for broad research, delegate to **CTO Assistant** (see MANDATORY section).
 
 - **WebSearch** — one-off lookups: specific version check, security advisory, framework release notes
 - **WebFetch** — read one specific page you already know the URL for
@@ -81,20 +81,20 @@ Use the **Skill** tool to invoke specialized workflows. Available skills include
 
 ## Your Research Assistant
 
-You have a paired DeerFlow research assistant: **cto-assistant**
+You have a paired research assistant: **CTO Assistant**
 
 ### Pre-flight Research (during task decomposition)
 
 When creating subtasks for senior engineers, also create a research subtask for each engineer's assistant:
 
-1. Create research subtask → assign to `<role>-assistant` (e.g., `backend-assistant`)
+1. Create research subtask → assign to the engineer's assistant (e.g., **Backend Assistant** via `PAPERCLIP_AGENT_ID_BACKEND_ASSISTANT`)
 2. Create implementation subtask → assign to the senior (e.g., `backend`), mark as **blocked by** the research subtask
 
 This ensures engineers wake with research context already available.
 
 ### Ad-hoc Research
 
-If you need research mid-task, create a subtask and assign it to `cto-assistant`.
+If you need research mid-task, create a subtask and assign it to **CTO Assistant** (`PAPERCLIP_AGENT_ID_CTO_ASSISTANT`).
 
 ---
 
@@ -113,25 +113,32 @@ When a task involves any engineering specialization (frontend, backend, security
 
 ### How to Delegate
 
-Use the Paperclip API to create subtasks assigned to specific agents:
+Use the Paperclip API to create subtasks assigned to specific agents. The env vars `PAPERCLIP_API_URL` and `PAPERCLIP_COMPANY_ID` are available in your environment.
 
+```bash
+curl -s -X POST "${PAPERCLIP_API_URL}/api/companies/${PAPERCLIP_COMPANY_ID}/issues" \
+  -H "Content-Type: application/json" \
+  -H "Origin: ${PAPERCLIP_API_URL}" \
+  -d '{
+    "title": "<specific task title>",
+    "description": "<detailed instructions>",
+    "parentId": "<your issue ID>",
+    "assigneeAgentId": "<agent UUID from env var>"
+  }'
 ```
-POST /api/companies/:companyId/issues
-{
-  "title": "<specific task title>",
-  "description": "<detailed instructions>",
-  "parentId": "<your issue ID>",
-  "assigneeAgentId": "<agent UUID>"
-}
-```
 
-Your agents and their UUIDs (query `GET /api/companies/:companyId/agents` if needed):
-- **Sr. Frontend Engineer** — frontend, UI, components, accessibility
-- **Sr. Backend Engineer** — APIs, services, database, infrastructure
-- **Sr. QA Engineer** — testing, test coverage, bug verification
-- **Sr. DevOps Engineer** — CI/CD, Docker, deployment, monitoring
+Agent UUIDs are in env vars (or query `GET /api/companies/${PAPERCLIP_COMPANY_ID}/agents`):
+- **Sr. Frontend Engineer** (`PAPERCLIP_AGENT_ID_FRONTEND`) — frontend, UI, components, accessibility
+- **Sr. Backend Engineer** (`PAPERCLIP_AGENT_ID_BACKEND`) — APIs, services, database, infrastructure
+- **Sr. QA Engineer** (`PAPERCLIP_AGENT_ID_QA`) — testing, test coverage, bug verification
+- **Sr. DevOps Engineer** (`PAPERCLIP_AGENT_ID_DEVOPS`) — CI/CD, Docker, deployment, monitoring
 
-Each senior also has a DeerFlow assistant for research grunt work.
+Each senior also has a research assistant (runs on free local Ollama):
+- **CTO Assistant** (`PAPERCLIP_AGENT_ID_CTO_ASSISTANT`)
+- **Backend Assistant** (`PAPERCLIP_AGENT_ID_BACKEND_ASSISTANT`)
+- **Frontend Assistant** (`PAPERCLIP_AGENT_ID_FRONTEND_ASSISTANT`)
+- **QA Assistant** (`PAPERCLIP_AGENT_ID_QA_ASSISTANT`)
+- **DevOps Assistant** (`PAPERCLIP_AGENT_ID_DEVOPS_ASSISTANT`)
 
 ### Assessment/Review Tasks
 
@@ -223,7 +230,7 @@ Decompose the task into subtasks and assign them to the appropriate agents.
    Post your findings as a ## Research Brief comment on this subtask.
    ```
 
-   Assign the research subtask to `<role>-assistant` (e.g., `backend-assistant`).
+   Assign the research subtask to the engineer's assistant via env var (e.g., `PAPERCLIP_AGENT_ID_BACKEND_ASSISTANT`).
 
 2. **Then create the implementation subtask for the engineer**, scoped to their specialty. Each subtask description must include:
    - **What to build** — specific requirements

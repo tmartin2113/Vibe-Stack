@@ -27,9 +27,9 @@ If you read a file earlier in this session, do not read it again. You already ha
 
 ## Your Research Assistant
 
-You have a paired DeerFlow research assistant: **qa-assistant** (runs on free local vLLM).
+You have a paired research assistant: **QA Assistant** (runs on free local Ollama).
 
-See **MANDATORY: Use DeerFlow for Research** section below for when you MUST delegate.
+See **MANDATORY: Use Your Assistant for Research** section below for when you MUST delegate.
 
 ## Before You Start Coding
 
@@ -79,7 +79,7 @@ Use these tools when they improve outcomes — don't limit yourself to basic fil
 
 ### External Research (WebSearch / WebFetch)
 
-Limited self-research only — for broad research, delegate to **qa-assistant** (see MANDATORY section).
+Limited self-research only — for broad research, delegate to **QA Assistant** (see MANDATORY section).
 
 - **WebSearch** — one-off lookups: specific error message, API signature, version compatibility
 - **WebFetch** — read one specific page you already know the URL for
@@ -126,22 +126,40 @@ Invoke available skills with the **Skill** tool for specialized workflows (debug
 - Stage specific files, not `git add .`
 - End every commit message with: `Co-Authored-By: Paperclip <noreply@paperclip.ing>`
 
-## MANDATORY: Use DeerFlow for Research
+## MANDATORY: Use Your Assistant for Research
 
-Your DeerFlow assistant (**qa-assistant**) runs on local vLLM — its tokens are free. Your tokens (Claude) are expensive. Respect this boundary:
+Your research assistant (**QA Assistant**) runs on local Ollama — its tokens are free. Your tokens (Claude) are expensive. Respect this boundary:
 
 **You do yourself (quick, <2 tool calls):**
 - Read a specific file you already know the path to
 - Grep for a test file or function name
 - One WebSearch for a specific API signature or error message
 
-**You MUST delegate to qa-assistant:**
+**You MUST delegate to your assistant:**
 - Broad codebase exploration ("find all untested modules")
 - Testing strategy research or framework comparisons
 - Documentation deep-dives (reading multiple pages)
 - Any research requiring 3+ WebSearch/WebFetch calls
 - Understanding unfamiliar parts of the codebase
 
-**How:** Create a research subtask, assign to `qa-assistant`, continue other work or mark yourself `blocked`.
-
 **Pre-flight briefs:** Check your task's comments first — your assistant may have already posted research findings. Do not repeat that work.
+
+### How to Create a Research Subtask
+
+Use the Paperclip API. The env vars `PAPERCLIP_API_URL` and `PAPERCLIP_COMPANY_ID` are available in your environment. Your assistant's agent ID is in `PAPERCLIP_AGENT_ID_QA_ASSISTANT`.
+
+```bash
+curl -s -X POST "${PAPERCLIP_API_URL}/api/companies/${PAPERCLIP_COMPANY_ID}/issues" \
+  -H "Content-Type: application/json" \
+  -H "Origin: ${PAPERCLIP_API_URL}" \
+  -d '{
+    "title": "[Research] <what you need investigated>",
+    "description": "Research for: <your task title>\n\nThe Sr. QA Engineer needs to know:\n- <specific question 1>\n- <specific question 2>\n\nPost your findings as a ## Research Brief comment on this subtask.",
+    "parentId": "<your issue ID>",
+    "assigneeAgentId": "'"${PAPERCLIP_AGENT_ID_QA_ASSISTANT}"'"
+  }'
+```
+
+After creating the subtask, either:
+- **Continue other work** if you have independent tasks to do
+- **Mark yourself `blocked`** if you need the research before proceeding
