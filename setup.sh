@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # setup.sh — Vibe Stack 2.0 (Paperclip + DeerFlow Agent Network)
-# One-shot first-time deployment. Run as root on a fresh Linux system.
-# Supports: Ubuntu/Debian, Fedora/RHEL/CentOS/Rocky, Arch/Manjaro, openSUSE
+# One-shot first-time deployment. Run as root (Linux) or normally (macOS).
+# Supports: Ubuntu/Debian, Fedora/RHEL/CentOS/Rocky, Arch/Manjaro, openSUSE, macOS
 # Idempotent — safe to re-run.
 
 set -euo pipefail
@@ -17,34 +17,54 @@ TOTAL_STEPS=24
 CURRENT_STEP=0
 step() { CURRENT_STEP=$((CURRENT_STEP + 1)); printf "\n${BOLD}[Step %d/%d]${NC} ${BLUE}%s${NC}\n" "$CURRENT_STEP" "$TOTAL_STEPS" "$*"; }
 
-# ── Distro detection ──────────────────────────────────────────
-if [[ -f /etc/os-release ]]; then
-    . /etc/os-release
-    DISTRO_ID="${ID:-unknown}"
-    DISTRO_FAMILY="${ID_LIKE:-$DISTRO_ID}"
-else
-    error "Cannot detect distribution — /etc/os-release not found"
-fi
-
-# Normalize to family
-case "$DISTRO_ID" in
-    ubuntu|debian|pop|linuxmint|elementary|zorin)   DISTRO_FAMILY="debian" ;;
-    fedora|rhel|centos|rocky|alma|nobara)           DISTRO_FAMILY="fedora" ;;
-    arch|manjaro|endeavouros|garuda)                 DISTRO_FAMILY="arch" ;;
-    opensuse*|sles)                                  DISTRO_FAMILY="suse" ;;
-    *)
-        # Check ID_LIKE for derivatives
-        case "$DISTRO_FAMILY" in
-            *debian*|*ubuntu*)  DISTRO_FAMILY="debian" ;;
-            *fedora*|*rhel*)    DISTRO_FAMILY="fedora" ;;
-            *arch*)             DISTRO_FAMILY="arch" ;;
-            *suse*)             DISTRO_FAMILY="suse" ;;
-            *)                  warn "Unknown distro '$DISTRO_ID' — will attempt Debian-style commands" ; DISTRO_FAMILY="debian" ;;
-        esac
-        ;;
+# ── Platform detection ───────────────────────────────────────
+HOST_OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
+case "$HOST_OS" in
+    linux)  HOST_OS="linux" ;;
+    darwin) HOST_OS="darwin" ;;
+    *)      error "Unsupported platform: $HOST_OS (only Linux and macOS are supported)" ;;
 esac
 
-info "Detected distro: $DISTRO_ID (family: $DISTRO_FAMILY)"
+HOST_ARCH="$(uname -m)"
+info "Platform: $HOST_OS ($HOST_ARCH)"
+
+if [[ "$HOST_OS" == "darwin" ]]; then
+    TOTAL_STEPS=16  # macOS skips 8 Linux-only steps
+fi
+
+# ── Distro detection ──────────────────────────────────────────
+if [[ "$HOST_OS" == "linux" ]]; then
+    if [[ -f /etc/os-release ]]; then
+        . /etc/os-release
+        DISTRO_ID="${ID:-unknown}"
+        DISTRO_FAMILY="${ID_LIKE:-$DISTRO_ID}"
+    else
+        error "Cannot detect distribution — /etc/os-release not found"
+    fi
+
+    # Normalize to family
+    case "$DISTRO_ID" in
+        ubuntu|debian|pop|linuxmint|elementary|zorin)   DISTRO_FAMILY="debian" ;;
+        fedora|rhel|centos|rocky|alma|nobara)           DISTRO_FAMILY="fedora" ;;
+        arch|manjaro|endeavouros|garuda)                 DISTRO_FAMILY="arch" ;;
+        opensuse*|sles)                                  DISTRO_FAMILY="suse" ;;
+        *)
+            # Check ID_LIKE for derivatives
+            case "$DISTRO_FAMILY" in
+                *debian*|*ubuntu*)  DISTRO_FAMILY="debian" ;;
+                *fedora*|*rhel*)    DISTRO_FAMILY="fedora" ;;
+                *arch*)             DISTRO_FAMILY="arch" ;;
+                *suse*)             DISTRO_FAMILY="suse" ;;
+                *)                  warn "Unknown distro '$DISTRO_ID' — will attempt Debian-style commands" ; DISTRO_FAMILY="debian" ;;
+            esac
+            ;;
+    esac
+    info "Detected distro: $DISTRO_ID (family: $DISTRO_FAMILY)"
+else
+    DISTRO_FAMILY="darwin"
+    DISTRO_ID="macos"
+    info "Detected macOS $(sw_vers -productVersion 2>/dev/null || echo 'unknown')"
+fi
 
 # ── Package manager abstraction ────────────────────────────────
 pkg_update() {
@@ -53,6 +73,7 @@ pkg_update() {
         fedora) dnf check-update -q || true ;;  # dnf returns 100 when updates available
         arch)   pacman -Sy --noconfirm ;;
         suse)   zypper --non-interactive refresh ;;
+        darwin) brew update ;;
     esac
 }
 
@@ -62,6 +83,7 @@ pkg_install() {
         fedora) dnf install -y "$@" ;;
         arch)   pacman -S --needed --noconfirm "$@" ;;
         suse)   zypper --non-interactive install "$@" ;;
+        darwin) brew install "$@" 2>/dev/null || true ;;
     esac
 }
 
@@ -71,6 +93,7 @@ pkg_installed() {
         fedora) rpm -q "$1" &>/dev/null ;;
         arch)   pacman -Qi "$1" &>/dev/null ;;
         suse)   rpm -q "$1" &>/dev/null ;;
+        darwin) brew list "$1" &>/dev/null ;;
     esac
 }
 
@@ -123,7 +146,9 @@ wait_healthy() {
     error "Timed out after ${timeout}s waiting for: ${services[*]}"
 }
 
-[[ "$EUID" -eq 0 ]] || error "Run as root: sudo ./setup.sh"
+if [[ "$HOST_OS" == "linux" ]]; then
+    [[ "$EUID" -eq 0 ]] || error "Run as root: sudo ./setup.sh"
+fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
