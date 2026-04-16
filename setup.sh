@@ -186,7 +186,11 @@ if [[ -z "${TAILSCALE_HOSTNAME:-}" ]] || [[ "$TAILSCALE_HOSTNAME" == your-pc-nam
     fi
 fi
 
-: "${WORKSPACE_PATH:=/srv/sftp/workspace/files}"
+if [[ "$HOST_OS" == "darwin" ]]; then
+    : "${WORKSPACE_PATH:=$HOME/vibe-workspace}"
+else
+    : "${WORKSPACE_PATH:=/srv/sftp/workspace/files}"
+fi
 [[ -z "${GIT_USER:-}" || "$GIT_USER" == "your-github-username" ]] && error "GIT_USER not set — edit .env with your GitHub username"
 [[ -z "${GHCR_ORG:-}" || "$GHCR_ORG" == "your-github-username" ]] && error "GHCR_ORG not set — edit .env with the GitHub org/user that hosts the GHCR images"
 
@@ -194,7 +198,11 @@ fi
 _update_env_var() {
     local key="$1" val="$2" file=".env"
     if grep -q "^${key}=" "$file" 2>/dev/null; then
-        sed -i "s|^${key}=.*|${key}=${val}|" "$file"
+        if [[ "$HOST_OS" == "darwin" ]]; then
+            sed -i '' "s|^${key}=.*|${key}=${val}|" "$file"
+        else
+            sed -i "s|^${key}=.*|${key}=${val}|" "$file"
+        fi
     else
         echo "${key}=${val}" >> "$file"
     fi
@@ -236,10 +244,14 @@ fi
 # 1. Port conflict check
 # ══════════════════════════════════════════════════════════════
 step "Checking for port conflicts"
-REQUIRED_PORTS="2222 3100 5678 8000 8100 8101 8102 8103 8104 8105 8106 8107 8108 8109 8110 8111 8112 8113 8114 8115 8116 8117 8118 8119 9000"
+REQUIRED_PORTS="3100 8868 9000"
 CONFLICTS=""
 for port in $REQUIRED_PORTS; do
-    pid=$(ss -tlnp "sport = :$port" 2>/dev/null | awk 'NR>1 {print $6}' | grep -oP 'pid=\K\d+' | head -1 || true)
+    if [[ "$HOST_OS" == "darwin" ]]; then
+        pid=$(lsof -ti ":$port" 2>/dev/null | head -1 || true)
+    else
+        pid=$(ss -tlnp "sport = :$port" 2>/dev/null | awk 'NR>1 {print $6}' | grep -oP 'pid=\K\d+' | head -1 || true)
+    fi
     if [[ -n "$pid" ]]; then
         pname=$(ps -p "$pid" -o comm= 2>/dev/null || echo "unknown")
         CONFLICTS="${CONFLICTS}\n  Port $port — PID $pid ($pname)"
@@ -259,7 +271,7 @@ success "Port check complete"
 # 2. Detect host versions
 # ══════════════════════════════════════════════════════════════
 step "Detecting host versions"
-HOST_PYTHON_VERSION=$(python3 --version 2>&1 | grep -oP '\d+\.\d+' | head -1 || echo "3.12")
+HOST_PYTHON_VERSION=$(python3 --version 2>&1 | grep -Eo '[0-9]+\.[0-9]+' | head -1 || echo "3.12")
 info "$DISTRO_ID ${VERSION_ID:-unknown} / Python $HOST_PYTHON_VERSION"
 success "Host versions detected"
 
@@ -311,65 +323,84 @@ case "$DISTRO_FAMILY" in
             bind-utils python3-pip python3 \
             nodejs npm
         ;;
+    darwin)
+        if ! command -v brew &>/dev/null; then
+            error "Homebrew is required on macOS. Install from https://brew.sh"
+        fi
+        pkg_install \
+            jq wget git git-lfs \
+            python3 node
+        ;;
 esac
 success "Prerequisites installed"
 
 # ══════════════════════════════════════════════════════════════
 # 4. Docker
 # ══════════════════════════════════════════════════════════════
-step "Docker"
-if ! command -v docker &>/dev/null; then
-    info "Installing Docker CE..."
-    case "$DISTRO_FAMILY" in
-        debian)
-            curl -fsSL "https://download.docker.com/linux/${DISTRO_ID}/gpg" \
-                | gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
-            echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] \
-                https://download.docker.com/linux/${DISTRO_ID} $(lsb_release -cs) stable" \
-                > /etc/apt/sources.list.d/docker.list
-            pkg_update
-            pkg_install docker-ce docker-ce-cli containerd.io docker-compose-plugin
-            ;;
-        fedora)
-            dnf config-manager addrepo --from-repofile="https://download.docker.com/linux/fedora/docker-ce.repo" 2>/dev/null \
-                || dnf config-manager --add-repo "https://download.docker.com/linux/fedora/docker-ce.repo" 2>/dev/null || true
-            pkg_install docker-ce docker-ce-cli containerd.io docker-compose-plugin
-            ;;
-        arch)
-            pkg_install docker docker-compose docker-buildx
-            ;;
-        suse)
-            zypper --non-interactive addrepo "https://download.docker.com/linux/sles/docker-ce.repo" 2>/dev/null || true
-            pkg_install docker-ce docker-ce-cli containerd.io docker-compose-plugin
-            ;;
-    esac
-    systemctl enable --now docker
-    success "Docker CE installed"
-elif pkg_installed docker-ce 2>/dev/null || command -v docker &>/dev/null; then
-    success "Docker already present"
-    if ! docker compose version &>/dev/null; then
-        info "Installing docker compose plugin..."
-        case "$DISTRO_FAMILY" in
-            debian) pkg_update; pkg_install docker-compose-plugin 2>/dev/null || pkg_install docker-compose-v2 ;;
-            arch)   pkg_install docker-compose ;;
-            *)      pkg_install docker-compose-plugin ;;
-        esac
-        success "Docker compose plugin installed"
+if [[ "$HOST_OS" == "darwin" ]]; then
+    step "Docker Desktop"
+    if ! command -v docker &>/dev/null; then
+        error "Docker Desktop is required on macOS. Install from https://docs.docker.com/desktop/install/mac-install/"
     fi
-fi
+    if ! docker compose version &>/dev/null; then
+        error "Docker Compose not available — ensure Docker Desktop is running"
+    fi
+    success "Docker Desktop $(docker --version | grep -Eo '[0-9]+\.[0-9]+\.[0-9]+' | head -1) with Compose $(docker compose version --short)"
+else
+    step "Docker"
+    if ! command -v docker &>/dev/null; then
+        info "Installing Docker CE..."
+        case "$DISTRO_FAMILY" in
+            debian)
+                curl -fsSL "https://download.docker.com/linux/${DISTRO_ID}/gpg" \
+                    | gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
+                echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] \
+                    https://download.docker.com/linux/${DISTRO_ID} $(lsb_release -cs) stable" \
+                    > /etc/apt/sources.list.d/docker.list
+                pkg_update
+                pkg_install docker-ce docker-ce-cli containerd.io docker-compose-plugin
+                ;;
+            fedora)
+                dnf config-manager addrepo --from-repofile="https://download.docker.com/linux/fedora/docker-ce.repo" 2>/dev/null \
+                    || dnf config-manager --add-repo "https://download.docker.com/linux/fedora/docker-ce.repo" 2>/dev/null || true
+                pkg_install docker-ce docker-ce-cli containerd.io docker-compose-plugin
+                ;;
+            arch)
+                pkg_install docker docker-compose docker-buildx
+                ;;
+            suse)
+                zypper --non-interactive addrepo "https://download.docker.com/linux/sles/docker-ce.repo" 2>/dev/null || true
+                pkg_install docker-ce docker-ce-cli containerd.io docker-compose-plugin
+                ;;
+        esac
+        systemctl enable --now docker
+        success "Docker CE installed"
+    elif pkg_installed docker-ce 2>/dev/null || command -v docker &>/dev/null; then
+        success "Docker already present"
+        if ! docker compose version &>/dev/null; then
+            info "Installing docker compose plugin..."
+            case "$DISTRO_FAMILY" in
+                debian) pkg_update; pkg_install docker-compose-plugin 2>/dev/null || pkg_install docker-compose-v2 ;;
+                arch)   pkg_install docker-compose ;;
+                *)      pkg_install docker-compose-plugin ;;
+            esac
+            success "Docker compose plugin installed"
+        fi
+    fi
 
-if ! docker buildx version &>/dev/null; then
-    info "Installing docker-buildx..."
-    case "$DISTRO_FAMILY" in
-        arch) pkg_install docker-buildx ;;
-        *)    pkg_install docker-buildx-plugin 2>/dev/null || pkg_install docker-buildx 2>/dev/null || warn "docker-buildx not available in repos — install manually" ;;
-    esac
-fi
+    if ! docker buildx version &>/dev/null; then
+        info "Installing docker-buildx..."
+        case "$DISTRO_FAMILY" in
+            arch) pkg_install docker-buildx ;;
+            *)    pkg_install docker-buildx-plugin 2>/dev/null || pkg_install docker-buildx 2>/dev/null || warn "docker-buildx not available in repos — install manually" ;;
+        esac
+    fi
 
-if ! docker compose version &>/dev/null; then
-    error "Docker Compose plugin not available — 'docker compose version' failed"
+    if ! docker compose version &>/dev/null; then
+        error "Docker Compose plugin not available — 'docker compose version' failed"
+    fi
+    success "Docker Compose $(docker compose version --short) available"
 fi
-success "Docker Compose $(docker compose version --short) available"
 
 # ══════════════════════════════════════════════════════════════
 # 5. NVIDIA Container Toolkit (Linux only — needed for opensandbox/comfyui)
@@ -532,31 +563,38 @@ fi
 # ══════════════════════════════════════════════════════════════
 # 6. Caddy with rate-limit plugin
 # ══════════════════════════════════════════════════════════════
-step "Caddy with rate-limit plugin"
-if ! command -v caddy &>/dev/null || ! caddy list-modules 2>/dev/null | grep -q "rate_limit"; then
-    info "Building Caddy with rate-limit plugin..."
-
-    GO_REQUIRED="1.25"
-    GO_INSTALL_VER="1.25.4"
-    GO_CURRENT=$(go version 2>/dev/null | grep -oP '\d+\.\d+' | head -1 || echo "0.0")
-    if ! printf '%s\n%s\n' "$GO_REQUIRED" "$GO_CURRENT" | sort -V -C; then
-        info "Go $GO_CURRENT too old (need >= $GO_REQUIRED) — installing Go $GO_INSTALL_VER..."
-        curl -fsSL "https://dl.google.com/go/go${GO_INSTALL_VER}.linux-amd64.tar.gz" -o /tmp/go.tar.gz
-        rm -rf /usr/local/go
-        tar -C /usr/local -xzf /tmp/go.tar.gz
-        rm /tmp/go.tar.gz
-        export PATH="/usr/local/go/bin:$PATH"
-        success "Go $(go version | grep -oP '\d+\.\d+\.\d+') installed"
+if [[ "$HOST_OS" == "darwin" ]]; then
+    step "Caddy"
+    if ! command -v caddy &>/dev/null; then
+        brew install caddy
     fi
+    success "Caddy $(caddy version 2>/dev/null | head -1 || echo 'installed')"
+else
+    step "Caddy with rate-limit plugin"
+    if ! command -v caddy &>/dev/null || ! caddy list-modules 2>/dev/null | grep -q "rate_limit"; then
+        info "Building Caddy with rate-limit plugin..."
 
-    info "Installing xcaddy via go install..."
-    GOBIN=/usr/local/bin go install github.com/caddyserver/xcaddy/cmd/xcaddy@latest
-    xcaddy build --with github.com/mholt/caddy-ratelimit --output /usr/local/bin/caddy
-    chmod +x /usr/local/bin/caddy
-    useradd -r -s /usr/sbin/nologin -d /var/lib/caddy caddy 2>/dev/null || true
-    mkdir -p /etc/caddy /var/log/caddy /var/lib/caddy
-    chown caddy:caddy /var/log/caddy /var/lib/caddy
-    cat > /etc/systemd/system/caddy.service << 'UNIT'
+        GO_REQUIRED="1.25"
+        GO_INSTALL_VER="1.25.4"
+        GO_CURRENT=$(go version 2>/dev/null | grep -Eo '[0-9]+\.[0-9]+' | head -1 || echo "0.0")
+        if ! printf '%s\n%s\n' "$GO_REQUIRED" "$GO_CURRENT" | sort -V -C; then
+            info "Go $GO_CURRENT too old (need >= $GO_REQUIRED) — installing Go $GO_INSTALL_VER..."
+            curl -fsSL "https://dl.google.com/go/go${GO_INSTALL_VER}.linux-amd64.tar.gz" -o /tmp/go.tar.gz
+            rm -rf /usr/local/go
+            tar -C /usr/local -xzf /tmp/go.tar.gz
+            rm /tmp/go.tar.gz
+            export PATH="/usr/local/go/bin:$PATH"
+            success "Go $(go version | grep -Eo '[0-9]+\.[0-9]+\.[0-9]+') installed"
+        fi
+
+        info "Installing xcaddy via go install..."
+        GOBIN=/usr/local/bin go install github.com/caddyserver/xcaddy/cmd/xcaddy@latest
+        xcaddy build --with github.com/mholt/caddy-ratelimit --output /usr/local/bin/caddy
+        chmod +x /usr/local/bin/caddy
+        useradd -r -s /usr/sbin/nologin -d /var/lib/caddy caddy 2>/dev/null || true
+        mkdir -p /etc/caddy /var/log/caddy /var/lib/caddy
+        chown caddy:caddy /var/log/caddy /var/lib/caddy
+        cat > /etc/systemd/system/caddy.service << 'UNIT'
 [Unit]
 Description=Caddy Web Server
 After=network-online.target
@@ -577,11 +615,12 @@ EnvironmentFile=-/etc/caddy/caddy.env
 [Install]
 WantedBy=multi-user.target
 UNIT
-    success "Caddy built with rate-limit"
-else
-    success "Caddy already present"
+        success "Caddy built with rate-limit"
+    else
+        success "Caddy already present"
+    fi
+    usermod -aG tailscale caddy 2>/dev/null || true
 fi
-usermod -aG tailscale caddy 2>/dev/null || true
 
 # ══════════════════════════════════════════════════════════════
 # 7. Secrets
@@ -653,25 +692,39 @@ success "Skill sources ready"
 # ══════════════════════════════════════════════════════════════
 # 8. Workspace
 # ══════════════════════════════════════════════════════════════
-step "Configuring workspace"
-info "Path: $WORKSPACE_PATH"
-SFTP_ROOT=$(dirname "$WORKSPACE_PATH")
-mkdir -p "$WORKSPACE_PATH"
-chown root:root "$SFTP_ROOT" 2>/dev/null || true
-chmod 755 "$SFTP_ROOT"
-id sftp-vibe &>/dev/null || useradd -r -s /usr/sbin/nologin sftp-vibe
-chown sftp-vibe:sftp-vibe "$WORKSPACE_PATH"
-chmod 775 "$WORKSPACE_PATH"
-setfacl -R  -m u:sftp-vibe:rwx "$WORKSPACE_PATH"
-setfacl -Rd -m u:sftp-vibe:rwx "$WORKSPACE_PATH"
-setfacl -Rd -m u:root:rwx "$WORKSPACE_PATH"
+if [[ "$HOST_OS" == "darwin" ]]; then
+    step "Configuring workspace"
+    WORKSPACE_PATH="${WORKSPACE_PATH:-$HOME/vibe-workspace}"
+    mkdir -p "$WORKSPACE_PATH"
+    _update_env_var "WORKSPACE_PATH" "${WORKSPACE_PATH}"
+    if [[ ! -d "$WORKSPACE_PATH/.git" ]]; then
+        git -C "$WORKSPACE_PATH" init
+        git -C "$WORKSPACE_PATH" config user.email "watchdog@localhost"
+        git -C "$WORKSPACE_PATH" config user.name  "Vibe Watchdog"
+        success "Workspace initialized at $WORKSPACE_PATH"
+    else
+        success "Workspace already initialized"
+    fi
+else
+    step "Configuring workspace"
+    info "Path: $WORKSPACE_PATH"
+    SFTP_ROOT=$(dirname "$WORKSPACE_PATH")
+    mkdir -p "$WORKSPACE_PATH"
+    chown root:root "$SFTP_ROOT" 2>/dev/null || true
+    chmod 755 "$SFTP_ROOT"
+    id sftp-vibe &>/dev/null || useradd -r -s /usr/sbin/nologin sftp-vibe
+    chown sftp-vibe:sftp-vibe "$WORKSPACE_PATH"
+    chmod 775 "$WORKSPACE_PATH"
+    setfacl -R  -m u:sftp-vibe:rwx "$WORKSPACE_PATH"
+    setfacl -Rd -m u:sftp-vibe:rwx "$WORKSPACE_PATH"
+    setfacl -Rd -m u:root:rwx "$WORKSPACE_PATH"
 
-if [[ ! -d "$WORKSPACE_PATH/.git" ]]; then
-    git config --global --add safe.directory "$WORKSPACE_PATH"
-    git -C "$WORKSPACE_PATH" init
-    git -C "$WORKSPACE_PATH" config user.email "watchdog@localhost"
-    git -C "$WORKSPACE_PATH" config user.name  "Vibe Watchdog"
-    cat > "$WORKSPACE_PATH/CONTEXT.md" << 'CTX'
+    if [[ ! -d "$WORKSPACE_PATH/.git" ]]; then
+        git config --global --add safe.directory "$WORKSPACE_PATH"
+        git -C "$WORKSPACE_PATH" init
+        git -C "$WORKSPACE_PATH" config user.email "watchdog@localhost"
+        git -C "$WORKSPACE_PATH" config user.name  "Vibe Watchdog"
+        cat > "$WORKSPACE_PATH/CONTEXT.md" << 'CTX'
 # Project Context
 
 ## Current Project
@@ -694,36 +747,38 @@ Description:
 ## Environment Notes
 
 CTX
-    git -C "$WORKSPACE_PATH" add .
-    git -C "$WORKSPACE_PATH" commit -m "Initial commit — workspace initialized"
-    success "Workspace git initialized with CONTEXT.md"
-fi
-
-mkdir -p /home/sftp-vibe/.ssh
-touch /home/sftp-vibe/.ssh/authorized_keys
-chown -R sftp-vibe:sftp-vibe /home/sftp-vibe/.ssh
-chmod 700 /home/sftp-vibe/.ssh; chmod 600 /home/sftp-vibe/.ssh/authorized_keys
-warn "Add phone SSH key: echo 'ssh-ed25519 AAAA...' >> /home/sftp-vibe/.ssh/authorized_keys"
-success "Workspace configured"
-
-# ══════════════════════════════════════════════════════════════
-# 9. SSH
-# ══════════════════════════════════════════════════════════════
-step "Configuring SSH"
-sed -e "s|100\.x\.x\.x|${TAILSCALE_IP}|g" \
-    -e "s|/srv/sftp/workspace|${SFTP_ROOT}|g" \
-    sshd_config_additions > /tmp/sshd_resolved
-if ! grep -q "# ── BEGIN vibe-stack" /etc/ssh/sshd_config; then
-    if ! grep -q "^Port 2222" /etc/ssh/sshd_config; then
-        sed -i '1s/^/Port 22\nPort 2222\n/' /etc/ssh/sshd_config
+        git -C "$WORKSPACE_PATH" add .
+        git -C "$WORKSPACE_PATH" commit -m "Initial commit — workspace initialized"
+        success "Workspace git initialized with CONTEXT.md"
     fi
-    printf '\n# ── BEGIN vibe-stack ──\n' >> /etc/ssh/sshd_config
-    cat /tmp/sshd_resolved >> /etc/ssh/sshd_config
-    printf '# ── END vibe-stack ──\n' >> /etc/ssh/sshd_config
+
+    mkdir -p /home/sftp-vibe/.ssh
+    touch /home/sftp-vibe/.ssh/authorized_keys
+    chown -R sftp-vibe:sftp-vibe /home/sftp-vibe/.ssh
+    chmod 700 /home/sftp-vibe/.ssh; chmod 600 /home/sftp-vibe/.ssh/authorized_keys
+    warn "Add phone SSH key: echo 'ssh-ed25519 AAAA...' >> /home/sftp-vibe/.ssh/authorized_keys"
+    success "Workspace configured"
 fi
 
-mkdir -p /etc/systemd/system/ssh.socket.d
-cat > /etc/systemd/system/ssh.socket.d/override.conf << 'EOF'
+# ══════════════════════════════════════════════════════════════
+# 9-10. SSH + Tailscale SSH
+# ══════════════════════════════════════════════════════════════
+if [[ "$HOST_OS" == "linux" ]]; then
+    step "Configuring SSH"
+    sed -e "s|100\.x\.x\.x|${TAILSCALE_IP}|g" \
+        -e "s|/srv/sftp/workspace|${SFTP_ROOT}|g" \
+        sshd_config_additions > /tmp/sshd_resolved
+    if ! grep -q "# ── BEGIN vibe-stack" /etc/ssh/sshd_config; then
+        if ! grep -q "^Port 2222" /etc/ssh/sshd_config; then
+            sed -i '1s/^/Port 22\nPort 2222\n/' /etc/ssh/sshd_config
+        fi
+        printf '\n# ── BEGIN vibe-stack ──\n' >> /etc/ssh/sshd_config
+        cat /tmp/sshd_resolved >> /etc/ssh/sshd_config
+        printf '# ── END vibe-stack ──\n' >> /etc/ssh/sshd_config
+    fi
+
+    mkdir -p /etc/systemd/system/ssh.socket.d
+    cat > /etc/systemd/system/ssh.socket.d/override.conf << 'EOF'
 [Socket]
 ListenStream=
 ListenStream=0.0.0.0:22
@@ -731,36 +786,49 @@ ListenStream=[::]:22
 ListenStream=0.0.0.0:2222
 ListenStream=[::]:2222
 EOF
-systemctl daemon-reload
+    systemctl daemon-reload
 
-mkdir -p /run/sshd
-sshd -t || error "sshd config invalid"
-systemctl restart ssh.socket
-systemctl restart ssh
-success "SSH configured (port 22 + 2222)"
+    mkdir -p /run/sshd
+    sshd -t || error "sshd config invalid"
+    systemctl restart ssh.socket
+    systemctl restart ssh
+    success "SSH configured (port 22 + 2222)"
+
+    step "Enabling Tailscale SSH"
+    tailscale set --ssh=true
+    success "Tailscale SSH enabled (port 22 — interactive sessions)"
+else
+    step "Tailscale"
+    if ! command -v tailscale &>/dev/null; then
+        warn "Install Tailscale from https://tailscale.com/download/mac"
+    fi
+    success "Tailscale SSH: use Tailscale app preferences on macOS"
+fi
 
 # ══════════════════════════════════════════════════════════════
-# 10. Tailscale SSH
+# 11. Caddy config
 # ══════════════════════════════════════════════════════════════
-step "Enabling Tailscale SSH"
-tailscale set --ssh=true
-success "Tailscale SSH enabled (port 22 — interactive sessions)"
+if [[ "$HOST_OS" == "darwin" ]]; then
+    step "Configuring Caddy"
+    CADDY_CONFIG_DIR="${HOME}/.config/caddy"
+    mkdir -p "$CADDY_CONFIG_DIR"
+    cp Caddyfile "$CADDY_CONFIG_DIR/Caddyfile"
+    # On macOS, Caddy runs via brew services (launchd)
+    brew services restart caddy 2>/dev/null || caddy start --config "$CADDY_CONFIG_DIR/Caddyfile" &
+    success "Caddy configured"
+else
+    step "Configuring Caddy"
+    useradd -r -s /usr/sbin/nologin -d /var/lib/caddy caddy 2>/dev/null || true
+    mkdir -p /etc/caddy /var/log/caddy /var/lib/caddy
+    chown caddy:caddy /var/log/caddy /var/lib/caddy
+    cp Caddyfile /etc/caddy/Caddyfile
 
-# ══════════════════════════════════════════════════════════════
-# 11. Caddy
-# ══════════════════════════════════════════════════════════════
-step "Configuring Caddy"
-useradd -r -s /usr/sbin/nologin -d /var/lib/caddy caddy 2>/dev/null || true
-mkdir -p /etc/caddy /var/log/caddy /var/lib/caddy
-chown caddy:caddy /var/log/caddy /var/lib/caddy
-cp Caddyfile /etc/caddy/Caddyfile
-
-# Generate staging port blocks (8100-8119)
-if ! grep -q "TAILSCALE_HOSTNAME.*:8100" /etc/caddy/Caddyfile; then
-    info "Generating Caddy staging port blocks..."
-    STAGING_BLOCK=""
-    for port in $(seq 8100 8119); do
-        read -r -d '' BLOCK <<CADDYEOF || true
+    # Generate staging port blocks (8100-8119)
+    if ! grep -q "TAILSCALE_HOSTNAME.*:8100" /etc/caddy/Caddyfile; then
+        info "Generating Caddy staging port blocks..."
+        STAGING_BLOCK=""
+        for port in $(seq 8100 8119); do
+            read -r -d '' BLOCK <<CADDYEOF || true
 https://{\$TAILSCALE_HOSTNAME}:${port} {
     import tailscale_tls
     import security_headers
@@ -779,17 +847,17 @@ https://{\$TAILSCALE_HOSTNAME}:${port} {
     }
 }
 CADDYEOF
-        STAGING_BLOCK+="$BLOCK"$'\n\n'
-    done
-    awk -v block="$STAGING_BLOCK" '{print} /# STAGING_PORTS_START/{printf "%s", block}' \
-        /etc/caddy/Caddyfile > /tmp/Caddyfile.tmp \
-        && mv /tmp/Caddyfile.tmp /etc/caddy/Caddyfile
-else
-    info "Caddy staging port blocks already present — skipping"
-fi
+            STAGING_BLOCK+="$BLOCK"$'\n\n'
+        done
+        awk -v block="$STAGING_BLOCK" '{print} /# STAGING_PORTS_START/{printf "%s", block}' \
+            /etc/caddy/Caddyfile > /tmp/Caddyfile.tmp \
+            && mv /tmp/Caddyfile.tmp /etc/caddy/Caddyfile
+    else
+        info "Caddy staging port blocks already present — skipping"
+    fi
 
-if [[ ! -f /etc/systemd/system/caddy.service ]]; then
-    cat > /etc/systemd/system/caddy.service << 'UNIT'
+    if [[ ! -f /etc/systemd/system/caddy.service ]]; then
+        cat > /etc/systemd/system/caddy.service << 'UNIT'
 [Unit]
 Description=Caddy Web Server
 After=network-online.target
@@ -810,102 +878,119 @@ EnvironmentFile=-/etc/caddy/caddy.env
 [Install]
 WantedBy=multi-user.target
 UNIT
-fi
+    fi
 
-cat > /etc/caddy/caddy.env << EOF
+    cat > /etc/caddy/caddy.env << EOF
 TAILSCALE_HOSTNAME=${TAILSCALE_HOSTNAME}
 TAILSCALE_IP=${TAILSCALE_IP}
 EOF
-chmod 640 /etc/caddy/caddy.env; chown root:caddy /etc/caddy/caddy.env
-systemctl daemon-reload
-caddy validate --config /etc/caddy/Caddyfile || error "Caddyfile invalid"
-systemctl enable --now caddy
-systemctl reload caddy 2>/dev/null || systemctl restart caddy
-success "Caddy running (self-signed TLS)"
+    chmod 640 /etc/caddy/caddy.env; chown root:caddy /etc/caddy/caddy.env
+    systemctl daemon-reload
+    caddy validate --config /etc/caddy/Caddyfile || error "Caddyfile invalid"
+    systemctl enable --now caddy
+    systemctl reload caddy 2>/dev/null || systemctl restart caddy
+    success "Caddy running (self-signed TLS)"
+fi
 
 # ══════════════════════════════════════════════════════════════
 # 12a. Docker credential helper + GHCR authentication
 # ══════════════════════════════════════════════════════════════
-step "Docker credential storage + GHCR auth"
-
-# Install credential helper if not present
-if ! command -v docker-credential-secretservice &>/dev/null && \
-   ! command -v docker-credential-pass &>/dev/null; then
-    case "$DISTRO_FAMILY" in
-        debian) apt-get install -y --no-install-recommends golang-docker-credential-helpers >/dev/null 2>&1 || true ;;
-        fedora) dnf install -y docker-credential-helpers >/dev/null 2>&1 || true ;;
-        *)      info "Docker credential helpers not available in repos — skipping" ;;
-    esac
-fi
-
-# Determine which credential helper to use
-# Both secretservice and pass require D-Bus — skip on headless/sudo.
-CRED_HELPER=""
-if [[ -n "${DBUS_SESSION_BUS_ADDRESS:-}" ]]; then
-    if command -v docker-credential-secretservice &>/dev/null; then
-        CRED_HELPER="secretservice"
-    elif command -v docker-credential-pass &>/dev/null; then
-        CRED_HELPER="pass"
+if [[ "$HOST_OS" == "darwin" ]]; then
+    step "Docker credentials + GHCR auth"
+    # Docker Desktop on macOS uses osxkeychain by default
+    if ! docker pull "ghcr.io/${GHCR_ORG}/paperclip-server:latest" >/dev/null 2>&1; then
+        info "GHCR authentication required"
+        if [[ -f "secrets/github_token.txt" ]] && [[ -s "secrets/github_token.txt" ]]; then
+            cat secrets/github_token.txt | docker login ghcr.io -u "${GIT_USER}" --password-stdin 2>&1 | grep -v "WARNING" || true
+            success "Authenticated with GHCR"
+        else
+            warn "Cannot authenticate — create secrets/github_token.txt"
+        fi
+    else
+        success "GHCR authentication already configured"
     fi
-fi
+else
+    step "Docker credential storage + GHCR auth"
 
-# Configure Docker for the deploying user (not root)
-DEPLOY_USER="${SUDO_USER:-$USER}"
-DEPLOY_HOME=$(eval echo "~$DEPLOY_USER")
-DOCKER_CONFIG_DIR="$DEPLOY_HOME/.docker"
-DOCKER_CONFIG="$DOCKER_CONFIG_DIR/config.json"
+    # Install credential helper if not present
+    if ! command -v docker-credential-secretservice &>/dev/null && \
+       ! command -v docker-credential-pass &>/dev/null; then
+        case "$DISTRO_FAMILY" in
+            debian) apt-get install -y --no-install-recommends golang-docker-credential-helpers >/dev/null 2>&1 || true ;;
+            fedora) dnf install -y docker-credential-helpers >/dev/null 2>&1 || true ;;
+            *)      info "Docker credential helpers not available in repos — skipping" ;;
+        esac
+    fi
 
-mkdir -p "$DOCKER_CONFIG_DIR"
+    # Determine which credential helper to use
+    # Both secretservice and pass require D-Bus — skip on headless/sudo.
+    CRED_HELPER=""
+    if [[ -n "${DBUS_SESSION_BUS_ADDRESS:-}" ]]; then
+        if command -v docker-credential-secretservice &>/dev/null; then
+            CRED_HELPER="secretservice"
+        elif command -v docker-credential-pass &>/dev/null; then
+            CRED_HELPER="pass"
+        fi
+    fi
 
-if [[ -n "$CRED_HELPER" ]]; then
-    # Add credsStore if not already configured
-    if [[ -f "$DOCKER_CONFIG" ]]; then
-        if ! grep -q '"credsStore"' "$DOCKER_CONFIG"; then
-            # Merge credsStore into existing config
-            python3 -c "
+    # Configure Docker for the deploying user (not root)
+    DEPLOY_USER="${SUDO_USER:-$USER}"
+    DEPLOY_HOME=$(eval echo "~$DEPLOY_USER")
+    DOCKER_CONFIG_DIR="$DEPLOY_HOME/.docker"
+    DOCKER_CONFIG="$DOCKER_CONFIG_DIR/config.json"
+
+    mkdir -p "$DOCKER_CONFIG_DIR"
+
+    if [[ -n "$CRED_HELPER" ]]; then
+        # Add credsStore if not already configured
+        if [[ -f "$DOCKER_CONFIG" ]]; then
+            if ! grep -q '"credsStore"' "$DOCKER_CONFIG"; then
+                # Merge credsStore into existing config
+                python3 -c "
 import json, sys
 with open('$DOCKER_CONFIG') as f: cfg = json.load(f)
 cfg['credsStore'] = '$CRED_HELPER'
 cfg.get('auths', {}).pop('ghcr.io', None)  # remove plaintext cred
 with open('$DOCKER_CONFIG', 'w') as f: json.dump(cfg, f, indent=2)
 " 2>/dev/null || true
+            fi
+        else
+            echo '{"auths":{},"credsStore":"'"$CRED_HELPER"'"}' > "$DOCKER_CONFIG"
+        fi
+        chown -R "$DEPLOY_USER:$DEPLOY_USER" "$DOCKER_CONFIG_DIR"
+        success "Docker credential helper: $CRED_HELPER"
+    else
+        info "No D-Bus session — skipping credential helper (plaintext auth is fine for servers)"
+    fi
+
+    # Credential helpers (secretservice/pass) need D-Bus which isn't available
+    # under sudo. Docker auto-discovers them on $PATH even without credsStore
+    # in config, so we temporarily hide them during setup pulls.
+    SETUP_DOCKER_CONFIG=$(mktemp -d)
+    echo '{"auths":{}}' > "$SETUP_DOCKER_CONFIG/config.json"
+    export DOCKER_CONFIG="$SETUP_DOCKER_CONFIG"
+    for helper in docker-credential-secretservice docker-credential-pass docker-credential-desktop; do
+        if command -v "$helper" &>/dev/null; then
+            helper_path=$(command -v "$helper")
+            mv "$helper_path" "${helper_path}.setup-disabled" 2>/dev/null || true
+        fi
+    done
+
+    # Authenticate with GHCR if not already logged in
+    if ! timeout 15 docker pull "ghcr.io/${GHCR_ORG}/paperclip-server:latest" >/dev/null 2>&1; then
+        info "GHCR authentication required for private images"
+        if [[ -f "secrets/github_token.txt" ]] && [[ -s "secrets/github_token.txt" ]]; then
+            cat secrets/github_token.txt | su "$DEPLOY_USER" -c "docker login ghcr.io -u ${GIT_USER} --password-stdin" 2>&1 \
+                | grep -v "WARNING" || true
+            success "Authenticated with GHCR via github_token.txt"
+        else
+            warn "Cannot authenticate with GHCR — secrets/github_token.txt missing"
+            warn "Run: echo 'ghp_...' > secrets/github_token.txt"
+            warn "Or:  docker login ghcr.io -u ${GIT_USER}"
         fi
     else
-        echo '{"auths":{},"credsStore":"'"$CRED_HELPER"'"}' > "$DOCKER_CONFIG"
+        success "GHCR authentication already configured"
     fi
-    chown -R "$DEPLOY_USER:$DEPLOY_USER" "$DOCKER_CONFIG_DIR"
-    success "Docker credential helper: $CRED_HELPER"
-else
-    info "No D-Bus session — skipping credential helper (plaintext auth is fine for servers)"
-fi
-
-# Credential helpers (secretservice/pass) need D-Bus which isn't available
-# under sudo. Docker auto-discovers them on $PATH even without credsStore
-# in config, so we temporarily hide them during setup pulls.
-SETUP_DOCKER_CONFIG=$(mktemp -d)
-echo '{"auths":{}}' > "$SETUP_DOCKER_CONFIG/config.json"
-export DOCKER_CONFIG="$SETUP_DOCKER_CONFIG"
-for helper in docker-credential-secretservice docker-credential-pass docker-credential-desktop; do
-    if command -v "$helper" &>/dev/null; then
-        helper_path=$(command -v "$helper")
-        mv "$helper_path" "${helper_path}.setup-disabled" 2>/dev/null || true
-    fi
-done
-
-# Authenticate with GHCR if not already logged in
-if ! timeout 15 docker pull "ghcr.io/${GHCR_ORG}/paperclip-server:latest" >/dev/null 2>&1; then
-    info "GHCR authentication required for private images"
-    if [[ -f "secrets/github_token.txt" ]] && [[ -s "secrets/github_token.txt" ]]; then
-        cat secrets/github_token.txt | su "$DEPLOY_USER" -c "docker login ghcr.io -u ${GIT_USER} --password-stdin" 2>&1 \
-            | grep -v "WARNING" || true
-        success "Authenticated with GHCR via github_token.txt"
-    else
-        warn "Cannot authenticate with GHCR — secrets/github_token.txt missing"
-        warn "Run: echo 'ghp_...' > secrets/github_token.txt"
-        warn "Or:  docker login ghcr.io -u ${GIT_USER}"
-    fi
-else
-    success "GHCR authentication already configured"
 fi
 
 # ══════════════════════════════════════════════════════════════
@@ -1025,14 +1110,16 @@ docker compose up -d vibe
 success "Stack started"
 
 # ══════════════════════════════════════════════════════════════
-# 14. iptables
+# 14-18. Security hardening (Linux) / macOS firewall
 # ══════════════════════════════════════════════════════════════
-step "iptables rules"
-chmod +x iptables-setup.sh
-./iptables-setup.sh
-success "iptables rules applied"
+if [[ "$HOST_OS" == "linux" ]]; then
+    # Step 14: iptables
+    step "iptables rules"
+    chmod +x iptables-setup.sh
+    ./iptables-setup.sh
+    success "iptables rules applied"
 
-cat > /etc/systemd/system/vibe-iptables.service << EOF
+    cat > /etc/systemd/system/vibe-iptables.service << EOF
 [Unit]
 Description=Vibe Stack iptables rules (re-applied after Docker)
 After=docker.service
@@ -1047,17 +1134,15 @@ RemainAfterExit=yes
 [Install]
 WantedBy=multi-user.target
 EOF
-systemctl daemon-reload
-systemctl enable vibe-iptables
-success "iptables auto-refresh service installed"
+    systemctl daemon-reload
+    systemctl enable vibe-iptables
+    success "iptables auto-refresh service installed"
 
-# ══════════════════════════════════════════════════════════════
-# 15. Watchdog service
-# ══════════════════════════════════════════════════════════════
-step "Workspace watchdog service"
-cp workspace-watchdog.sh /usr/local/bin/workspace-watchdog.sh
-chmod +x /usr/local/bin/workspace-watchdog.sh
-cat > /etc/systemd/system/workspace-watchdog.service << EOF
+    # Step 15: Watchdog
+    step "Workspace watchdog service"
+    cp workspace-watchdog.sh /usr/local/bin/workspace-watchdog.sh
+    chmod +x /usr/local/bin/workspace-watchdog.sh
+    cat > /etc/systemd/system/workspace-watchdog.service << EOF
 [Unit]
 Description=Vibe Workspace Git Watchdog
 After=network.target docker.service
@@ -1077,53 +1162,76 @@ User=root
 [Install]
 WantedBy=multi-user.target
 EOF
-systemctl daemon-reload
-systemctl enable --now workspace-watchdog
-success "Watchdog installed"
+    systemctl daemon-reload
+    systemctl enable --now workspace-watchdog
+    success "Watchdog installed"
 
-# ══════════════════════════════════════════════════════════════
-# 16. auditd
-# ══════════════════════════════════════════════════════════════
-step "auditd rules"
-sed "s|/srv/sftp/workspace/files|${WORKSPACE_PATH}|g" \
-    auditd-vibe-stack.rules > /etc/audit/rules.d/vibe-stack.rules
-augenrules --load >/dev/null 2>&1 || true
-success "auditd configured"
+    # Step 16: auditd
+    step "auditd rules"
+    sed "s|/srv/sftp/workspace/files|${WORKSPACE_PATH}|g" \
+        auditd-vibe-stack.rules > /etc/audit/rules.d/vibe-stack.rules
+    augenrules --load >/dev/null 2>&1 || true
+    success "auditd configured"
 
-# ══════════════════════════════════════════════════════════════
-# 17. fail2ban
-# ══════════════════════════════════════════════════════════════
-step "fail2ban"
-cp fail2ban/vibe-stack.conf    /etc/fail2ban/jail.d/vibe-stack.conf
-cp fail2ban/caddy-paperclip.conf /etc/fail2ban/filter.d/caddy-paperclip.conf
-systemctl enable --now fail2ban && systemctl restart fail2ban
-success "fail2ban configured"
+    # Step 17: fail2ban
+    step "fail2ban"
+    cp fail2ban/vibe-stack.conf    /etc/fail2ban/jail.d/vibe-stack.conf
+    cp fail2ban/caddy-paperclip.conf /etc/fail2ban/filter.d/caddy-paperclip.conf
+    systemctl enable --now fail2ban && systemctl restart fail2ban
+    success "fail2ban configured"
 
-# ══════════════════════════════════════════════════════════════
-# 18. Unattended upgrades
-# ══════════════════════════════════════════════════════════════
-step "Unattended security upgrades"
-case "$DISTRO_FAMILY" in
-    debian)
-        cat > /etc/apt/apt.conf.d/20auto-upgrades-vibe << 'EOF'
+    # Step 18: Unattended upgrades
+    step "Unattended security upgrades"
+    case "$DISTRO_FAMILY" in
+        debian)
+            cat > /etc/apt/apt.conf.d/20auto-upgrades-vibe << 'EOF'
 APT::Periodic::Update-Package-Lists "1";
 APT::Periodic::Unattended-Upgrade "1";
 EOF
-        ;;
-    fedora)
-        systemctl enable --now dnf-automatic-install.timer 2>/dev/null || \
-        systemctl enable --now dnf-automatic.timer 2>/dev/null || \
-        warn "dnf-automatic not available — configure automatic updates manually"
-        ;;
-    arch)
-        info "Arch does not support unattended upgrades — skip (rolling release)"
-        ;;
-    suse)
-        systemctl enable --now packagekit-background.service 2>/dev/null || \
-        warn "Auto-updates not configured — enable manually"
-        ;;
-esac
-success "Unattended upgrades configured"
+            ;;
+        fedora)
+            systemctl enable --now dnf-automatic-install.timer 2>/dev/null || \
+            systemctl enable --now dnf-automatic.timer 2>/dev/null || \
+            warn "dnf-automatic not available — configure automatic updates manually"
+            ;;
+        arch)
+            info "Arch does not support unattended upgrades — skip (rolling release)"
+            ;;
+        suse)
+            systemctl enable --now packagekit-background.service 2>/dev/null || \
+            warn "Auto-updates not configured — enable manually"
+            ;;
+    esac
+    success "Unattended upgrades configured"
+else
+    step "macOS firewall"
+    info "Configuring pf firewall for Tailscale-only access..."
+    # Create a pf anchor for Vibe Stack
+    PF_ANCHOR="/etc/pf.anchors/com.vibe-stack"
+    if [[ ! -f "$PF_ANCHOR" ]]; then
+        sudo tee "$PF_ANCHOR" > /dev/null << 'PFEOF'
+# Vibe Stack: allow Tailscale (utun*) and localhost only on service ports
+# Block external access to Docker-published ports
+services_ports = "{ 3000, 3003, 3100, 5001, 8868, 9000, 9001 }"
+pass in quick on lo0 proto tcp to any port $services_ports
+pass in quick on utun0 proto tcp to any port $services_ports
+pass in quick on utun1 proto tcp to any port $services_ports
+pass in quick on utun2 proto tcp to any port $services_ports
+block in quick proto tcp to any port $services_ports
+PFEOF
+        info "pf anchor written to $PF_ANCHOR"
+        # Add anchor to main pf.conf if not present
+        if ! grep -q "com.vibe-stack" /etc/pf.conf 2>/dev/null; then
+            sudo cp /etc/pf.conf /etc/pf.conf.backup
+            echo 'anchor "com.vibe-stack"' | sudo tee -a /etc/pf.conf > /dev/null
+            echo 'load anchor "com.vibe-stack" from "/etc/pf.anchors/com.vibe-stack"' | sudo tee -a /etc/pf.conf > /dev/null
+        fi
+        sudo pfctl -f /etc/pf.conf 2>/dev/null || warn "pf reload failed — may need to enable pf in System Preferences"
+        success "pf firewall configured (Tailscale + localhost only)"
+    else
+        success "pf firewall already configured"
+    fi
+fi
 
 # ══════════════════════════════════════════════════════════════
 # 19. Claude Code login check
@@ -1173,13 +1281,15 @@ else
     success "Org bootstrap complete — agent IDs written to .env"
 fi
 
-# Restore credential helpers and clean up temporary Docker config
-for helper in docker-credential-secretservice docker-credential-pass docker-credential-desktop; do
-    disabled=$(command -v "${helper}.setup-disabled" 2>/dev/null || which "${helper}.setup-disabled" 2>/dev/null || true)
-    [[ -n "$disabled" ]] && mv "$disabled" "${disabled%.setup-disabled}" 2>/dev/null || true
-done
-[[ -n "${SETUP_DOCKER_CONFIG:-}" ]] && rm -rf "$SETUP_DOCKER_CONFIG"
-unset DOCKER_CONFIG
+# Restore credential helpers and clean up temporary Docker config (Linux only)
+if [[ "$HOST_OS" == "linux" ]]; then
+    for helper in docker-credential-secretservice docker-credential-pass docker-credential-desktop; do
+        disabled=$(command -v "${helper}.setup-disabled" 2>/dev/null || which "${helper}.setup-disabled" 2>/dev/null || true)
+        [[ -n "$disabled" ]] && mv "$disabled" "${disabled%.setup-disabled}" 2>/dev/null || true
+    done
+    [[ -n "${SETUP_DOCKER_CONFIG:-}" ]] && rm -rf "$SETUP_DOCKER_CONFIG"
+    unset DOCKER_CONFIG
+fi
 
 # ══════════════════════════════════════════════════════════════
 # DONE
@@ -1197,12 +1307,14 @@ printf "\n"
 printf "${YELLOW}Next steps:${NC}\n"
 printf "  1. Open ${BLUE}https://${TAILSCALE_HOSTNAME}${NC} and run the onboard wizard:\n"
 printf "     docker compose exec -it server pnpm paperclipai onboard\n\n"
-printf "  2. Add phone SSH public key (SFTP on port 2222):\n"
-printf "     echo 'ssh-ed25519 AAAA...' >> /home/sftp-vibe/.ssh/authorized_keys\n"
-printf "     Connect with Termius: host=${TAILSCALE_IP} port=2222 user=sftp-vibe\n\n"
-printf "  3. Add SSH deploy keys (per-repo):\n"
+if [[ "$HOST_OS" == "linux" ]]; then
+    printf "  2. Add phone SSH public key (SFTP on port 2222):\n"
+    printf "     echo 'ssh-ed25519 AAAA...' >> /home/sftp-vibe/.ssh/authorized_keys\n"
+    printf "     Connect with Termius: host=${TAILSCALE_IP} port=2222 user=sftp-vibe\n\n"
+fi
+printf "  2. Add SSH deploy keys (per-repo):\n"
 printf "     ssh-keygen -t ed25519 -f %s/secrets/ssh/your-repo -N ''\n" "$SCRIPT_DIR"
 printf "     Add the .pub key as a deploy key on the GitHub repo\n"
 printf "     (Settings -> Deploy Keys -> Add, check 'Allow write access')\n\n"
-printf "  4. Add GitHub token for agent git operations:\n"
+printf "  3. Add GitHub token for agent git operations:\n"
 printf "     echo 'ghp_...' > secrets/github_token.txt && chmod 444 secrets/github_token.txt\n\n"
