@@ -12,8 +12,8 @@ Usage:
     # => {"status": "ok"|"degraded"|"error", "timestamp": "...", "services": {...}, "summary": {...}}
 
     # Probe a single service by name
-    result = check_service("vllm", timeout=3)
-    # => {"status": "ok"|"degraded"|"error", "service": "vllm", "version": ..., ...}
+    result = check_service("ollama", timeout=3)
+    # => {"status": "ok"|"degraded"|"error", "service": "ollama", "version": ..., ...}
 """
 
 import json
@@ -63,9 +63,9 @@ SERVICE_REGISTRY: Dict[str, Dict[str, str]] = {
         "url": "http://gitea:3000/api/v1/version",
         "label": "Gitea Git Server",
     },
-    "vllm": {
-        "url": "http://vllm:8000/health",
-        "label": "vLLM Inference",
+    "ollama": {
+        "url": "http://host.docker.internal:11434/api/tags",
+        "label": "Ollama LLM",
     },
     "prometheus": {
         "url": "http://prometheus:9090/-/healthy",
