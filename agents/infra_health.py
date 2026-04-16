@@ -48,11 +48,11 @@ SERVICE_REGISTRY: Dict[str, Dict[str, str]] = {
         "label": "Playwright Browser",
     },
     "penpot-backend": {
-        "url": "http://penpot-backend:6060/",
+        "url": "http://penpot-backend:6060/readyz",
         "label": "Penpot Backend",
     },
     "penpot-frontend": {
-        "url": "http://penpot-frontend:80/",
+        "url": "http://penpot-frontend:8080/",
         "label": "Penpot Frontend",
     },
     "minio": {
