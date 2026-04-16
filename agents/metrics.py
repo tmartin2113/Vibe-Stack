@@ -239,15 +239,24 @@ class _HealthHandler(BaseHTTPRequestHandler):
         healthy = True
 
         # Check 1: LLM backend reachable
+        # Try /health (vLLM), fall back to /v1/models (Ollama + vLLM both support it)
         llm_host = os.environ.get("VIBE_BACKEND_HOST", "")
-        llm_port = os.environ.get("VIBE_BACKEND_PORT", "8000")
+        llm_port = os.environ.get("VIBE_BACKEND_PORT", "11434")
         if llm_host:
             try:
                 import urllib.request
-                url = f"http://{llm_host}:{llm_port}/health"
-                req = urllib.request.Request(url, method="GET")
-                with urllib.request.urlopen(req, timeout=3) as resp:
-                    checks["llm_backend"] = "ok" if resp.status == 200 else "degraded"
+                llm_ok = False
+                for probe_path in ("/v1/models", "/health"):
+                    try:
+                        url = f"http://{llm_host}:{llm_port}{probe_path}"
+                        req = urllib.request.Request(url, method="GET")
+                        with urllib.request.urlopen(req, timeout=3) as resp:
+                            if resp.status == 200:
+                                llm_ok = True
+                                break
+                    except (urllib.error.URLError, urllib.error.HTTPError):
+                        continue
+                checks["llm_backend"] = "ok" if llm_ok else "degraded"
             except (urllib.error.URLError, OSError):
                 checks["llm_backend"] = "unreachable"
                 healthy = False
