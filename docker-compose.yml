@@ -5,7 +5,7 @@
 #   server, deerflow-langgraph, deerflow-gateway, vibe, tailscale
 #
 # Related compose files (not auto-merged — use -f or profiles explicitly):
-#   docker-compose.gpu.yml   — GPU services: vllm, opensandbox, comfyui
+#   docker-compose.gpu.yml   — GPU services: opensandbox, comfyui
 #   docker-compose.infra.yml — Infrastructure: gitea, minio, penpot, searxng, playwright
 #   docker-compose.override.yml — Local dev overrides (gitignored; see .example)
 # ══════════════════════════════════════════════════════════════════════════════
@@ -169,7 +169,7 @@ services:
       start_period: 30s
     environment:
       - VIBE_BACKEND_HOST=${VIBE_BACKEND_HOST:-host.docker.internal}
-      - VIBE_BACKEND_PORT=${VIBE_BACKEND_PORT:-8000}
+      - VIBE_BACKEND_PORT=${VIBE_BACKEND_PORT:-11434}
       - VIBE_SANDBOX_URL=${VIBE_SANDBOX_URL:-http://opensandbox:8080}
       - VIBE_HEALTH_PORT=8080
       - BULLETIN_PATH=/shared/bulletin/BULLETIN.md

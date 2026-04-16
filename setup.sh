@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # setup.sh — Vibe Stack 2.0 (Paperclip + DeerFlow Agent Network)
-# One-shot first-time deployment. Run as root on a fresh Linux system.
-# Supports: Ubuntu/Debian, Fedora/RHEL/CentOS/Rocky, Arch/Manjaro, openSUSE
+# One-shot first-time deployment. Run as root (Linux) or normally (macOS).
+# Supports: Ubuntu/Debian, Fedora/RHEL/CentOS/Rocky, Arch/Manjaro, openSUSE, macOS
 # Idempotent — safe to re-run.
 
 set -euo pipefail
@@ -17,34 +17,54 @@ TOTAL_STEPS=24
 CURRENT_STEP=0
 step() { CURRENT_STEP=$((CURRENT_STEP + 1)); printf "\n${BOLD}[Step %d/%d]${NC} ${BLUE}%s${NC}\n" "$CURRENT_STEP" "$TOTAL_STEPS" "$*"; }
 
-# ── Distro detection ──────────────────────────────────────────
-if [[ -f /etc/os-release ]]; then
-    . /etc/os-release
-    DISTRO_ID="${ID:-unknown}"
-    DISTRO_FAMILY="${ID_LIKE:-$DISTRO_ID}"
-else
-    error "Cannot detect distribution — /etc/os-release not found"
-fi
-
-# Normalize to family
-case "$DISTRO_ID" in
-    ubuntu|debian|pop|linuxmint|elementary|zorin)   DISTRO_FAMILY="debian" ;;
-    fedora|rhel|centos|rocky|alma|nobara)           DISTRO_FAMILY="fedora" ;;
-    arch|manjaro|endeavouros|garuda)                 DISTRO_FAMILY="arch" ;;
-    opensuse*|sles)                                  DISTRO_FAMILY="suse" ;;
-    *)
-        # Check ID_LIKE for derivatives
-        case "$DISTRO_FAMILY" in
-            *debian*|*ubuntu*)  DISTRO_FAMILY="debian" ;;
-            *fedora*|*rhel*)    DISTRO_FAMILY="fedora" ;;
-            *arch*)             DISTRO_FAMILY="arch" ;;
-            *suse*)             DISTRO_FAMILY="suse" ;;
-            *)                  warn "Unknown distro '$DISTRO_ID' — will attempt Debian-style commands" ; DISTRO_FAMILY="debian" ;;
-        esac
-        ;;
+# ── Platform detection ───────────────────────────────────────
+HOST_OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
+case "$HOST_OS" in
+    linux)  HOST_OS="linux" ;;
+    darwin) HOST_OS="darwin" ;;
+    *)      error "Unsupported platform: $HOST_OS (only Linux and macOS are supported)" ;;
 esac
 
-info "Detected distro: $DISTRO_ID (family: $DISTRO_FAMILY)"
+HOST_ARCH="$(uname -m)"
+info "Platform: $HOST_OS ($HOST_ARCH)"
+
+if [[ "$HOST_OS" == "darwin" ]]; then
+    TOTAL_STEPS=16  # macOS skips 8 Linux-only steps
+fi
+
+# ── Distro detection ──────────────────────────────────────────
+if [[ "$HOST_OS" == "linux" ]]; then
+    if [[ -f /etc/os-release ]]; then
+        . /etc/os-release
+        DISTRO_ID="${ID:-unknown}"
+        DISTRO_FAMILY="${ID_LIKE:-$DISTRO_ID}"
+    else
+        error "Cannot detect distribution — /etc/os-release not found"
+    fi
+
+    # Normalize to family
+    case "$DISTRO_ID" in
+        ubuntu|debian|pop|linuxmint|elementary|zorin)   DISTRO_FAMILY="debian" ;;
+        fedora|rhel|centos|rocky|alma|nobara)           DISTRO_FAMILY="fedora" ;;
+        arch|manjaro|endeavouros|garuda)                 DISTRO_FAMILY="arch" ;;
+        opensuse*|sles)                                  DISTRO_FAMILY="suse" ;;
+        *)
+            # Check ID_LIKE for derivatives
+            case "$DISTRO_FAMILY" in
+                *debian*|*ubuntu*)  DISTRO_FAMILY="debian" ;;
+                *fedora*|*rhel*)    DISTRO_FAMILY="fedora" ;;
+                *arch*)             DISTRO_FAMILY="arch" ;;
+                *suse*)             DISTRO_FAMILY="suse" ;;
+                *)                  warn "Unknown distro '$DISTRO_ID' — will attempt Debian-style commands" ; DISTRO_FAMILY="debian" ;;
+            esac
+            ;;
+    esac
+    info "Detected distro: $DISTRO_ID (family: $DISTRO_FAMILY)"
+else
+    DISTRO_FAMILY="darwin"
+    DISTRO_ID="macos"
+    info "Detected macOS $(sw_vers -productVersion 2>/dev/null || echo 'unknown')"
+fi
 
 # ── Package manager abstraction ────────────────────────────────
 pkg_update() {
@@ -53,6 +73,7 @@ pkg_update() {
         fedora) dnf check-update -q || true ;;  # dnf returns 100 when updates available
         arch)   pacman -Sy --noconfirm ;;
         suse)   zypper --non-interactive refresh ;;
+        darwin) brew update ;;
     esac
 }
 
@@ -62,6 +83,7 @@ pkg_install() {
         fedora) dnf install -y "$@" ;;
         arch)   pacman -S --needed --noconfirm "$@" ;;
         suse)   zypper --non-interactive install "$@" ;;
+        darwin) brew install "$@" 2>/dev/null || true ;;
     esac
 }
 
@@ -71,6 +93,7 @@ pkg_installed() {
         fedora) rpm -q "$1" &>/dev/null ;;
         arch)   pacman -Qi "$1" &>/dev/null ;;
         suse)   rpm -q "$1" &>/dev/null ;;
+        darwin) brew list "$1" &>/dev/null ;;
     esac
 }
 
@@ -95,7 +118,7 @@ wait_healthy() {
                 healthy)  ;;
                 unhealthy)
                     # During startup, unhealthy may just mean "still loading"
-                    # (e.g. vLLM model load). Keep waiting until timeout.
+                    # (e.g. model download or initialization). Keep waiting until timeout.
                     all_healthy=false ;;
                 *)  all_healthy=false ;;
             esac
@@ -123,7 +146,9 @@ wait_healthy() {
     error "Timed out after ${timeout}s waiting for: ${services[*]}"
 }
 
-[[ "$EUID" -eq 0 ]] || error "Run as root: sudo ./setup.sh"
+if [[ "$HOST_OS" == "linux" ]]; then
+    [[ "$EUID" -eq 0 ]] || error "Run as root: sudo ./setup.sh"
+fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
@@ -161,7 +186,11 @@ if [[ -z "${TAILSCALE_HOSTNAME:-}" ]] || [[ "$TAILSCALE_HOSTNAME" == your-pc-nam
     fi
 fi
 
-: "${WORKSPACE_PATH:=/srv/sftp/workspace/files}"
+if [[ "$HOST_OS" == "darwin" ]]; then
+    : "${WORKSPACE_PATH:=$HOME/vibe-workspace}"
+else
+    : "${WORKSPACE_PATH:=/srv/sftp/workspace/files}"
+fi
 [[ -z "${GIT_USER:-}" || "$GIT_USER" == "your-github-username" ]] && error "GIT_USER not set — edit .env with your GitHub username"
 [[ -z "${GHCR_ORG:-}" || "$GHCR_ORG" == "your-github-username" ]] && error "GHCR_ORG not set — edit .env with the GitHub org/user that hosts the GHCR images"
 
@@ -169,7 +198,11 @@ fi
 _update_env_var() {
     local key="$1" val="$2" file=".env"
     if grep -q "^${key}=" "$file" 2>/dev/null; then
-        sed -i "s|^${key}=.*|${key}=${val}|" "$file"
+        if [[ "$HOST_OS" == "darwin" ]]; then
+            sed -i '' "s|^${key}=.*|${key}=${val}|" "$file"
+        else
+            sed -i "s|^${key}=.*|${key}=${val}|" "$file"
+        fi
     else
         echo "${key}=${val}" >> "$file"
     fi
@@ -211,10 +244,14 @@ fi
 # 1. Port conflict check
 # ══════════════════════════════════════════════════════════════
 step "Checking for port conflicts"
-REQUIRED_PORTS="2222 3100 5678 8000 8100 8101 8102 8103 8104 8105 8106 8107 8108 8109 8110 8111 8112 8113 8114 8115 8116 8117 8118 8119 9000"
+REQUIRED_PORTS="3100 8868 9000"
 CONFLICTS=""
 for port in $REQUIRED_PORTS; do
-    pid=$(ss -tlnp "sport = :$port" 2>/dev/null | awk 'NR>1 {print $6}' | grep -oP 'pid=\K\d+' | head -1 || true)
+    if [[ "$HOST_OS" == "darwin" ]]; then
+        pid=$(lsof -ti ":$port" 2>/dev/null | head -1 || true)
+    else
+        pid=$(ss -tlnp "sport = :$port" 2>/dev/null | awk 'NR>1 {print $6}' | grep -oP 'pid=\K\d+' | head -1 || true)
+    fi
     if [[ -n "$pid" ]]; then
         pname=$(ps -p "$pid" -o comm= 2>/dev/null || echo "unknown")
         CONFLICTS="${CONFLICTS}\n  Port $port — PID $pid ($pname)"
@@ -234,7 +271,7 @@ success "Port check complete"
 # 2. Detect host versions
 # ══════════════════════════════════════════════════════════════
 step "Detecting host versions"
-HOST_PYTHON_VERSION=$(python3 --version 2>&1 | grep -oP '\d+\.\d+' | head -1 || echo "3.12")
+HOST_PYTHON_VERSION=$(python3 --version 2>&1 | grep -Eo '[0-9]+\.[0-9]+' | head -1 || echo "3.12")
 info "$DISTRO_ID ${VERSION_ID:-unknown} / Python $HOST_PYTHON_VERSION"
 success "Host versions detected"
 
@@ -286,274 +323,278 @@ case "$DISTRO_FAMILY" in
             bind-utils python3-pip python3 \
             nodejs npm
         ;;
+    darwin)
+        if ! command -v brew &>/dev/null; then
+            error "Homebrew is required on macOS. Install from https://brew.sh"
+        fi
+        pkg_install \
+            jq wget git git-lfs \
+            python3 node
+        ;;
 esac
 success "Prerequisites installed"
 
 # ══════════════════════════════════════════════════════════════
 # 4. Docker
 # ══════════════════════════════════════════════════════════════
-step "Docker"
-if ! command -v docker &>/dev/null; then
-    info "Installing Docker CE..."
-    case "$DISTRO_FAMILY" in
-        debian)
-            curl -fsSL "https://download.docker.com/linux/${DISTRO_ID}/gpg" \
-                | gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
-            echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] \
-                https://download.docker.com/linux/${DISTRO_ID} $(lsb_release -cs) stable" \
-                > /etc/apt/sources.list.d/docker.list
-            pkg_update
-            pkg_install docker-ce docker-ce-cli containerd.io docker-compose-plugin
-            ;;
-        fedora)
-            dnf config-manager addrepo --from-repofile="https://download.docker.com/linux/fedora/docker-ce.repo" 2>/dev/null \
-                || dnf config-manager --add-repo "https://download.docker.com/linux/fedora/docker-ce.repo" 2>/dev/null || true
-            pkg_install docker-ce docker-ce-cli containerd.io docker-compose-plugin
-            ;;
-        arch)
-            pkg_install docker docker-compose docker-buildx
-            ;;
-        suse)
-            zypper --non-interactive addrepo "https://download.docker.com/linux/sles/docker-ce.repo" 2>/dev/null || true
-            pkg_install docker-ce docker-ce-cli containerd.io docker-compose-plugin
-            ;;
-    esac
-    systemctl enable --now docker
-    success "Docker CE installed"
-elif pkg_installed docker-ce 2>/dev/null || command -v docker &>/dev/null; then
-    success "Docker already present"
+if [[ "$HOST_OS" == "darwin" ]]; then
+    step "Docker Desktop"
+    if ! command -v docker &>/dev/null; then
+        error "Docker Desktop is required on macOS. Install from https://docs.docker.com/desktop/install/mac-install/"
+    fi
     if ! docker compose version &>/dev/null; then
-        info "Installing docker compose plugin..."
+        error "Docker Compose not available — ensure Docker Desktop is running"
+    fi
+    success "Docker Desktop $(docker --version | grep -Eo '[0-9]+\.[0-9]+\.[0-9]+' | head -1) with Compose $(docker compose version --short)"
+else
+    step "Docker"
+    if ! command -v docker &>/dev/null; then
+        info "Installing Docker CE..."
         case "$DISTRO_FAMILY" in
-            debian) pkg_update; pkg_install docker-compose-plugin 2>/dev/null || pkg_install docker-compose-v2 ;;
-            arch)   pkg_install docker-compose ;;
-            *)      pkg_install docker-compose-plugin ;;
+            debian)
+                curl -fsSL "https://download.docker.com/linux/${DISTRO_ID}/gpg" \
+                    | gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
+                echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] \
+                    https://download.docker.com/linux/${DISTRO_ID} $(lsb_release -cs) stable" \
+                    > /etc/apt/sources.list.d/docker.list
+                pkg_update
+                pkg_install docker-ce docker-ce-cli containerd.io docker-compose-plugin
+                ;;
+            fedora)
+                dnf config-manager addrepo --from-repofile="https://download.docker.com/linux/fedora/docker-ce.repo" 2>/dev/null \
+                    || dnf config-manager --add-repo "https://download.docker.com/linux/fedora/docker-ce.repo" 2>/dev/null || true
+                pkg_install docker-ce docker-ce-cli containerd.io docker-compose-plugin
+                ;;
+            arch)
+                pkg_install docker docker-compose docker-buildx
+                ;;
+            suse)
+                zypper --non-interactive addrepo "https://download.docker.com/linux/sles/docker-ce.repo" 2>/dev/null || true
+                pkg_install docker-ce docker-ce-cli containerd.io docker-compose-plugin
+                ;;
         esac
-        success "Docker compose plugin installed"
+        systemctl enable --now docker
+        success "Docker CE installed"
+    elif pkg_installed docker-ce 2>/dev/null || command -v docker &>/dev/null; then
+        success "Docker already present"
+        if ! docker compose version &>/dev/null; then
+            info "Installing docker compose plugin..."
+            case "$DISTRO_FAMILY" in
+                debian) pkg_update; pkg_install docker-compose-plugin 2>/dev/null || pkg_install docker-compose-v2 ;;
+                arch)   pkg_install docker-compose ;;
+                *)      pkg_install docker-compose-plugin ;;
+            esac
+            success "Docker compose plugin installed"
+        fi
     fi
-fi
 
-if ! docker buildx version &>/dev/null; then
-    info "Installing docker-buildx..."
-    case "$DISTRO_FAMILY" in
-        arch) pkg_install docker-buildx ;;
-        *)    pkg_install docker-buildx-plugin 2>/dev/null || pkg_install docker-buildx 2>/dev/null || warn "docker-buildx not available in repos — install manually" ;;
-    esac
-fi
+    if ! docker buildx version &>/dev/null; then
+        info "Installing docker-buildx..."
+        case "$DISTRO_FAMILY" in
+            arch) pkg_install docker-buildx ;;
+            *)    pkg_install docker-buildx-plugin 2>/dev/null || pkg_install docker-buildx 2>/dev/null || warn "docker-buildx not available in repos — install manually" ;;
+        esac
+    fi
 
-if ! docker compose version &>/dev/null; then
-    error "Docker Compose plugin not available — 'docker compose version' failed"
-fi
-success "Docker Compose $(docker compose version --short) available"
-
-# ══════════════════════════════════════════════════════════════
-# 5. NVIDIA Container Toolkit
-# ══════════════════════════════════════════════════════════════
-step "NVIDIA Container Toolkit"
-if ! pkg_installed nvidia-container-toolkit; then
-    info "Installing NVIDIA Container Toolkit..."
-    case "$DISTRO_FAMILY" in
-        debian)
-            curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey \
-                | gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
-            curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list \
-                | sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' \
-                > /etc/apt/sources.list.d/nvidia-container-toolkit.list
-            ;;
-        fedora)
-            curl -s -L https://nvidia.github.io/libnvidia-container/stable/rpm/nvidia-container-toolkit.repo \
-                | tee /etc/yum.repos.d/nvidia-container-toolkit.repo > /dev/null
-            ;;
-        arch)
-            # nvidia-container-toolkit is in the AUR or extra repo
-            info "On Arch, install nvidia-container-toolkit from AUR if not in repos"
-            ;;
-        suse)
-            zypper --non-interactive addrepo https://nvidia.github.io/libnvidia-container/stable/rpm/nvidia-container-toolkit.repo 2>/dev/null || true
-            ;;
-    esac
-    pkg_update
-    pkg_install nvidia-container-toolkit
-    nvidia-ctk runtime configure --runtime=docker
-    systemctl restart docker
-    success "NVIDIA Container Toolkit installed"
-else
-    success "NVIDIA Container Toolkit already present"
+    if ! docker compose version &>/dev/null; then
+        error "Docker Compose plugin not available — 'docker compose version' failed"
+    fi
+    success "Docker Compose $(docker compose version --short) available"
 fi
 
 # ══════════════════════════════════════════════════════════════
-# 5b. vLLM — GPU-aware model + context auto-tuning
+# 5. NVIDIA Container Toolkit (Linux only — needed for opensandbox/comfyui)
 # ══════════════════════════════════════════════════════════════
-# Detects GPU VRAM and writes hardware-appropriate VLLM_* values to .env.
-# vLLM itself runs as the `vllm` service in docker-compose.gpu.yml — those
-# defaults are safe baselines, .env overrides them with per-host tuning.
-#
-# Tier values are tuned for stable multi-turn agentic tool use. Agents need
-# enough context to read several files plus accumulate a long tool history
-# without blowing the window. The 22 GB tier in particular is the sweet
-# spot for 3090 / 3090 Ti / 4080 — verified live on 2026-04-07 with the
-# 9B AWQ model at 65 K context and max_num_seqs 4.
-
-step "vLLM model selection (auto-tuned to GPU VRAM)"
-
-VLLM_SKIP=false
-GPU_VRAM_MB=0
-
-if command -v nvidia-smi &>/dev/null; then
-    GPU_VRAM_MB=$(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits 2>/dev/null | head -1 | tr -d ' ')
-    if [[ -z "$GPU_VRAM_MB" || "$GPU_VRAM_MB" -eq 0 ]]; then
-        warn "nvidia-smi found but could not query VRAM — skipping vLLM"
-        VLLM_SKIP=true
+HAS_NVIDIA_GPU=false
+if [[ "$HOST_OS" == "linux" ]]; then
+    step "NVIDIA Container Toolkit"
+    if command -v nvidia-smi &>/dev/null; then
+        HAS_NVIDIA_GPU=true
+        if ! pkg_installed nvidia-container-toolkit; then
+            info "Installing NVIDIA Container Toolkit..."
+            case "$DISTRO_FAMILY" in
+                debian)
+                    curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey \
+                        | gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
+                    curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list \
+                        | sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' \
+                        > /etc/apt/sources.list.d/nvidia-container-toolkit.list
+                    ;;
+                fedora)
+                    curl -s -L https://nvidia.github.io/libnvidia-container/stable/rpm/nvidia-container-toolkit.repo \
+                        | tee /etc/yum.repos.d/nvidia-container-toolkit.repo > /dev/null
+                    ;;
+                arch)
+                    info "On Arch, install nvidia-container-toolkit from AUR if not in repos"
+                    ;;
+                suse)
+                    zypper --non-interactive addrepo https://nvidia.github.io/libnvidia-container/stable/rpm/nvidia-container-toolkit.repo 2>/dev/null || true
+                    ;;
+            esac
+            pkg_update
+            pkg_install nvidia-container-toolkit
+            nvidia-ctk runtime configure --runtime=docker
+            systemctl restart docker
+            success "NVIDIA Container Toolkit installed"
+        else
+            success "NVIDIA Container Toolkit already present"
+        fi
     else
-        GPU_VRAM_GB=$(( GPU_VRAM_MB / 1024 ))
-        info "Detected GPU VRAM: ${GPU_VRAM_MB} MiB (~${GPU_VRAM_GB} GB)"
+        info "No NVIDIA GPU detected — skipping NVIDIA Container Toolkit"
     fi
 else
-    warn "nvidia-smi not found — skipping vLLM"
-    VLLM_SKIP=true
+    step "GPU detection (macOS)"
+    info "macOS uses Ollama with Metal acceleration — no NVIDIA toolkit needed"
 fi
 
-if [[ "$VLLM_SKIP" == "false" ]]; then
-    # Pick model + KV cache budget by VRAM tier.
-    #
-    # Total KV cache budget is roughly (GPU mem - model weights - activations).
-    # Doubling max_model_len at constant max_num_seqs doubles the per-sequence
-    # cache. We deliberately keep max_num_seqs low (2-4) for the smaller
-    # tiers because realistic agent workloads are 1-2 concurrent sessions.
-    if (( GPU_VRAM_MB >= 40960 )); then
-        # ≥ 40 GB (A6000, L40, etc.) — full 27B FP16, generous context.
-        VLLM_MODEL="Qwen/Qwen3.5-27B"
-        VLLM_MAX_MODEL_LEN=65536
-        VLLM_MAX_NUM_SEQS=8
-        VLLM_GPU_MEM_UTIL=0.92
-        VLLM_QUANTIZATION=""
-    elif (( GPU_VRAM_MB >= 20480 )); then
-        # ≥ 20 GB (3090, 3090 Ti, 4080, 4090, A5000, L4) — 9B AWQ at 65 K.
-        # Verified on 3090 Ti (~22 GB reported as 23028 MiB). Halving
-        # max_num_seqs from 8 to 4 keeps total KV cache footprint constant
-        # while doubling per-sequence context.
-        VLLM_MODEL="QuantTrio/Qwen3.5-9B-AWQ"
-        VLLM_MAX_MODEL_LEN=65536
-        VLLM_MAX_NUM_SEQS=4
-        VLLM_GPU_MEM_UTIL=0.92
-        VLLM_QUANTIZATION="awq"
-    elif (( GPU_VRAM_MB >= 12288 )); then
-        # 12-19 GB (3060 12 GB, 4070, etc.) — 9B AWQ at 32 K.
-        # Same model as the 20 GB tier but smaller context to fit smaller
-        # KV cache. Multi-file investigation tasks may still hit the limit
-        # — agents are taught to read partial files via prompt guidance.
-        VLLM_MODEL="QuantTrio/Qwen3.5-9B-AWQ"
-        VLLM_MAX_MODEL_LEN=32768
-        VLLM_MAX_NUM_SEQS=4
-        VLLM_GPU_MEM_UTIL=0.92
-        VLLM_QUANTIZATION="awq"
-    elif (( GPU_VRAM_MB >= 8192 )); then
-        # 8-11 GB (3060 8 GB, 4060) — 4B model with small context.
-        VLLM_MODEL="Qwen/Qwen3.5-4B-Instruct"
-        VLLM_MAX_MODEL_LEN=16384
-        VLLM_MAX_NUM_SEQS=2
-        VLLM_GPU_MEM_UTIL=0.88
-        VLLM_QUANTIZATION=""
+# ══════════════════════════════════════════════════════════════
+# 5b. Ollama — LLM backend (replaces vLLM)
+# ══════════════════════════════════════════════════════════════
+# Ollama runs natively on the host (not in Docker) and provides an
+# OpenAI-compatible API at port 11434. The vibe agent's backend code
+# works with it unmodified. Ollama uses CUDA on Linux (if available)
+# and Metal on macOS (Apple Silicon).
+
+step "Ollama LLM backend"
+
+OLLAMA_SKIP=false
+
+# Install Ollama if not present
+if ! command -v ollama &>/dev/null; then
+    info "Installing Ollama..."
+    if [[ "$HOST_OS" == "darwin" ]]; then
+        brew install ollama
     else
-        warn "GPU VRAM (${GPU_VRAM_MB} MiB) too low for vLLM — skipping"
-        VLLM_SKIP=true
+        curl -fsSL https://ollama.com/install.sh | sh
     fi
+    success "Ollama installed"
+else
+    success "Ollama already present ($(ollama --version 2>/dev/null || echo 'unknown'))"
 fi
 
-if [[ "$VLLM_SKIP" == "false" ]]; then
-    # Tool-call parser MUST match the model family. Wrong parser → vLLM
-    # silently swallows tool calls and DeerFlow agents produce empty
-    # responses. See vibe-stack-vllm-migration memory for the post-mortem.
-    case "$VLLM_MODEL" in
-        Qwen/Qwen3*|qwen/Qwen3*|*Qwen3.5*|*qwen3.5*|*qwen3-*)
-            VLLM_TOOL_CALL_PARSER="qwen3_xml"
-            ;;
-        *)
-            VLLM_TOOL_CALL_PARSER="hermes"
-            ;;
-    esac
+# Start Ollama service
+if [[ "$HOST_OS" == "darwin" ]]; then
+    if ! pgrep -q ollama; then
+        brew services start ollama 2>/dev/null || ollama serve &>/dev/null &
+        sleep 2
+    fi
+    success "Ollama service running"
+else
+    systemctl enable --now ollama 2>/dev/null || true
+    success "Ollama service enabled"
+fi
 
-    success "Selected vLLM tuning:"
-    success "  model              = ${VLLM_MODEL}"
-    success "  max_model_len      = ${VLLM_MAX_MODEL_LEN} tokens"
-    success "  max_num_seqs       = ${VLLM_MAX_NUM_SEQS}"
-    success "  gpu_memory_util    = ${VLLM_GPU_MEM_UTIL}"
-    success "  quantization       = ${VLLM_QUANTIZATION:-none}"
-    success "  tool_call_parser   = ${VLLM_TOOL_CALL_PARSER}"
+# Detect available memory for model selection
+AVAILABLE_MEM_MB=0
+if [[ "$HOST_OS" == "darwin" ]]; then
+    # macOS: unified memory via sysctl
+    TOTAL_BYTES=$(sysctl -n hw.memsize 2>/dev/null || echo 0)
+    AVAILABLE_MEM_MB=$(( TOTAL_BYTES / 1048576 ))
+elif [[ "$HAS_NVIDIA_GPU" == "true" ]]; then
+    # Linux with NVIDIA GPU: use VRAM
+    AVAILABLE_MEM_MB=$(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits 2>/dev/null | head -1 | tr -d ' ')
+else
+    # Linux without GPU: use system RAM
+    AVAILABLE_MEM_MB=$(free -m 2>/dev/null | awk '/^Mem:/{print $2}')
+fi
 
-    # Pre-pull the vLLM container image (skip if already present)
-    if docker image inspect vllm/vllm-openai:latest &>/dev/null; then
-        success "vLLM Docker image already present — skipping pull"
+AVAILABLE_MEM_GB=$(( AVAILABLE_MEM_MB / 1024 ))
+info "Available memory for LLM: ${AVAILABLE_MEM_MB} MiB (~${AVAILABLE_MEM_GB} GB)"
+
+# Model selection by memory tier
+if (( AVAILABLE_MEM_MB >= 40960 )); then
+    OLLAMA_MODEL="qwen3.5:27b"
+    info "Tier: >= 40 GB — full 27B model"
+elif (( AVAILABLE_MEM_MB >= 20480 )); then
+    OLLAMA_MODEL="qwen3.5:9b"
+    info "Tier: >= 20 GB — 9B model (sweet spot)"
+elif (( AVAILABLE_MEM_MB >= 12288 )); then
+    OLLAMA_MODEL="qwen3.5:9b"
+    info "Tier: 12-19 GB — 9B model (reduced context)"
+elif (( AVAILABLE_MEM_MB >= 8192 )); then
+    OLLAMA_MODEL="qwen3.5:4b"
+    info "Tier: 8-11 GB — 4B model"
+else
+    warn "Available memory (${AVAILABLE_MEM_MB} MiB) too low for local LLM"
+    warn "Configure OPENAI_API_KEY or ANTHROPIC_API_KEY in .env for cloud inference"
+    OLLAMA_SKIP=true
+fi
+
+if [[ "$OLLAMA_SKIP" == "false" ]]; then
+    success "Selected model: ${OLLAMA_MODEL}"
+
+    # Pre-pull the model
+    if ollama list 2>/dev/null | grep -q "${OLLAMA_MODEL%%:*}"; then
+        success "Model ${OLLAMA_MODEL} already pulled"
     else
-        info "Pulling vllm/vllm-openai:latest (this is ~20GB, may take a while)..."
-        docker pull vllm/vllm-openai:latest
-        success "vLLM Docker image pulled"
+        info "Pulling ${OLLAMA_MODEL} (this may take a few minutes on first run)..."
+        ollama pull "$OLLAMA_MODEL"
+        success "Model ${OLLAMA_MODEL} pulled"
     fi
 
-    # Persist all VLLM_* values to .env so docker-compose.gpu.yml picks
-    # them up at startup. Defaults in docker-compose.gpu.yml are safe
-    # baselines (32 K context, 8 seqs); these env values override them
-    # with hardware-specific tuning.
-    _update_env_var "VLLM_MODEL" "${VLLM_MODEL}"
-    _update_env_var "VLLM_MAX_MODEL_LEN" "${VLLM_MAX_MODEL_LEN}"
-    _update_env_var "VLLM_MAX_NUM_SEQS" "${VLLM_MAX_NUM_SEQS}"
-    _update_env_var "VLLM_GPU_MEM_UTIL" "${VLLM_GPU_MEM_UTIL}"
-    _update_env_var "VLLM_TOOL_CALL_PARSER" "${VLLM_TOOL_CALL_PARSER}"
-    if [[ -n "${VLLM_QUANTIZATION:-}" ]]; then
-        _update_env_var "VLLM_QUANTIZATION" "${VLLM_QUANTIZATION}"
-    fi
-    success "vLLM tuning written to .env"
+    _update_env_var "OLLAMA_MODEL" "${OLLAMA_MODEL}"
+    _update_env_var "VIBE_BACKEND_HOST" "host.docker.internal"
+    _update_env_var "VIBE_BACKEND_PORT" "11434"
 
-    # Wire MiroFish to use the same model as the main pipeline
+    # MiroFish follows the same model
     if [ -z "${MIROFISH_LLM_MODEL:-}" ]; then
-        _update_env_var "MIROFISH_LLM_MODEL" "${VLLM_MODEL}"
-        success "MIROFISH_LLM_MODEL=${VLLM_MODEL} (follows VLLM_MODEL)"
+        _update_env_var "MIROFISH_LLM_MODEL" "${OLLAMA_MODEL}"
+        _update_env_var "MIROFISH_LLM_API_URL" "http://host.docker.internal:11434/v1"
+        success "MIROFISH_LLM_MODEL=${OLLAMA_MODEL} (follows OLLAMA_MODEL)"
     fi
 else
-    warn "vLLM will not be configured — no suitable GPU detected"
+    warn "No local LLM configured — agents will need cloud API keys"
 fi
 
 # ── Set COMPOSE_FILE based on GPU availability ─────────────────
-if [ -n "${VLLM_MODEL:-}" ]; then
+# GPU compose is only needed for opensandbox/comfyui (not for LLM inference).
+if [[ "$HAS_NVIDIA_GPU" == "true" ]]; then
     COMPOSE_FILE="docker-compose.yml:docker-compose.infra.yml:docker-compose.gpu.yml"
     _update_env_var "COMPOSE_FILE" "$COMPOSE_FILE"
     export COMPOSE_FILE
-    info "Compose profile: full stack (core + infra + gpu)"
+    info "Compose profile: full stack (core + infra + gpu sandbox)"
 else
     COMPOSE_FILE="docker-compose.yml:docker-compose.infra.yml"
     _update_env_var "COMPOSE_FILE" "$COMPOSE_FILE"
     export COMPOSE_FILE
-    info "Compose profile: cloud only (core + infra, no GPU)"
+    info "Compose profile: standard (core + infra, no GPU sandbox)"
 fi
 
 # ══════════════════════════════════════════════════════════════
 # 6. Caddy with rate-limit plugin
 # ══════════════════════════════════════════════════════════════
-step "Caddy with rate-limit plugin"
-if ! command -v caddy &>/dev/null || ! caddy list-modules 2>/dev/null | grep -q "rate_limit"; then
-    info "Building Caddy with rate-limit plugin..."
-
-    GO_REQUIRED="1.25"
-    GO_INSTALL_VER="1.25.4"
-    GO_CURRENT=$(go version 2>/dev/null | grep -oP '\d+\.\d+' | head -1 || echo "0.0")
-    if ! printf '%s\n%s\n' "$GO_REQUIRED" "$GO_CURRENT" | sort -V -C; then
-        info "Go $GO_CURRENT too old (need >= $GO_REQUIRED) — installing Go $GO_INSTALL_VER..."
-        curl -fsSL "https://dl.google.com/go/go${GO_INSTALL_VER}.linux-amd64.tar.gz" -o /tmp/go.tar.gz
-        rm -rf /usr/local/go
-        tar -C /usr/local -xzf /tmp/go.tar.gz
-        rm /tmp/go.tar.gz
-        export PATH="/usr/local/go/bin:$PATH"
-        success "Go $(go version | grep -oP '\d+\.\d+\.\d+') installed"
+if [[ "$HOST_OS" == "darwin" ]]; then
+    step "Caddy"
+    if ! command -v caddy &>/dev/null; then
+        brew install caddy
     fi
+    success "Caddy $(caddy version 2>/dev/null | head -1 || echo 'installed')"
+else
+    step "Caddy with rate-limit plugin"
+    if ! command -v caddy &>/dev/null || ! caddy list-modules 2>/dev/null | grep -q "rate_limit"; then
+        info "Building Caddy with rate-limit plugin..."
 
-    info "Installing xcaddy via go install..."
-    GOBIN=/usr/local/bin go install github.com/caddyserver/xcaddy/cmd/xcaddy@latest
-    xcaddy build --with github.com/mholt/caddy-ratelimit --output /usr/local/bin/caddy
-    chmod +x /usr/local/bin/caddy
-    useradd -r -s /usr/sbin/nologin -d /var/lib/caddy caddy 2>/dev/null || true
-    mkdir -p /etc/caddy /var/log/caddy /var/lib/caddy
-    chown caddy:caddy /var/log/caddy /var/lib/caddy
-    cat > /etc/systemd/system/caddy.service << 'UNIT'
+        GO_REQUIRED="1.25"
+        GO_INSTALL_VER="1.25.4"
+        GO_CURRENT=$(go version 2>/dev/null | grep -Eo '[0-9]+\.[0-9]+' | head -1 || echo "0.0")
+        if ! printf '%s\n%s\n' "$GO_REQUIRED" "$GO_CURRENT" | sort -V -C; then
+            info "Go $GO_CURRENT too old (need >= $GO_REQUIRED) — installing Go $GO_INSTALL_VER..."
+            curl -fsSL "https://dl.google.com/go/go${GO_INSTALL_VER}.linux-amd64.tar.gz" -o /tmp/go.tar.gz
+            rm -rf /usr/local/go
+            tar -C /usr/local -xzf /tmp/go.tar.gz
+            rm /tmp/go.tar.gz
+            export PATH="/usr/local/go/bin:$PATH"
+            success "Go $(go version | grep -Eo '[0-9]+\.[0-9]+\.[0-9]+') installed"
+        fi
+
+        info "Installing xcaddy via go install..."
+        GOBIN=/usr/local/bin go install github.com/caddyserver/xcaddy/cmd/xcaddy@latest
+        xcaddy build --with github.com/mholt/caddy-ratelimit --output /usr/local/bin/caddy
+        chmod +x /usr/local/bin/caddy
+        useradd -r -s /usr/sbin/nologin -d /var/lib/caddy caddy 2>/dev/null || true
+        mkdir -p /etc/caddy /var/log/caddy /var/lib/caddy
+        chown caddy:caddy /var/log/caddy /var/lib/caddy
+        cat > /etc/systemd/system/caddy.service << 'UNIT'
 [Unit]
 Description=Caddy Web Server
 After=network-online.target
@@ -574,11 +615,12 @@ EnvironmentFile=-/etc/caddy/caddy.env
 [Install]
 WantedBy=multi-user.target
 UNIT
-    success "Caddy built with rate-limit"
-else
-    success "Caddy already present"
+        success "Caddy built with rate-limit"
+    else
+        success "Caddy already present"
+    fi
+    usermod -aG tailscale caddy 2>/dev/null || true
 fi
-usermod -aG tailscale caddy 2>/dev/null || true
 
 # ══════════════════════════════════════════════════════════════
 # 7. Secrets
@@ -650,25 +692,39 @@ success "Skill sources ready"
 # ══════════════════════════════════════════════════════════════
 # 8. Workspace
 # ══════════════════════════════════════════════════════════════
-step "Configuring workspace"
-info "Path: $WORKSPACE_PATH"
-SFTP_ROOT=$(dirname "$WORKSPACE_PATH")
-mkdir -p "$WORKSPACE_PATH"
-chown root:root "$SFTP_ROOT" 2>/dev/null || true
-chmod 755 "$SFTP_ROOT"
-id sftp-vibe &>/dev/null || useradd -r -s /usr/sbin/nologin sftp-vibe
-chown sftp-vibe:sftp-vibe "$WORKSPACE_PATH"
-chmod 775 "$WORKSPACE_PATH"
-setfacl -R  -m u:sftp-vibe:rwx "$WORKSPACE_PATH"
-setfacl -Rd -m u:sftp-vibe:rwx "$WORKSPACE_PATH"
-setfacl -Rd -m u:root:rwx "$WORKSPACE_PATH"
+if [[ "$HOST_OS" == "darwin" ]]; then
+    step "Configuring workspace"
+    WORKSPACE_PATH="${WORKSPACE_PATH:-$HOME/vibe-workspace}"
+    mkdir -p "$WORKSPACE_PATH"
+    _update_env_var "WORKSPACE_PATH" "${WORKSPACE_PATH}"
+    if [[ ! -d "$WORKSPACE_PATH/.git" ]]; then
+        git -C "$WORKSPACE_PATH" init
+        git -C "$WORKSPACE_PATH" config user.email "watchdog@localhost"
+        git -C "$WORKSPACE_PATH" config user.name  "Vibe Watchdog"
+        success "Workspace initialized at $WORKSPACE_PATH"
+    else
+        success "Workspace already initialized"
+    fi
+else
+    step "Configuring workspace"
+    info "Path: $WORKSPACE_PATH"
+    SFTP_ROOT=$(dirname "$WORKSPACE_PATH")
+    mkdir -p "$WORKSPACE_PATH"
+    chown root:root "$SFTP_ROOT" 2>/dev/null || true
+    chmod 755 "$SFTP_ROOT"
+    id sftp-vibe &>/dev/null || useradd -r -s /usr/sbin/nologin sftp-vibe
+    chown sftp-vibe:sftp-vibe "$WORKSPACE_PATH"
+    chmod 775 "$WORKSPACE_PATH"
+    setfacl -R  -m u:sftp-vibe:rwx "$WORKSPACE_PATH"
+    setfacl -Rd -m u:sftp-vibe:rwx "$WORKSPACE_PATH"
+    setfacl -Rd -m u:root:rwx "$WORKSPACE_PATH"
 
-if [[ ! -d "$WORKSPACE_PATH/.git" ]]; then
-    git config --global --add safe.directory "$WORKSPACE_PATH"
-    git -C "$WORKSPACE_PATH" init
-    git -C "$WORKSPACE_PATH" config user.email "watchdog@localhost"
-    git -C "$WORKSPACE_PATH" config user.name  "Vibe Watchdog"
-    cat > "$WORKSPACE_PATH/CONTEXT.md" << 'CTX'
+    if [[ ! -d "$WORKSPACE_PATH/.git" ]]; then
+        git config --global --add safe.directory "$WORKSPACE_PATH"
+        git -C "$WORKSPACE_PATH" init
+        git -C "$WORKSPACE_PATH" config user.email "watchdog@localhost"
+        git -C "$WORKSPACE_PATH" config user.name  "Vibe Watchdog"
+        cat > "$WORKSPACE_PATH/CONTEXT.md" << 'CTX'
 # Project Context
 
 ## Current Project
@@ -691,36 +747,38 @@ Description:
 ## Environment Notes
 
 CTX
-    git -C "$WORKSPACE_PATH" add .
-    git -C "$WORKSPACE_PATH" commit -m "Initial commit — workspace initialized"
-    success "Workspace git initialized with CONTEXT.md"
-fi
-
-mkdir -p /home/sftp-vibe/.ssh
-touch /home/sftp-vibe/.ssh/authorized_keys
-chown -R sftp-vibe:sftp-vibe /home/sftp-vibe/.ssh
-chmod 700 /home/sftp-vibe/.ssh; chmod 600 /home/sftp-vibe/.ssh/authorized_keys
-warn "Add phone SSH key: echo 'ssh-ed25519 AAAA...' >> /home/sftp-vibe/.ssh/authorized_keys"
-success "Workspace configured"
-
-# ══════════════════════════════════════════════════════════════
-# 9. SSH
-# ══════════════════════════════════════════════════════════════
-step "Configuring SSH"
-sed -e "s|100\.x\.x\.x|${TAILSCALE_IP}|g" \
-    -e "s|/srv/sftp/workspace|${SFTP_ROOT}|g" \
-    sshd_config_additions > /tmp/sshd_resolved
-if ! grep -q "# ── BEGIN vibe-stack" /etc/ssh/sshd_config; then
-    if ! grep -q "^Port 2222" /etc/ssh/sshd_config; then
-        sed -i '1s/^/Port 22\nPort 2222\n/' /etc/ssh/sshd_config
+        git -C "$WORKSPACE_PATH" add .
+        git -C "$WORKSPACE_PATH" commit -m "Initial commit — workspace initialized"
+        success "Workspace git initialized with CONTEXT.md"
     fi
-    printf '\n# ── BEGIN vibe-stack ──\n' >> /etc/ssh/sshd_config
-    cat /tmp/sshd_resolved >> /etc/ssh/sshd_config
-    printf '# ── END vibe-stack ──\n' >> /etc/ssh/sshd_config
+
+    mkdir -p /home/sftp-vibe/.ssh
+    touch /home/sftp-vibe/.ssh/authorized_keys
+    chown -R sftp-vibe:sftp-vibe /home/sftp-vibe/.ssh
+    chmod 700 /home/sftp-vibe/.ssh; chmod 600 /home/sftp-vibe/.ssh/authorized_keys
+    warn "Add phone SSH key: echo 'ssh-ed25519 AAAA...' >> /home/sftp-vibe/.ssh/authorized_keys"
+    success "Workspace configured"
 fi
 
-mkdir -p /etc/systemd/system/ssh.socket.d
-cat > /etc/systemd/system/ssh.socket.d/override.conf << 'EOF'
+# ══════════════════════════════════════════════════════════════
+# 9-10. SSH + Tailscale SSH
+# ══════════════════════════════════════════════════════════════
+if [[ "$HOST_OS" == "linux" ]]; then
+    step "Configuring SSH"
+    sed -e "s|100\.x\.x\.x|${TAILSCALE_IP}|g" \
+        -e "s|/srv/sftp/workspace|${SFTP_ROOT}|g" \
+        sshd_config_additions > /tmp/sshd_resolved
+    if ! grep -q "# ── BEGIN vibe-stack" /etc/ssh/sshd_config; then
+        if ! grep -q "^Port 2222" /etc/ssh/sshd_config; then
+            sed -i '1s/^/Port 22\nPort 2222\n/' /etc/ssh/sshd_config
+        fi
+        printf '\n# ── BEGIN vibe-stack ──\n' >> /etc/ssh/sshd_config
+        cat /tmp/sshd_resolved >> /etc/ssh/sshd_config
+        printf '# ── END vibe-stack ──\n' >> /etc/ssh/sshd_config
+    fi
+
+    mkdir -p /etc/systemd/system/ssh.socket.d
+    cat > /etc/systemd/system/ssh.socket.d/override.conf << 'EOF'
 [Socket]
 ListenStream=
 ListenStream=0.0.0.0:22
@@ -728,36 +786,49 @@ ListenStream=[::]:22
 ListenStream=0.0.0.0:2222
 ListenStream=[::]:2222
 EOF
-systemctl daemon-reload
+    systemctl daemon-reload
 
-mkdir -p /run/sshd
-sshd -t || error "sshd config invalid"
-systemctl restart ssh.socket
-systemctl restart ssh
-success "SSH configured (port 22 + 2222)"
+    mkdir -p /run/sshd
+    sshd -t || error "sshd config invalid"
+    systemctl restart ssh.socket
+    systemctl restart ssh
+    success "SSH configured (port 22 + 2222)"
+
+    step "Enabling Tailscale SSH"
+    tailscale set --ssh=true
+    success "Tailscale SSH enabled (port 22 — interactive sessions)"
+else
+    step "Tailscale"
+    if ! command -v tailscale &>/dev/null; then
+        warn "Install Tailscale from https://tailscale.com/download/mac"
+    fi
+    success "Tailscale SSH: use Tailscale app preferences on macOS"
+fi
 
 # ══════════════════════════════════════════════════════════════
-# 10. Tailscale SSH
+# 11. Caddy config
 # ══════════════════════════════════════════════════════════════
-step "Enabling Tailscale SSH"
-tailscale set --ssh=true
-success "Tailscale SSH enabled (port 22 — interactive sessions)"
+if [[ "$HOST_OS" == "darwin" ]]; then
+    step "Configuring Caddy"
+    CADDY_CONFIG_DIR="${HOME}/.config/caddy"
+    mkdir -p "$CADDY_CONFIG_DIR"
+    cp Caddyfile "$CADDY_CONFIG_DIR/Caddyfile"
+    # On macOS, Caddy runs via brew services (launchd)
+    brew services restart caddy 2>/dev/null || caddy start --config "$CADDY_CONFIG_DIR/Caddyfile" &
+    success "Caddy configured"
+else
+    step "Configuring Caddy"
+    useradd -r -s /usr/sbin/nologin -d /var/lib/caddy caddy 2>/dev/null || true
+    mkdir -p /etc/caddy /var/log/caddy /var/lib/caddy
+    chown caddy:caddy /var/log/caddy /var/lib/caddy
+    cp Caddyfile /etc/caddy/Caddyfile
 
-# ══════════════════════════════════════════════════════════════
-# 11. Caddy
-# ══════════════════════════════════════════════════════════════
-step "Configuring Caddy"
-useradd -r -s /usr/sbin/nologin -d /var/lib/caddy caddy 2>/dev/null || true
-mkdir -p /etc/caddy /var/log/caddy /var/lib/caddy
-chown caddy:caddy /var/log/caddy /var/lib/caddy
-cp Caddyfile /etc/caddy/Caddyfile
-
-# Generate staging port blocks (8100-8119)
-if ! grep -q "TAILSCALE_HOSTNAME.*:8100" /etc/caddy/Caddyfile; then
-    info "Generating Caddy staging port blocks..."
-    STAGING_BLOCK=""
-    for port in $(seq 8100 8119); do
-        read -r -d '' BLOCK <<CADDYEOF || true
+    # Generate staging port blocks (8100-8119)
+    if ! grep -q "TAILSCALE_HOSTNAME.*:8100" /etc/caddy/Caddyfile; then
+        info "Generating Caddy staging port blocks..."
+        STAGING_BLOCK=""
+        for port in $(seq 8100 8119); do
+            read -r -d '' BLOCK <<CADDYEOF || true
 https://{\$TAILSCALE_HOSTNAME}:${port} {
     import tailscale_tls
     import security_headers
@@ -776,17 +847,17 @@ https://{\$TAILSCALE_HOSTNAME}:${port} {
     }
 }
 CADDYEOF
-        STAGING_BLOCK+="$BLOCK"$'\n\n'
-    done
-    awk -v block="$STAGING_BLOCK" '{print} /# STAGING_PORTS_START/{printf "%s", block}' \
-        /etc/caddy/Caddyfile > /tmp/Caddyfile.tmp \
-        && mv /tmp/Caddyfile.tmp /etc/caddy/Caddyfile
-else
-    info "Caddy staging port blocks already present — skipping"
-fi
+            STAGING_BLOCK+="$BLOCK"$'\n\n'
+        done
+        awk -v block="$STAGING_BLOCK" '{print} /# STAGING_PORTS_START/{printf "%s", block}' \
+            /etc/caddy/Caddyfile > /tmp/Caddyfile.tmp \
+            && mv /tmp/Caddyfile.tmp /etc/caddy/Caddyfile
+    else
+        info "Caddy staging port blocks already present — skipping"
+    fi
 
-if [[ ! -f /etc/systemd/system/caddy.service ]]; then
-    cat > /etc/systemd/system/caddy.service << 'UNIT'
+    if [[ ! -f /etc/systemd/system/caddy.service ]]; then
+        cat > /etc/systemd/system/caddy.service << 'UNIT'
 [Unit]
 Description=Caddy Web Server
 After=network-online.target
@@ -807,102 +878,119 @@ EnvironmentFile=-/etc/caddy/caddy.env
 [Install]
 WantedBy=multi-user.target
 UNIT
-fi
+    fi
 
-cat > /etc/caddy/caddy.env << EOF
+    cat > /etc/caddy/caddy.env << EOF
 TAILSCALE_HOSTNAME=${TAILSCALE_HOSTNAME}
 TAILSCALE_IP=${TAILSCALE_IP}
 EOF
-chmod 640 /etc/caddy/caddy.env; chown root:caddy /etc/caddy/caddy.env
-systemctl daemon-reload
-caddy validate --config /etc/caddy/Caddyfile || error "Caddyfile invalid"
-systemctl enable --now caddy
-systemctl reload caddy 2>/dev/null || systemctl restart caddy
-success "Caddy running (self-signed TLS)"
+    chmod 640 /etc/caddy/caddy.env; chown root:caddy /etc/caddy/caddy.env
+    systemctl daemon-reload
+    caddy validate --config /etc/caddy/Caddyfile || error "Caddyfile invalid"
+    systemctl enable --now caddy
+    systemctl reload caddy 2>/dev/null || systemctl restart caddy
+    success "Caddy running (self-signed TLS)"
+fi
 
 # ══════════════════════════════════════════════════════════════
 # 12a. Docker credential helper + GHCR authentication
 # ══════════════════════════════════════════════════════════════
-step "Docker credential storage + GHCR auth"
-
-# Install credential helper if not present
-if ! command -v docker-credential-secretservice &>/dev/null && \
-   ! command -v docker-credential-pass &>/dev/null; then
-    case "$DISTRO_FAMILY" in
-        debian) apt-get install -y --no-install-recommends golang-docker-credential-helpers >/dev/null 2>&1 || true ;;
-        fedora) dnf install -y docker-credential-helpers >/dev/null 2>&1 || true ;;
-        *)      info "Docker credential helpers not available in repos — skipping" ;;
-    esac
-fi
-
-# Determine which credential helper to use
-# Both secretservice and pass require D-Bus — skip on headless/sudo.
-CRED_HELPER=""
-if [[ -n "${DBUS_SESSION_BUS_ADDRESS:-}" ]]; then
-    if command -v docker-credential-secretservice &>/dev/null; then
-        CRED_HELPER="secretservice"
-    elif command -v docker-credential-pass &>/dev/null; then
-        CRED_HELPER="pass"
+if [[ "$HOST_OS" == "darwin" ]]; then
+    step "Docker credentials + GHCR auth"
+    # Docker Desktop on macOS uses osxkeychain by default
+    if ! docker pull "ghcr.io/${GHCR_ORG}/paperclip-server:latest" >/dev/null 2>&1; then
+        info "GHCR authentication required"
+        if [[ -f "secrets/github_token.txt" ]] && [[ -s "secrets/github_token.txt" ]]; then
+            cat secrets/github_token.txt | docker login ghcr.io -u "${GIT_USER}" --password-stdin 2>&1 | grep -v "WARNING" || true
+            success "Authenticated with GHCR"
+        else
+            warn "Cannot authenticate — create secrets/github_token.txt"
+        fi
+    else
+        success "GHCR authentication already configured"
     fi
-fi
+else
+    step "Docker credential storage + GHCR auth"
 
-# Configure Docker for the deploying user (not root)
-DEPLOY_USER="${SUDO_USER:-$USER}"
-DEPLOY_HOME=$(eval echo "~$DEPLOY_USER")
-DOCKER_CONFIG_DIR="$DEPLOY_HOME/.docker"
-DOCKER_CONFIG="$DOCKER_CONFIG_DIR/config.json"
+    # Install credential helper if not present
+    if ! command -v docker-credential-secretservice &>/dev/null && \
+       ! command -v docker-credential-pass &>/dev/null; then
+        case "$DISTRO_FAMILY" in
+            debian) apt-get install -y --no-install-recommends golang-docker-credential-helpers >/dev/null 2>&1 || true ;;
+            fedora) dnf install -y docker-credential-helpers >/dev/null 2>&1 || true ;;
+            *)      info "Docker credential helpers not available in repos — skipping" ;;
+        esac
+    fi
 
-mkdir -p "$DOCKER_CONFIG_DIR"
+    # Determine which credential helper to use
+    # Both secretservice and pass require D-Bus — skip on headless/sudo.
+    CRED_HELPER=""
+    if [[ -n "${DBUS_SESSION_BUS_ADDRESS:-}" ]]; then
+        if command -v docker-credential-secretservice &>/dev/null; then
+            CRED_HELPER="secretservice"
+        elif command -v docker-credential-pass &>/dev/null; then
+            CRED_HELPER="pass"
+        fi
+    fi
 
-if [[ -n "$CRED_HELPER" ]]; then
-    # Add credsStore if not already configured
-    if [[ -f "$DOCKER_CONFIG" ]]; then
-        if ! grep -q '"credsStore"' "$DOCKER_CONFIG"; then
-            # Merge credsStore into existing config
-            python3 -c "
+    # Configure Docker for the deploying user (not root)
+    DEPLOY_USER="${SUDO_USER:-$USER}"
+    DEPLOY_HOME=$(eval echo "~$DEPLOY_USER")
+    DOCKER_CONFIG_DIR="$DEPLOY_HOME/.docker"
+    DOCKER_CONFIG="$DOCKER_CONFIG_DIR/config.json"
+
+    mkdir -p "$DOCKER_CONFIG_DIR"
+
+    if [[ -n "$CRED_HELPER" ]]; then
+        # Add credsStore if not already configured
+        if [[ -f "$DOCKER_CONFIG" ]]; then
+            if ! grep -q '"credsStore"' "$DOCKER_CONFIG"; then
+                # Merge credsStore into existing config
+                python3 -c "
 import json, sys
 with open('$DOCKER_CONFIG') as f: cfg = json.load(f)
 cfg['credsStore'] = '$CRED_HELPER'
 cfg.get('auths', {}).pop('ghcr.io', None)  # remove plaintext cred
 with open('$DOCKER_CONFIG', 'w') as f: json.dump(cfg, f, indent=2)
 " 2>/dev/null || true
+            fi
+        else
+            echo '{"auths":{},"credsStore":"'"$CRED_HELPER"'"}' > "$DOCKER_CONFIG"
+        fi
+        chown -R "$DEPLOY_USER:$DEPLOY_USER" "$DOCKER_CONFIG_DIR"
+        success "Docker credential helper: $CRED_HELPER"
+    else
+        info "No D-Bus session — skipping credential helper (plaintext auth is fine for servers)"
+    fi
+
+    # Credential helpers (secretservice/pass) need D-Bus which isn't available
+    # under sudo. Docker auto-discovers them on $PATH even without credsStore
+    # in config, so we temporarily hide them during setup pulls.
+    SETUP_DOCKER_CONFIG=$(mktemp -d)
+    echo '{"auths":{}}' > "$SETUP_DOCKER_CONFIG/config.json"
+    export DOCKER_CONFIG="$SETUP_DOCKER_CONFIG"
+    for helper in docker-credential-secretservice docker-credential-pass docker-credential-desktop; do
+        if command -v "$helper" &>/dev/null; then
+            helper_path=$(command -v "$helper")
+            mv "$helper_path" "${helper_path}.setup-disabled" 2>/dev/null || true
+        fi
+    done
+
+    # Authenticate with GHCR if not already logged in
+    if ! timeout 15 docker pull "ghcr.io/${GHCR_ORG}/paperclip-server:latest" >/dev/null 2>&1; then
+        info "GHCR authentication required for private images"
+        if [[ -f "secrets/github_token.txt" ]] && [[ -s "secrets/github_token.txt" ]]; then
+            cat secrets/github_token.txt | su "$DEPLOY_USER" -c "docker login ghcr.io -u ${GIT_USER} --password-stdin" 2>&1 \
+                | grep -v "WARNING" || true
+            success "Authenticated with GHCR via github_token.txt"
+        else
+            warn "Cannot authenticate with GHCR — secrets/github_token.txt missing"
+            warn "Run: echo 'ghp_...' > secrets/github_token.txt"
+            warn "Or:  docker login ghcr.io -u ${GIT_USER}"
         fi
     else
-        echo '{"auths":{},"credsStore":"'"$CRED_HELPER"'"}' > "$DOCKER_CONFIG"
+        success "GHCR authentication already configured"
     fi
-    chown -R "$DEPLOY_USER:$DEPLOY_USER" "$DOCKER_CONFIG_DIR"
-    success "Docker credential helper: $CRED_HELPER"
-else
-    info "No D-Bus session — skipping credential helper (plaintext auth is fine for servers)"
-fi
-
-# Credential helpers (secretservice/pass) need D-Bus which isn't available
-# under sudo. Docker auto-discovers them on $PATH even without credsStore
-# in config, so we temporarily hide them during setup pulls.
-SETUP_DOCKER_CONFIG=$(mktemp -d)
-echo '{"auths":{}}' > "$SETUP_DOCKER_CONFIG/config.json"
-export DOCKER_CONFIG="$SETUP_DOCKER_CONFIG"
-for helper in docker-credential-secretservice docker-credential-pass docker-credential-desktop; do
-    if command -v "$helper" &>/dev/null; then
-        helper_path=$(command -v "$helper")
-        mv "$helper_path" "${helper_path}.setup-disabled" 2>/dev/null || true
-    fi
-done
-
-# Authenticate with GHCR if not already logged in
-if ! timeout 15 docker pull "ghcr.io/${GHCR_ORG}/paperclip-server:latest" >/dev/null 2>&1; then
-    info "GHCR authentication required for private images"
-    if [[ -f "secrets/github_token.txt" ]] && [[ -s "secrets/github_token.txt" ]]; then
-        cat secrets/github_token.txt | su "$DEPLOY_USER" -c "docker login ghcr.io -u ${GIT_USER} --password-stdin" 2>&1 \
-            | grep -v "WARNING" || true
-        success "Authenticated with GHCR via github_token.txt"
-    else
-        warn "Cannot authenticate with GHCR — secrets/github_token.txt missing"
-        warn "Run: echo 'ghp_...' > secrets/github_token.txt"
-        warn "Or:  docker login ghcr.io -u ${GIT_USER}"
-    fi
-else
-    success "GHCR authentication already configured"
 fi
 
 # ══════════════════════════════════════════════════════════════
@@ -955,7 +1043,7 @@ success "All images ready"
 # ══════════════════════════════════════════════════════════════
 # 13. Start stack (staged for reliable startup)
 # ══════════════════════════════════════════════════════════════
-# COMPOSE_FILE was set in Phase 5b and exported; docker compose
+# COMPOSE_FILE was set in step 5b and exported; docker compose
 # reads it automatically so no -f flags are needed.
 
 step "Starting stack"
@@ -1008,10 +1096,10 @@ if [[ "$COMPOSE_FILE" == *"infra"* ]]; then
 fi
 
 if [[ "$COMPOSE_FILE" == *"gpu"* ]]; then
-    info "Starting stack — GPU services (model download may take several minutes on first run)..."
-    docker compose up -d vllm opensandbox
+    info "Starting stack — GPU services (opensandbox + comfyui)..."
+    docker compose up -d opensandbox
     info "Waiting for GPU services to become healthy..."
-    wait_healthy 300 vllm opensandbox
+    wait_healthy 300 opensandbox
 fi
 
 info "Starting stack — Tailscale..."
@@ -1022,14 +1110,16 @@ docker compose up -d vibe
 success "Stack started"
 
 # ══════════════════════════════════════════════════════════════
-# 14. iptables
+# 14-18. Security hardening (Linux) / macOS firewall
 # ══════════════════════════════════════════════════════════════
-step "iptables rules"
-chmod +x iptables-setup.sh
-./iptables-setup.sh
-success "iptables rules applied"
+if [[ "$HOST_OS" == "linux" ]]; then
+    # Step 14: iptables
+    step "iptables rules"
+    chmod +x iptables-setup.sh
+    ./iptables-setup.sh
+    success "iptables rules applied"
 
-cat > /etc/systemd/system/vibe-iptables.service << EOF
+    cat > /etc/systemd/system/vibe-iptables.service << EOF
 [Unit]
 Description=Vibe Stack iptables rules (re-applied after Docker)
 After=docker.service
@@ -1044,17 +1134,15 @@ RemainAfterExit=yes
 [Install]
 WantedBy=multi-user.target
 EOF
-systemctl daemon-reload
-systemctl enable vibe-iptables
-success "iptables auto-refresh service installed"
+    systemctl daemon-reload
+    systemctl enable vibe-iptables
+    success "iptables auto-refresh service installed"
 
-# ══════════════════════════════════════════════════════════════
-# 15. Watchdog service
-# ══════════════════════════════════════════════════════════════
-step "Workspace watchdog service"
-cp workspace-watchdog.sh /usr/local/bin/workspace-watchdog.sh
-chmod +x /usr/local/bin/workspace-watchdog.sh
-cat > /etc/systemd/system/workspace-watchdog.service << EOF
+    # Step 15: Watchdog
+    step "Workspace watchdog service"
+    cp workspace-watchdog.sh /usr/local/bin/workspace-watchdog.sh
+    chmod +x /usr/local/bin/workspace-watchdog.sh
+    cat > /etc/systemd/system/workspace-watchdog.service << EOF
 [Unit]
 Description=Vibe Workspace Git Watchdog
 After=network.target docker.service
@@ -1074,53 +1162,76 @@ User=root
 [Install]
 WantedBy=multi-user.target
 EOF
-systemctl daemon-reload
-systemctl enable --now workspace-watchdog
-success "Watchdog installed"
+    systemctl daemon-reload
+    systemctl enable --now workspace-watchdog
+    success "Watchdog installed"
 
-# ══════════════════════════════════════════════════════════════
-# 16. auditd
-# ══════════════════════════════════════════════════════════════
-step "auditd rules"
-sed "s|/srv/sftp/workspace/files|${WORKSPACE_PATH}|g" \
-    auditd-vibe-stack.rules > /etc/audit/rules.d/vibe-stack.rules
-augenrules --load >/dev/null 2>&1 || true
-success "auditd configured"
+    # Step 16: auditd
+    step "auditd rules"
+    sed "s|/srv/sftp/workspace/files|${WORKSPACE_PATH}|g" \
+        auditd-vibe-stack.rules > /etc/audit/rules.d/vibe-stack.rules
+    augenrules --load >/dev/null 2>&1 || true
+    success "auditd configured"
 
-# ══════════════════════════════════════════════════════════════
-# 17. fail2ban
-# ══════════════════════════════════════════════════════════════
-step "fail2ban"
-cp fail2ban/vibe-stack.conf    /etc/fail2ban/jail.d/vibe-stack.conf
-cp fail2ban/caddy-paperclip.conf /etc/fail2ban/filter.d/caddy-paperclip.conf
-systemctl enable --now fail2ban && systemctl restart fail2ban
-success "fail2ban configured"
+    # Step 17: fail2ban
+    step "fail2ban"
+    cp fail2ban/vibe-stack.conf    /etc/fail2ban/jail.d/vibe-stack.conf
+    cp fail2ban/caddy-paperclip.conf /etc/fail2ban/filter.d/caddy-paperclip.conf
+    systemctl enable --now fail2ban && systemctl restart fail2ban
+    success "fail2ban configured"
 
-# ══════════════════════════════════════════════════════════════
-# 18. Unattended upgrades
-# ══════════════════════════════════════════════════════════════
-step "Unattended security upgrades"
-case "$DISTRO_FAMILY" in
-    debian)
-        cat > /etc/apt/apt.conf.d/20auto-upgrades-vibe << 'EOF'
+    # Step 18: Unattended upgrades
+    step "Unattended security upgrades"
+    case "$DISTRO_FAMILY" in
+        debian)
+            cat > /etc/apt/apt.conf.d/20auto-upgrades-vibe << 'EOF'
 APT::Periodic::Update-Package-Lists "1";
 APT::Periodic::Unattended-Upgrade "1";
 EOF
-        ;;
-    fedora)
-        systemctl enable --now dnf-automatic-install.timer 2>/dev/null || \
-        systemctl enable --now dnf-automatic.timer 2>/dev/null || \
-        warn "dnf-automatic not available — configure automatic updates manually"
-        ;;
-    arch)
-        info "Arch does not support unattended upgrades — skip (rolling release)"
-        ;;
-    suse)
-        systemctl enable --now packagekit-background.service 2>/dev/null || \
-        warn "Auto-updates not configured — enable manually"
-        ;;
-esac
-success "Unattended upgrades configured"
+            ;;
+        fedora)
+            systemctl enable --now dnf-automatic-install.timer 2>/dev/null || \
+            systemctl enable --now dnf-automatic.timer 2>/dev/null || \
+            warn "dnf-automatic not available — configure automatic updates manually"
+            ;;
+        arch)
+            info "Arch does not support unattended upgrades — skip (rolling release)"
+            ;;
+        suse)
+            systemctl enable --now packagekit-background.service 2>/dev/null || \
+            warn "Auto-updates not configured — enable manually"
+            ;;
+    esac
+    success "Unattended upgrades configured"
+else
+    step "macOS firewall"
+    info "Configuring pf firewall for Tailscale-only access..."
+    # Create a pf anchor for Vibe Stack
+    PF_ANCHOR="/etc/pf.anchors/com.vibe-stack"
+    if [[ ! -f "$PF_ANCHOR" ]]; then
+        sudo tee "$PF_ANCHOR" > /dev/null << 'PFEOF'
+# Vibe Stack: allow Tailscale (utun*) and localhost only on service ports
+# Block external access to Docker-published ports
+services_ports = "{ 3000, 3003, 3100, 5001, 8868, 9000, 9001 }"
+pass in quick on lo0 proto tcp to any port $services_ports
+pass in quick on utun0 proto tcp to any port $services_ports
+pass in quick on utun1 proto tcp to any port $services_ports
+pass in quick on utun2 proto tcp to any port $services_ports
+block in quick proto tcp to any port $services_ports
+PFEOF
+        info "pf anchor written to $PF_ANCHOR"
+        # Add anchor to main pf.conf if not present
+        if ! grep -q "com.vibe-stack" /etc/pf.conf 2>/dev/null; then
+            sudo cp /etc/pf.conf /etc/pf.conf.backup
+            echo 'anchor "com.vibe-stack"' | sudo tee -a /etc/pf.conf > /dev/null
+            echo 'load anchor "com.vibe-stack" from "/etc/pf.anchors/com.vibe-stack"' | sudo tee -a /etc/pf.conf > /dev/null
+        fi
+        sudo pfctl -f /etc/pf.conf 2>/dev/null || warn "pf reload failed — may need to enable pf in System Preferences"
+        success "pf firewall configured (Tailscale + localhost only)"
+    else
+        success "pf firewall already configured"
+    fi
+fi
 
 # ══════════════════════════════════════════════════════════════
 # 19. Claude Code login check
@@ -1170,13 +1281,15 @@ else
     success "Org bootstrap complete — agent IDs written to .env"
 fi
 
-# Restore credential helpers and clean up temporary Docker config
-for helper in docker-credential-secretservice docker-credential-pass docker-credential-desktop; do
-    disabled=$(command -v "${helper}.setup-disabled" 2>/dev/null || which "${helper}.setup-disabled" 2>/dev/null || true)
-    [[ -n "$disabled" ]] && mv "$disabled" "${disabled%.setup-disabled}" 2>/dev/null || true
-done
-[[ -n "${SETUP_DOCKER_CONFIG:-}" ]] && rm -rf "$SETUP_DOCKER_CONFIG"
-unset DOCKER_CONFIG
+# Restore credential helpers and clean up temporary Docker config (Linux only)
+if [[ "$HOST_OS" == "linux" ]]; then
+    for helper in docker-credential-secretservice docker-credential-pass docker-credential-desktop; do
+        disabled=$(command -v "${helper}.setup-disabled" 2>/dev/null || which "${helper}.setup-disabled" 2>/dev/null || true)
+        [[ -n "$disabled" ]] && mv "$disabled" "${disabled%.setup-disabled}" 2>/dev/null || true
+    done
+    [[ -n "${SETUP_DOCKER_CONFIG:-}" ]] && rm -rf "$SETUP_DOCKER_CONFIG"
+    unset DOCKER_CONFIG
+fi
 
 # ══════════════════════════════════════════════════════════════
 # DONE
@@ -1185,20 +1298,23 @@ printf "\n${GREEN}════════════════════�
 printf "${GREEN}  Vibe Stack 2.0 deployment complete!${NC}\n"
 printf "${GREEN}══════════════════════════════════════════════════════${NC}\n\n"
 printf "  Paperclip:   ${BLUE}https://${TAILSCALE_HOSTNAME}${NC}\n"
-if [[ "${VLLM_SKIP:-true}" == "false" ]]; then
-    printf "  vLLM model:  ${BLUE}${VLLM_MODEL}${NC}\n"
+if [[ "${OLLAMA_SKIP:-true}" == "false" ]]; then
+    printf "  Ollama model: ${BLUE}${OLLAMA_MODEL}${NC}\n"
+    printf "  Ollama API:   ${BLUE}http://localhost:11434${NC}\n"
 fi
 printf "\n"
 
 printf "${YELLOW}Next steps:${NC}\n"
 printf "  1. Open ${BLUE}https://${TAILSCALE_HOSTNAME}${NC} and run the onboard wizard:\n"
 printf "     docker compose exec -it server pnpm paperclipai onboard\n\n"
-printf "  2. Add phone SSH public key (SFTP on port 2222):\n"
-printf "     echo 'ssh-ed25519 AAAA...' >> /home/sftp-vibe/.ssh/authorized_keys\n"
-printf "     Connect with Termius: host=${TAILSCALE_IP} port=2222 user=sftp-vibe\n\n"
-printf "  3. Add SSH deploy keys (per-repo):\n"
+if [[ "$HOST_OS" == "linux" ]]; then
+    printf "  2. Add phone SSH public key (SFTP on port 2222):\n"
+    printf "     echo 'ssh-ed25519 AAAA...' >> /home/sftp-vibe/.ssh/authorized_keys\n"
+    printf "     Connect with Termius: host=${TAILSCALE_IP} port=2222 user=sftp-vibe\n\n"
+fi
+printf "  2. Add SSH deploy keys (per-repo):\n"
 printf "     ssh-keygen -t ed25519 -f %s/secrets/ssh/your-repo -N ''\n" "$SCRIPT_DIR"
 printf "     Add the .pub key as a deploy key on the GitHub repo\n"
 printf "     (Settings -> Deploy Keys -> Add, check 'Allow write access')\n\n"
-printf "  4. Add GitHub token for agent git operations:\n"
+printf "  3. Add GitHub token for agent git operations:\n"
 printf "     echo 'ghp_...' > secrets/github_token.txt && chmod 444 secrets/github_token.txt\n\n"
