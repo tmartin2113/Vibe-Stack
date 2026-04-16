@@ -39,12 +39,14 @@ services:
       - MINIO_URL=${MINIO_URL:-http://host.docker.internal:9000}
       - MINIO_ACCESS_KEY=${MINIO_ROOT_USER:-vibe}
       - MINIO_SECRET_KEY=${MINIO_ROOT_PASSWORD:?Set MINIO_ROOT_PASSWORD in .env}
+      - PAPERCLIP_HEALTH_URL=http://vibe:8080
     volumes:
       - paperclip-data:/paperclip
       # Mount host Projects at both /paperclip/Projects (new canonical) and
       # the host HOME path (legacy — bootstrap may have stored either in DB)
       - ${PAPERCLIP_PROJECTS_DIR:-${HOME}/Projects}:/paperclip/Projects
       - ${PAPERCLIP_PROJECTS_DIR:-${HOME}/Projects}:${HOME}/Projects
+      - ${HOME}/Repos:${HOME}/Repos
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://localhost:3100/api/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
       interval: 10s
@@ -85,6 +87,7 @@ services:
       # Mirror the server's /paperclip/Projects path so DeerFlow pre-flight
       # research can resolve the same cwd the server passes in context.
       - ${PAPERCLIP_PROJECTS_DIR:-${HOME}/Projects}:/paperclip/Projects:ro
+      - ${HOME}/Repos:${HOME}/Repos:ro
     environment:
       - SEARXNG_URL=${SEARXNG_URL:-http://searxng:8080}
       - GITEA_URL=${GITEA_URL:-http://gitea:3000}
@@ -129,6 +132,7 @@ services:
       - ${PAPERCLIP_PROJECTS_DIR:-${HOME}/Projects}:/workspace:ro
       - ${PAPERCLIP_PROJECTS_DIR:-${HOME}/Projects}:${HOME}/Projects:ro
       - ${PAPERCLIP_PROJECTS_DIR:-${HOME}/Projects}:/paperclip/Projects:ro
+      - ${HOME}/Repos:${HOME}/Repos:ro
     environment:
       - SEARXNG_URL=${SEARXNG_URL:-http://searxng:8080}
       - GITEA_URL=${GITEA_URL:-http://gitea:3000}
