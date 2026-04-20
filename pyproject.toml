@@ -45,7 +45,7 @@ sandbox = [
     "opensandbox-code-interpreter>=0.1.2,<1.0.0",
 ]
 tools = [
-    "beautifulsoup4>=4.12.0,<5.0.0",
+    "beautifulsoup4>=4.14.3,<5.0.0",
     "gitpython>=3.1.0,<4.0.0",
 ]
 dev = [
