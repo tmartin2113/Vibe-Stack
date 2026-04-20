@@ -37,7 +37,7 @@ agents = [
     "rich>=13.0.0,<15.0.0",
     "websockets>=15.0.1,<16.0.0",
     "pyyaml>=6.0.3,<7.0.0",
-    "mempalace>=3.1.0",
+    "mempalace>=3.3.1",
     "graphifyy[leiden]>=0.3.20",
 ]
 sandbox = [
